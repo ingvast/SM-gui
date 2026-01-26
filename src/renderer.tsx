@@ -22,14 +22,14 @@ const initialNodes = [
     id: '1', 
     type: 'stateNode', // Set the type
     position: { x: 0, y: 0 }, 
-    data: { label: 'State 1' },
+    data: { label: 'State 1', history: false }, // Add history property
     style: { width: 150, height: 50 }, // Set initial size
   },
   { 
     id: '2', 
     type: 'stateNode', // Set the type
     position: { x: 0, y: 150 }, 
-    data: { label: 'State 2' },
+    data: { label: 'State 2', history: false }, // Add history property
     style: { width: 150, height: 50 }, // Set initial size
   },
 ];
@@ -62,9 +62,38 @@ const App = () => {
 
   const [isAddingNode, setIsAddingNode] = useState(false);
   const [selectedTreeItem, setSelectedTreeItem] = useState(null); // State for selected tree item
+  const [rootHistory, setRootHistory] = useState(false); // State for root history property
 
   // Find the selected node object
-  const selectedNode = useMemo(() => nodes.find(n => n.id === selectedTreeItem), [nodes, selectedTreeItem]);
+  const selectedNode = useMemo(() => {
+    if (selectedTreeItem === '/') {
+      return {
+        id: '/',
+        data: { label: '/', history: rootHistory },
+      };
+    }
+    return nodes.find(n => n.id === selectedTreeItem);
+  }, [nodes, selectedTreeItem, rootHistory]);
+
+  const generateUniqueNodeLabel = useCallback((baseLabel, parentId, currentNodes) => {
+    let counter = 1;
+    let newLabel = baseLabel;
+    let isUnique = false;
+
+    while (!isUnique) {
+      isUnique = true;
+      const siblings = currentNodes.filter(n => n.parentId === parentId);
+      for (const sibling of siblings) {
+        if (sibling.data.label.trim() === newLabel.trim()) { // Use trim for comparison
+          isUnique = false;
+          counter++;
+          newLabel = `${baseLabel} ${counter}`;
+          break;
+        }
+      }
+    }
+    return newLabel;
+  }, []); // No external dependencies, as currentNodes is passed as argument.
 
   const buildTreeData = useCallback(() => {
     const nodesMap = new Map(nodes.map(node => [node.id, { ...node, children: [] }]));
@@ -106,7 +135,13 @@ const App = () => {
       }
     });
 
-    return tree;
+    // Wrap in a root node
+    return [{
+      id: '/',
+      label: '/',
+      type: 'root',
+      children: tree,
+    }];
   }, [nodes]); // Edges are no longer a direct dependency of buildTreeData
 
 
@@ -147,7 +182,20 @@ const App = () => {
   const handleTreeSelect = useCallback((itemId, itemType) => {
     setSelectedTreeItem(itemId);
 
-    if (itemType === 'state') {
+    if (itemType === 'root') {
+        setNodes((nds) =>
+            nds.map((node) => ({
+                ...node,
+                selected: false, // Deselect all nodes
+            }))
+        );
+        setEdges((eds) =>
+            eds.map((edge) => ({
+                ...edge,
+                selected: false, // Deselect all edges
+            }))
+        );
+    } else if (itemType === 'state') {
       setNodes((nds) =>
         nds.map((node) => ({
           ...node,
@@ -178,6 +226,37 @@ const App = () => {
 
   // Handle property changes from the PropertiesPanel
   const handlePropertyChange = useCallback((nodeId, propertyName, newValue) => {
+    if (nodeId === '/') {
+      if (propertyName === 'history') {
+        setRootHistory(newValue);
+      }
+      // Other root properties can be handled here
+      return;
+    }
+
+    if (propertyName === 'label') {
+      const trimmedNewValue = newValue.trim();
+      if (!trimmedNewValue) {
+        alert('State name cannot be empty!');
+        return;
+      }
+
+      const nodeToChange = nodes.find(n => n.id === nodeId);
+      if (nodeToChange) {
+        const siblings = nodes.filter(n =>
+          n.id !== nodeId &&
+          n.parentId === nodeToChange.parentId // Siblings share the same parentId
+        );
+
+        const isDuplicate = siblings.some(s => s.data.label.trim() === trimmedNewValue);
+
+        if (isDuplicate) {
+          alert(`A sibling state with the name "${trimmedNewValue}" already exists!`);
+          return; // Prevent update
+        }
+      }
+    }
+
     setNodes((nds) =>
       nds.map((node) => {
         if (node.id === nodeId) {
@@ -192,7 +271,8 @@ const App = () => {
         return node;
       })
     );
-  }, [setNodes]);
+  }, [nodes, setNodes, setRootHistory]); // Add setRootHistory to dependencies
+
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -217,7 +297,7 @@ const App = () => {
           id: getNextId(),
           type: 'stateNode',
           position: flowPosition, // Absolute position
-          data: { label: `New State` },
+          data: { label: generateUniqueNodeLabel('New State', undefined, nodes), history: false }, // Add history property
           style: { width: 150, height: 50 },
         };
         setNodes((nds) => nds.concat(newNode));
@@ -285,7 +365,7 @@ const App = () => {
           position: newRelativePosition, // Relative to parent
           parentId: node.id,
           extent: 'parent',
-          data: { label: `New Nested State` },
+          data: { label: generateUniqueNodeLabel('New Nested State', node.id, nodes), history: false }, // Add history property
           style: { width: defaultNodeWidth, height: defaultNodeHeight },
         };
         setNodes((nds) => nds.concat(newNode));

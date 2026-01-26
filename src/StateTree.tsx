@@ -5,7 +5,10 @@ const TreeNode = ({ node, onSelect, selectedItemId }) => {
   return (
     <div style={{ marginLeft: 10 }}>
       <div
-        style={{ cursor: 'pointer', fontWeight: isSelected ? 'bold' : 'normal' }}
+        style={{ cursor: 'pointer', 
+                 fontWeight: isSelected ? 'bold' : 'normal',
+                 color: isSelected ? '#007bff' : 'inherit' // Make it blue when selected
+              }}
         onClick={() => onSelect(node.id, node.type)}
       >
         {node.label}
