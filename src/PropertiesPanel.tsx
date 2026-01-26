@@ -1,33 +1,34 @@
-import React, { useState, useEffect } from 'react'; // Import useState and useEffect
+import React, { useState, useEffect } from 'react';
 
 const PropertiesPanel = ({ selectedNode, onPropertyChange }) => {
-  // Hooks must be called unconditionally at the top level
-  const [tempName, setTempName] = useState(''); // Initialize with empty string or sensible default
+  // All Hooks must be called unconditionally at the top level
+  const [tempName, setTempName] = useState('');
+  const [tempEntry, setTempEntry] = useState('');
+  const [tempExit, setTempExit] = useState('');
+  const [tempDo, setTempDo] = useState('');
 
-  // Update tempName when selectedNode changes
+  // Effect to update local states when selectedNode changes
   useEffect(() => {
     if (selectedNode && selectedNode.data) {
       setTempName(selectedNode.data.label || '');
+      setTempEntry(selectedNode.data.entry || '');
+      setTempExit(selectedNode.data.exit || '');
+      setTempDo(selectedNode.data.do || '');
     } else {
-      setTempName(''); // Clear if no node selected
+      setTempName('');
+      setTempEntry('');
+      setTempExit('');
+      setTempDo('');
     }
-  }, [selectedNode]); // Dependency on selectedNode
+  }, [selectedNode]);
 
-  if (!selectedNode || !selectedNode.data) {
-    return (
-      <div className="properties-panel-content">
-        <p>Select a state to view its properties.</p>
-      </div>
-    );
-  }
-
-
+  // All event handlers must be defined here, before the conditional return,
+  // to ensure they are available in the JSX.
   const handleNameChangeLocal = (event) => {
     setTempName(event.target.value);
   };
 
   const handleNameBlur = () => {
-    // Only update if the name has actually changed
     if (tempName !== selectedNode.data.label) {
       onPropertyChange(selectedNode.id, 'label', tempName);
     }
@@ -42,6 +43,50 @@ const PropertiesPanel = ({ selectedNode, onPropertyChange }) => {
   const handleHistoryChange = (event) => {
     onPropertyChange(selectedNode.id, 'history', event.target.checked);
   };
+
+  const handleEntryChangeLocal = (event) => setTempEntry(event.target.value);
+  const handleEntryBlur = () => {
+    if (tempEntry !== selectedNode.data.entry) {
+      onPropertyChange(selectedNode.id, 'entry', tempEntry);
+    }
+  };
+  const handleEntryKeyDown = (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) { // Allow Shift+Enter for new lines
+      event.target.blur();
+    }
+  };
+
+  const handleExitChangeLocal = (event) => setTempExit(event.target.value);
+  const handleExitBlur = () => {
+    if (tempExit !== selectedNode.data.exit) {
+      onPropertyChange(selectedNode.id, 'exit', tempExit);
+    }
+  };
+  const handleExitKeyDown = (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.target.blur();
+    }
+  };
+
+  const handleDoChangeLocal = (event) => setTempDo(event.target.value);
+  const handleDoBlur = () => {
+    if (tempDo !== selectedNode.data.do) {
+      onPropertyChange(selectedNode.id, 'do', tempDo);
+    }
+  };
+  const handleDoKeyDown = (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.target.blur();
+    }
+  };
+
+  if (!selectedNode || !selectedNode.data) {
+    return (
+      <div className="properties-panel-content">
+        <p>Select a state to view its properties.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="properties-panel-content">
@@ -66,6 +111,45 @@ const PropertiesPanel = ({ selectedNode, onPropertyChange }) => {
             type="checkbox"
             checked={selectedNode.data.history || false}
             onChange={handleHistoryChange}
+          />
+        </label>
+      </div>
+
+      <div>
+        <label>
+          Entry:
+          <textarea
+            rows={4}
+            value={tempEntry}
+            onChange={handleEntryChangeLocal}
+            onBlur={handleEntryBlur}
+            onKeyDown={handleEntryKeyDown}
+          />
+        </label>
+      </div>
+
+      <div>
+        <label>
+          Exit:
+          <textarea
+            rows={4}
+            value={tempExit}
+            onChange={handleExitChangeLocal}
+            onBlur={handleExitBlur}
+            onKeyDown={handleExitKeyDown}
+          />
+        </label>
+      </div>
+
+      <div>
+        <label>
+          Do:
+          <textarea
+            rows={4}
+            value={tempDo}
+            onChange={handleDoChangeLocal}
+            onBlur={handleDoBlur}
+            onKeyDown={handleDoKeyDown}
           />
         </label>
       </div>
