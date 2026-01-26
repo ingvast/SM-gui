@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom/client';
 import ReactFlow, {
   useNodesState,
@@ -13,6 +13,7 @@ import 'reactflow/dist/style.css';
 import './index.css';
 import StateNode from './StateNode'; // Import the custom node
 import StateTree from './StateTree'; // Import the StateTree component
+import PropertiesPanel from './PropertiesPanel'; // Import the PropertiesPanel component
 
 const nodeTypes = { stateNode: StateNode }; // Define the custom node type
 
@@ -62,11 +63,13 @@ const App = () => {
   const [isAddingNode, setIsAddingNode] = useState(false);
   const [selectedTreeItem, setSelectedTreeItem] = useState(null); // State for selected tree item
 
+  // Find the selected node object
+  const selectedNode = useMemo(() => nodes.find(n => n.id === selectedTreeItem), [nodes, selectedTreeItem]);
+
   const buildTreeData = useCallback(() => {
     const nodesMap = new Map(nodes.map(node => [node.id, { ...node, children: [] }]));
-    const tree = [];
-
-    // Populate children for nodes
+    
+    // First pass: attach children to parents based on parentId
     nodes.forEach(node => {
       if (node.parentId) {
         const parent = nodesMap.get(node.parentId);
@@ -76,61 +79,36 @@ const App = () => {
       }
     });
 
-    // Build the hierarchical tree
+    // Recursive helper to build the subtree for a given node
+    const buildSubtree = (nodeItem) => {
+      const childrenNodes = nodesMap.get(nodeItem.id).children; // Get actual child nodes from the map
+
+      const treeNode = {
+        id: nodeItem.id,
+        label: nodeItem.data.label,
+        type: 'state',
+        children: []
+      };
+
+      // Recursively build children
+      childrenNodes.forEach(childNode => {
+        treeNode.children.push(buildSubtree(childNode)); // Directly add substates
+      });
+
+      return treeNode;
+    };
+
+    const tree = [];
+    // Build the top-level tree
     nodesMap.forEach(node => {
       if (!node.parentId) { // Top-level node
-        const stateItem = {
-          id: node.id,
-          label: node.data.label,
-          type: 'state',
-          children: []
-        };
-
-        // Add transitions as children of the state
-        edges.forEach(edge => {
-          if (edge.source === node.id) {
-            const targetNode = nodesMap.get(edge.target);
-            if (targetNode) {
-              stateItem.children.push({
-                id: edge.id,
-                label: `-> ${targetNode.data.label}`,
-                type: 'transition',
-                parentId: node.id,
-              });
-            }
-          }
-        });
-
-        // Add substates
-        if (node.children.length > 0) {
-          const substatesItem = {
-            id: `${node.id}-substates-container`, // Unique ID for the "states" intermediary
-            label: 'States',
-            type: 'substates-container',
-            children: node.children.map(childNode => ({
-              id: childNode.id,
-              label: childNode.data.label,
-              type: 'state',
-              parentId: node.id, // Parent ID in the tree
-              // Add transitions for substates
-              children: edges.filter(edge => edge.source === childNode.id).map(edge => {
-                const targetNode = nodesMap.get(edge.target);
-                return targetNode ? {
-                  id: edge.id,
-                  label: `-> ${targetNode.data.label}`,
-                  type: 'transition',
-                  parentId: childNode.id,
-                } : null;
-              }).filter(Boolean)
-            }))
-          };
-          stateItem.children.push(substatesItem);
-        }
-        tree.push(stateItem);
+        tree.push(buildSubtree(node));
       }
     });
+
     return tree;
-  }, [nodes, edges]);
+  }, [nodes]); // Edges are no longer a direct dependency of buildTreeData
+
 
   const treeData = buildTreeData(); // Get the tree data
 
@@ -197,6 +175,24 @@ const App = () => {
       );
     }
   }, [setNodes, setEdges]);
+
+  // Handle property changes from the PropertiesPanel
+  const handlePropertyChange = useCallback((nodeId, propertyName, newValue) => {
+    setNodes((nds) =>
+      nds.map((node) => {
+        if (node.id === nodeId) {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              [propertyName]: newValue,
+            },
+          };
+        }
+        return node;
+      })
+    );
+  }, [setNodes]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -302,11 +298,20 @@ const App = () => {
 
   return (
     <div className="app-container" style={{ display: 'flex', height: '100vh', width: '100vw' }}>
-      <div className="sidebar">
-        <h3>State Tree</h3>
-        <StateTree treeData={treeData} onSelect={handleTreeSelect} selectedItemId={selectedTreeItem} />
+      <div className="sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flexShrink: 0 }}> {/* Tree View */}
+          <h3>State Tree</h3>
+          <StateTree treeData={treeData} onSelect={handleTreeSelect} selectedItemId={selectedTreeItem} />
+        </div>
+        <div className="properties-panel" style={{ flexGrow: 1, overflowY: 'auto', padding: '10px' }}>
+          <h3>Properties</h3>
+          <PropertiesPanel 
+            selectedNode={selectedNode} 
+            onPropertyChange={handlePropertyChange} 
+          />
+        </div>
       </div>
-      <div className="reactflow-container" style={{ flexGrow: 1 }} className={isAddingNode ? 'crosshair' : ''}>
+      <div className={`reactflow-container ${isAddingNode ? 'crosshair' : ''}`} style={{ flexGrow: 1 }}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
