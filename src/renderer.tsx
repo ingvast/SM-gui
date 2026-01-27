@@ -22,14 +22,14 @@ const initialNodes = [
     id: '1', 
     type: 'stateNode', // Set the type
     position: { x: 0, y: 0 }, 
-    data: { label: 'State 1', history: false }, // Add history property
+    data: { label: 'State 1', history: false, entry: '', exit: '', do: '' }, // Add new properties
     style: { width: 150, height: 50 }, // Set initial size
   },
   { 
     id: '2', 
     type: 'stateNode', // Set the type
     position: { x: 0, y: 150 }, 
-    data: { label: 'State 2', history: false }, // Add history property
+    data: { label: 'State 2', history: false, entry: '', exit: '', do: '' }, // Add new properties
     style: { width: 150, height: 50 }, // Set initial size
   },
 ];
@@ -43,13 +43,14 @@ const initialEdges = [
   },
 ];
 
-let id = 3;
-const getNextId = () => `node_${id++}`;
-
+let idCounter = 3; // Use a distinct name for clarity
+const getNextId = () => `node_${idCounter++}`;
+  
 const App = () => {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const { screenToFlowPosition } = useReactFlow(); // Use screenToFlowPosition instead of project
+
   const onConnect = useCallback(
     (params) => setEdges((eds) => addEdge({ ...params, markerEnd: { type: MarkerType.ArrowClosed } }, eds)),
     [setEdges]
@@ -61,15 +62,16 @@ const App = () => {
   );
 
   const [isAddingNode, setIsAddingNode] = useState(false);
-  const [selectedTreeItem, setSelectedTreeItem] = useState(null); // State for selected tree item
-  const [rootHistory, setRootHistory] = useState(false); // State for root history property
+  const [selectedTreeItem, setSelectedTreeItem] = useState(null);
+  const [rootHistory, setRootHistory] = useState(false);
+  const [copiedNodes, setCopiedNodes] = useState([]);
 
-  // Find the selected node object
   const selectedNode = useMemo(() => {
     if (selectedTreeItem === '/') {
+      // Ensure root node also has entry, exit, do properties
       return {
         id: '/',
-        data: { label: '/', history: rootHistory },
+        data: { label: '/', history: rootHistory, entry: '', exit: '', do: '' },
       };
     }
     return nodes.find(n => n.id === selectedTreeItem);
@@ -84,7 +86,7 @@ const App = () => {
       isUnique = true;
       const siblings = currentNodes.filter(n => n.parentId === parentId);
       for (const sibling of siblings) {
-        if (sibling.data.label.trim() === newLabel.trim()) { // Use trim for comparison
+        if (sibling.data.label.trim() === newLabel.trim()) {
           isUnique = false;
           counter++;
           newLabel = `${baseLabel} ${counter}`;
@@ -93,12 +95,158 @@ const App = () => {
       }
     }
     return newLabel;
-  }, []); // No external dependencies, as currentNodes is passed as argument.
+  }, []);
+
+  const getAllDescendants = useCallback((parentNodeId, allNodes) => {
+    const descendants = [];
+    const queue = [parentNodeId];
+    const visited = new Set();
+
+    while (queue.length > 0) {
+      const currentId = queue.shift();
+      if (visited.has(currentId)) continue;
+      visited.add(currentId);
+
+      const children = allNodes.filter(n => n.parentId === currentId);
+      for (const child of children) {
+        descendants.push(child);
+        queue.push(child.id);
+      }
+    }
+    return descendants;
+  }, []);
+
+  const handleCopy = useCallback(() => {
+    const selectedNodes = nodes.filter(node => node.selected);
+    if (selectedNodes.length === 0) {
+      console.log('No nodes selected to copy.');
+      setCopiedNodes([]);
+      return;
+    }
+
+    const nodesToCopySet = new Set();
+
+    selectedNodes.forEach(sNode => {
+      nodesToCopySet.add(sNode);
+      const descendants = getAllDescendants(sNode.id, nodes);
+      descendants.forEach(dNode => nodesToCopySet.add(dNode));
+    });
+
+    const finalNodesToCopy = Array.from(nodesToCopySet).map(node => ({ ...node }));
+    setCopiedNodes(finalNodesToCopy);
+    console.log('Nodes copied:', finalNodesToCopy.map(n => n.id));
+  }, [nodes, getAllDescendants]);
+
+  const handlePaste = useCallback(() => {
+    if (copiedNodes.length === 0) {
+      console.log('No nodes to paste.');
+      return;
+    }
+
+    const newIdMap = new Map();
+    const newNodes = [];
+    const offset = { x: 20, y: 20 };
+
+    copiedNodes.forEach(oldNode => {
+      const newId = getNextId();
+      newIdMap.set(oldNode.id, newId);
+
+      const newNode = {
+        ...oldNode,
+        id: newId,
+        selected: false,
+        position: {
+          x: oldNode.position.x + offset.x,
+          y: oldNode.position.y + offset.y,
+        },
+        data: {
+          ...oldNode.data,
+          label: generateUniqueNodeLabel(oldNode.data.label, oldNode.parentId ? newIdMap.get(oldNode.parentId) : undefined, nodes.concat(newNodes))
+        },
+      };
+      newNodes.push(newNode);
+    });
+
+    newNodes.forEach(node => {
+      if (node.parentId && newIdMap.has(node.parentId)) {
+        node.parentId = newIdMap.get(node.parentId);
+      } else if (node.parentId && !newIdMap.has(node.parentId)) {
+        delete node.parentId;
+        delete node.extent;
+      }
+    });
+    
+    setNodes((nds) => {
+      const deselectedExistingNodes = nds.map(node => ({ ...node, selected: false }));
+      return deselectedExistingNodes.concat(newNodes.map(node => ({...node, selected: true})));
+    });
+    setSelectedTreeItem(newNodes.length > 0 ? newNodes[0].id : null);
+
+    setCopiedNodes([]);
+    console.log('Nodes pasted.');
+  }, [copiedNodes, nodes, setNodes, generateUniqueNodeLabel, setSelectedTreeItem]);
+
+  const handleDuplicate = useCallback(() => {
+    const selectedNodes = nodes.filter(node => node.selected);
+    if (selectedNodes.length === 0) {
+      console.log('No nodes selected to duplicate.');
+      return;
+    }
+
+    const nodesToCopySet = new Set();
+    selectedNodes.forEach(sNode => {
+      nodesToCopySet.add(sNode);
+      const descendants = getAllDescendants(sNode.id, nodes);
+      descendants.forEach(dNode => nodesToCopySet.add(dNode));
+    });
+
+    const nodesToDuplicate = Array.from(nodesToCopySet).map(node => ({ ...node }));
+
+    const newIdMap = new Map();
+    const duplicatedNodes = [];
+    const offset = { x: 20, y: 20 };
+
+    nodesToDuplicate.forEach(oldNode => {
+      const newId = getNextId();
+      newIdMap.set(oldNode.id, newId);
+
+      const newNode = {
+        ...oldNode,
+        id: newId,
+        selected: false,
+        position: {
+          x: oldNode.position.x + offset.x,
+          y: oldNode.position.y + offset.y,
+        },
+        data: {
+          ...oldNode.data,
+          label: generateUniqueNodeLabel(oldNode.data.label, oldNode.parentId ? newIdMap.get(oldNode.parentId) : undefined, nodes.concat(duplicatedNodes))
+        },
+      };
+      duplicatedNodes.push(newNode);
+    });
+
+    duplicatedNodes.forEach(node => {
+      if (node.parentId && newIdMap.has(node.parentId)) {
+        node.parentId = newIdMap.get(node.parentId);
+      } else if (node.parentId && !newIdMap.has(node.parentId)) {
+        delete node.parentId;
+        delete node.extent;
+      }
+    });
+
+    setNodes((nds) => {
+      const deselectedExistingNodes = nds.map(node => ({ ...node, selected: false }));
+      return deselectedExistingNodes.concat(duplicatedNodes.map(node => ({...node, selected: true})));
+    });
+    setSelectedTreeItem(duplicatedNodes.length > 0 ? duplicatedNodes[0].id : null); 
+
+    console.log('Nodes duplicated.');
+  }, [nodes, getAllDescendants, getNextId, generateUniqueNodeLabel, setNodes, setSelectedTreeItem]);
 
   const buildTreeData = useCallback(() => {
     const nodesMap = new Map(nodes.map(node => [node.id, { ...node, children: [] }]));
     
-    // First pass: attach children to parents based on parentId
     nodes.forEach(node => {
       if (node.parentId) {
         const parent = nodesMap.get(node.parentId);
@@ -108,9 +256,8 @@ const App = () => {
       }
     });
 
-    // Recursive helper to build the subtree for a given node
     const buildSubtree = (nodeItem) => {
-      const childrenNodes = nodesMap.get(nodeItem.id).children; // Get actual child nodes from the map
+      const childrenNodes = nodesMap.get(nodeItem.id).children;
 
       const treeNode = {
         id: nodeItem.id,
@@ -119,35 +266,30 @@ const App = () => {
         children: []
       };
 
-      // Recursively build children
       childrenNodes.forEach(childNode => {
-        treeNode.children.push(buildSubtree(childNode)); // Directly add substates
+        treeNode.children.push(buildSubtree(childNode));
       });
 
       return treeNode;
     };
 
     const tree = [];
-    // Build the top-level tree
     nodesMap.forEach(node => {
-      if (!node.parentId) { // Top-level node
+      if (!node.parentId) {
         tree.push(buildSubtree(node));
       }
     });
 
-    // Wrap in a root node
     return [{
       id: '/',
       label: '/',
       type: 'root',
       children: tree,
     }];
-  }, [nodes]); // Edges are no longer a direct dependency of buildTreeData
+  }, [nodes]);
 
+  const treeData = buildTreeData();
 
-  const treeData = buildTreeData(); // Get the tree data
-
-  // Canvas to Tree Selection
   const onNodesChangeWithSelection = useCallback(
     (changes) => {
       onNodesChange(changes);
@@ -155,7 +297,6 @@ const App = () => {
         if (change.type === 'select' && change.selected) {
           setSelectedTreeItem(change.id);
         } else if (change.type === 'select' && !change.selected && selectedTreeItem === change.id) {
-          // Deselect if currently selected in tree
           setSelectedTreeItem(null);
         }
       });
@@ -170,7 +311,6 @@ const App = () => {
         if (change.type === 'select' && change.selected) {
           setSelectedTreeItem(change.id);
         } else if (change.type === 'select' && !change.selected && selectedTreeItem === change.id) {
-          // Deselect if currently selected in tree
           setSelectedTreeItem(null);
         }
       });
@@ -178,7 +318,6 @@ const App = () => {
     [onEdgesChange, selectedTreeItem]
   );
 
-  // Tree to Canvas Selection
   const handleTreeSelect = useCallback((itemId, itemType) => {
     setSelectedTreeItem(itemId);
 
@@ -186,13 +325,13 @@ const App = () => {
         setNodes((nds) =>
             nds.map((node) => ({
                 ...node,
-                selected: false, // Deselect all nodes
+                selected: false,
             }))
         );
         setEdges((eds) =>
             eds.map((edge) => ({
                 ...edge,
-                selected: false, // Deselect all edges
+                selected: false,
             }))
         );
     } else if (itemType === 'state') {
@@ -205,7 +344,7 @@ const App = () => {
       setEdges((eds) =>
         eds.map((edge) => ({
           ...edge,
-          selected: false, // Deselect all edges
+          selected: false,
         }))
       );
     } else if (itemType === 'transition') {
@@ -218,19 +357,21 @@ const App = () => {
       setNodes((nds) =>
         nds.map((node) => ({
           ...node,
-          selected: false, // Deselect all nodes
+          selected: false,
         }))
       );
     }
   }, [setNodes, setEdges]);
 
-  // Handle property changes from the PropertiesPanel
   const handlePropertyChange = useCallback((nodeId, propertyName, newValue) => {
     if (nodeId === '/') {
       if (propertyName === 'history') {
         setRootHistory(newValue);
+      } else if (propertyName === 'entry' || propertyName === 'exit' || propertyName === 'do') {
+        // If other properties need to be stored for the root, a dedicated state for root properties would be needed.
+        // For now, we will just ignore these properties for the root unless a specific state is created for them.
+        console.log(`Attempted to change root property ${propertyName} to ${newValue}, but root properties are currently read-only except 'history'.`);
       }
-      // Other root properties can be handled here
       return;
     }
 
@@ -245,14 +386,14 @@ const App = () => {
       if (nodeToChange) {
         const siblings = nodes.filter(n =>
           n.id !== nodeId &&
-          n.parentId === nodeToChange.parentId // Siblings share the same parentId
+          n.parentId === nodeToChange.parentId
         );
 
         const isDuplicate = siblings.some(s => s.data.label.trim() === trimmedNewValue);
 
         if (isDuplicate) {
           alert(`A sibling state with the name "${trimmedNewValue}" already exists!`);
-          return; // Prevent update
+          return;
         }
       }
     }
@@ -271,14 +412,33 @@ const App = () => {
         return node;
       })
     );
-  }, [nodes, setNodes, setRootHistory]); // Add setRootHistory to dependencies
-
+  }, [nodes, setNodes, setRootHistory]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const isModifierPressed = isMac ? event.metaKey : event.ctrlKey;
+
       if (event.key === 'n') {
         event.preventDefault();
         setIsAddingNode(true);
+      } else if (isModifierPressed) {
+        switch (event.key) {
+          case 'c':
+            event.preventDefault();
+            handleCopy();
+            break;
+          case 'v':
+            event.preventDefault();
+            handlePaste();
+            break;
+          case 'd':
+            event.preventDefault();
+            handleDuplicate();
+            break;
+          default:
+            break;
+        }
       }
     };
 
@@ -286,24 +446,22 @@ const App = () => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, []);
+  }, [handleCopy, handlePaste, handleDuplicate, setIsAddingNode]);
 
   const onPaneClick = useCallback(
     (event) => {
       if (isAddingNode) {
-        // Create a root-level node
-        const flowPosition = screenToFlowPosition({ x: event.clientX, y: event.clientY }); // Use screenToFlowPosition
+        const flowPosition = screenToFlowPosition({ x: event.clientX, y: event.clientY });
         const newNode = {
           id: getNextId(),
           type: 'stateNode',
-          position: flowPosition, // Absolute position
-          data: { label: generateUniqueNodeLabel('New State', undefined, nodes), history: false }, // Add history property
+          position: flowPosition,
+          data: { label: generateUniqueNodeLabel('New State', undefined, nodes), history: false, entry: '', exit: '', do: '' },
           style: { width: 150, height: 50 },
         };
         setNodes((nds) => nds.concat(newNode));
         setIsAddingNode(false);
       } else {
-        // Deselect all if pane is clicked and not adding a node
         setSelectedTreeItem(null);
         setNodes((nds) =>
           nds.map((node) => ({ ...node, selected: false }))
@@ -313,13 +471,11 @@ const App = () => {
         );
       }
     },
-    [isAddingNode, screenToFlowPosition, setNodes, setEdges] // Changed project to screenToFlowPosition
+    [isAddingNode, screenToFlowPosition, setNodes, setEdges, generateUniqueNodeLabel, nodes]
   );
 
   const onNodeClick = useCallback(
     (event, node) => {
-      // Deselect all other nodes/edges if this node is selected
-      // This is necessary because ReactFlow's onNodesChange might not deselect others
       setNodes((nds) =>
         nds.map((n) => ({
           ...n,
@@ -329,32 +485,30 @@ const App = () => {
       setEdges((eds) =>
         eds.map((edge) => ({
           ...edge,
-          selected: false, // Deselect all edges
+          selected: false,
         }))
       );
-      setSelectedTreeItem(node.id); // Update tree selection
+      setSelectedTreeItem(node.id);
 
-      if (isAddingNode && node.selected && node.width && node.height) { // Check if the clicked node is selected
-        const flowPosition = screenToFlowPosition({ x: event.clientX, y: event.clientY }); // Use screenToFlowPosition
+      if (isAddingNode && node.selected && node.width && node.height) {
+        const flowPosition = screenToFlowPosition({ x: event.clientX, y: event.clientY });
 
-        const defaultNodeWidth = 150; // Use the default width
-        const defaultNodeHeight = 50; // Use the default height
+        const defaultNodeWidth = 150;
+        const defaultNodeHeight = 50;
 
         let newRelativePosition = {
           x: flowPosition.x - node.position.x,
           y: flowPosition.y - node.position.y,
         };
 
-        // Ensure the new node's top-left corner is slightly inside the parent's boundary
         const safePadding = 10;
 
         newRelativePosition.x = Math.max(safePadding, newRelativePosition.x);
-        newRelativePosition.y = Math.max(safePadding, newRelativePosition.y);
-
-        // Also ensure it doesn't go too far right/bottom
         if (node.width) {
             newRelativePosition.x = Math.min(node.width - defaultNodeWidth - safePadding, newRelativePosition.x);
         }
+        
+        newRelativePosition.y = Math.max(safePadding, newRelativePosition.y);
         if (node.height) {
             newRelativePosition.y = Math.min(node.height - defaultNodeHeight - safePadding, newRelativePosition.y);
         }
@@ -362,24 +516,24 @@ const App = () => {
         const newNode = {
           id: getNextId(),
           type: 'stateNode',
-          position: newRelativePosition, // Relative to parent
+          position: newRelativePosition,
           parentId: node.id,
           extent: 'parent',
-          data: { label: generateUniqueNodeLabel('New Nested State', node.id, nodes), history: false }, // Add history property
+          data: { label: generateUniqueNodeLabel('New Nested State', node.id, nodes), history: false, entry: '', exit: '', do: '' },
           style: { width: defaultNodeWidth, height: defaultNodeHeight },
         };
         setNodes((nds) => nds.concat(newNode));
         setIsAddingNode(false);
-        event.stopPropagation(); // Prevent onPaneClick from firing
+        event.stopPropagation();
       }
     },
-    [isAddingNode, setNodes, setEdges, screenToFlowPosition, getNextId, setSelectedTreeItem, nodes] // Changed project to screenToFlowPosition
+    [isAddingNode, setNodes, setEdges, screenToFlowPosition, getNextId, setSelectedTreeItem, nodes, generateUniqueNodeLabel]
   );
 
   return (
     <div className="app-container" style={{ display: 'flex', height: '100vh', width: '100vw' }}>
       <div className="sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
-        <div style={{ flexShrink: 0 }}> {/* Tree View */}
+        <div style={{ flexShrink: 0 }}>
           <h3>State Tree</h3>
           <StateTree treeData={treeData} onSelect={handleTreeSelect} selectedItemId={selectedTreeItem} />
         </div>
@@ -395,11 +549,11 @@ const App = () => {
         <ReactFlow
           nodes={nodes}
           edges={edges}
-          onNodesChange={onNodesChangeWithSelection} // Use new handler
-          onEdgesChange={onEdgesChangeWithSelection} // Use new handler
+          onNodesChange={onNodesChangeWithSelection}
+          onEdgesChange={onEdgesChangeWithSelection}
           onConnect={onConnect}
           onPaneClick={onPaneClick}
-          onNodeClick={onNodeClick} // Add onNodeClick handler
+          onNodeClick={onNodeClick}
           nodeTypes={nodeTypes}
           isValidConnection={isValidConnection}
           fitView
