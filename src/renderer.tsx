@@ -137,55 +137,82 @@ const App = () => {
     console.log('Nodes copied:', finalNodesToCopy.map(n => n.id));
   }, [nodes, getAllDescendants]);
 
-  const handlePaste = useCallback(() => {
-    if (copiedNodes.length === 0) {
-      console.log('No nodes to paste.');
-      return;
-    }
-
-    const newIdMap = new Map();
-    const newNodes = [];
-    const offset = { x: 20, y: 20 };
-
-    copiedNodes.forEach(oldNode => {
-      const newId = getNextId();
-      newIdMap.set(oldNode.id, newId);
-
-      const newNode = {
-        ...oldNode,
-        id: newId,
-        selected: false,
-        position: {
-          x: oldNode.position.x + offset.x,
-          y: oldNode.position.y + offset.y,
-        },
-        data: {
-          ...oldNode.data,
-          label: generateUniqueNodeLabel(oldNode.data.label, oldNode.parentId ? newIdMap.get(oldNode.parentId) : undefined, nodes.concat(newNodes))
-        },
-      };
-      newNodes.push(newNode);
-    });
-
-    newNodes.forEach(node => {
-      if (node.parentId && newIdMap.has(node.parentId)) {
-        node.parentId = newIdMap.get(node.parentId);
-      } else if (node.parentId && !newIdMap.has(node.parentId)) {
-        delete node.parentId;
-        delete node.extent;
+    const handlePaste = useCallback(() => {
+      if (copiedNodes.length === 0) {
+        console.log('No nodes to paste.');
+        return;
       }
-    });
-    
-    setNodes((nds) => {
-      const deselectedExistingNodes = nds.map(node => ({ ...node, selected: false }));
-      return deselectedExistingNodes.concat(newNodes.map(node => ({...node, selected: true})));
-    });
-    setSelectedTreeItem(newNodes.length > 0 ? newNodes[0].id : null);
-
-    setCopiedNodes([]);
-    console.log('Nodes pasted.');
-  }, [copiedNodes, nodes, setNodes, generateUniqueNodeLabel, setSelectedTreeItem]);
-
+  
+      const newIdMap = new Map();
+      const newNodes = [];
+      const offset = { x: 50, y: 50 }; // Default relative offset for new child nodes
+  
+      // Determine if there's a selected node to act as a parent
+      const currentlySelectedNode = nodes.find(n => n.selected);
+      let potentialParentNodeId = null;
+  
+      if (currentlySelectedNode && !copiedNodes.some(n => n.id === currentlySelectedNode.id)) {
+        potentialParentNodeId = currentlySelectedNode.id;
+      }
+  
+      copiedNodes.forEach(oldNode => {
+        const newId = getNextId();
+        newIdMap.set(oldNode.id, newId);
+  
+        // Determine parentId for the new node
+        let newNodeParentId = oldNode.parentId;
+        let newNodeExtent = oldNode.extent;
+  
+        if (potentialParentNodeId && (!oldNode.parentId || !copiedNodes.some(n => n.id === oldNode.parentId))) {
+          // If there's a selected node and the oldNode doesn't have a copied parent,
+          // make it a child of the selected node.
+          newNodeParentId = potentialParentNodeId;
+          newNodeExtent = 'parent';
+        } else if (oldNode.parentId && copiedNodes.some(n => n.id === oldNode.parentId)) {
+          // Original parent was copied, remap to new parent ID
+          newNodeParentId = newIdMap.get(oldNode.parentId);
+        } else {
+          // No parent, or parent not copied and no selected node acts as parent, so it's top-level
+          newNodeParentId = undefined;
+          newNodeExtent = undefined;
+        }
+  
+        // Calculate position
+        let newPosition = { ...oldNode.position };
+        if (potentialParentNodeId && newNodeParentId === potentialParentNodeId) {
+          // If it's becoming a child of the selected node, place it at a default relative position
+          newPosition.x = offset.x; // Relative to parent
+          newPosition.y = offset.y; // Relative to parent
+        } else {
+          // Top-level or child of another copied node, use absolute offset from original position
+          newPosition.x = oldNode.position.x + offset.x;
+          newPosition.y = oldNode.position.y + offset.y;
+        }
+  
+        const newNode = {
+          ...oldNode,
+          id: newId,
+          selected: false,
+          position: newPosition,
+          parentId: newNodeParentId,
+          extent: newNodeExtent,
+          data: {
+            ...oldNode.data,
+            label: generateUniqueNodeLabel(oldNode.data.label, newNodeParentId, nodes.concat(newNodes))
+          },
+        };
+        newNodes.push(newNode);
+      });
+      
+      setNodes((nds) => {
+        const deselectedExistingNodes = nds.map(node => ({ ...node, selected: false }));
+        return deselectedExistingNodes.concat(newNodes.map(node => ({...node, selected: true})));
+      });
+      setSelectedTreeItem(newNodes.length > 0 ? newNodes[0].id : null);
+  
+      // Removed setCopiedNodes([]); to allow multiple pastes
+      console.log('Nodes pasted.');
+    }, [copiedNodes, nodes, setNodes, generateUniqueNodeLabel, setSelectedTreeItem]);
   const handleDuplicate = useCallback(() => {
     const selectedNodes = nodes.filter(node => node.selected);
     if (selectedNodes.length === 0) {
@@ -204,35 +231,69 @@ const App = () => {
 
     const newIdMap = new Map();
     const duplicatedNodes = [];
-    const offset = { x: 20, y: 20 };
+    const offset = { x: 50, y: 50 }; // Default relative offset for new child nodes
+
+    // --- Start: Logic for potential external parent ---
+    const currentlySelectedNode = nodes.find(n => n.selected);
+    let potentialParentNodeId = null;
+
+    // For duplication, ensure the selected node for parenting is NOT one of the nodes being duplicated
+    // This is to avoid a node trying to parent itself or its own duplicated subgraph.
+    // The request is 'if a state is previously selected'.
+    // If the *only* selected items are the ones being duplicated, then they should duplicate as siblings.
+    // If there's one *external* selected node, then the duplicated nodes should attach to it.
+    const externalSelectedNodes = nodes.filter(n => n.selected && !nodesToDuplicate.some(dn => dn.id === n.id));
+    if (externalSelectedNodes.length === 1) {
+      potentialParentNodeId = externalSelectedNodes[0].id;
+    }
+    // --- End: Logic for potential external parent ---
 
     nodesToDuplicate.forEach(oldNode => {
       const newId = getNextId();
       newIdMap.set(oldNode.id, newId);
 
+      let newNodeParentId = oldNode.parentId;
+      let newNodeExtent = oldNode.extent;
+
+      if (potentialParentNodeId && (!oldNode.parentId || !nodesToDuplicate.some(n => n.id === oldNode.parentId))) {
+        // If there's an external selected node and this oldNode doesn't have a duplicated parent,
+        // make it a child of the external selected node.
+        newNodeParentId = potentialParentNodeId;
+        newNodeExtent = 'parent';
+      } else if (oldNode.parentId && nodesToDuplicate.some(n => n.id === oldNode.parentId)) {
+        // Original parent was duplicated, remap to new parent ID
+        newNodeParentId = newIdMap.get(oldNode.parentId);
+      } else {
+        // No parent, or parent not duplicated and no external selected node acts as parent, so it's top-level
+        newNodeParentId = undefined;
+        newNodeExtent = undefined;
+      }
+
+      // Calculate position
+      let newPosition = { ...oldNode.position };
+      if (potentialParentNodeId && newNodeParentId === potentialParentNodeId) {
+        // If it's becoming a child of the selected external node, place it at a default relative position
+        newPosition.x = offset.x; // Relative to parent
+        newPosition.y = offset.y; // Relative to parent
+      } else {
+        // Top-level or child of another duplicated node, use absolute offset from original position
+        newPosition.x = oldNode.position.x + offset.x;
+        newPosition.y = oldNode.position.y + offset.y;
+      }
+
       const newNode = {
         ...oldNode,
         id: newId,
         selected: false,
-        position: {
-          x: oldNode.position.x + offset.x,
-          y: oldNode.position.y + offset.y,
-        },
+        position: newPosition,
+        parentId: newNodeParentId,
+        extent: newNodeExtent,
         data: {
           ...oldNode.data,
-          label: generateUniqueNodeLabel(oldNode.data.label, oldNode.parentId ? newIdMap.get(oldNode.parentId) : undefined, nodes.concat(duplicatedNodes))
+          label: generateUniqueNodeLabel(oldNode.data.label, newNodeParentId, nodes.concat(duplicatedNodes))
         },
       };
       duplicatedNodes.push(newNode);
-    });
-
-    duplicatedNodes.forEach(node => {
-      if (node.parentId && newIdMap.has(node.parentId)) {
-        node.parentId = newIdMap.get(node.parentId);
-      } else if (node.parentId && !newIdMap.has(node.parentId)) {
-        delete node.parentId;
-        delete node.extent;
-      }
     });
 
     setNodes((nds) => {
