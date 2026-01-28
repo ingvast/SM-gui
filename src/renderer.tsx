@@ -65,6 +65,7 @@ const App = () => {
   const [selectedTreeItem, setSelectedTreeItem] = useState(null);
   const [rootHistory, setRootHistory] = useState(false);
   const [copiedNodes, setCopiedNodes] = useState([]);
+  const [copiedEdges, setCopiedEdges] = useState([]);
 
   const selectedNode = useMemo(() => {
     if (selectedTreeItem === '/') {
@@ -121,6 +122,7 @@ const App = () => {
     if (selectedNodes.length === 0) {
       console.log('No nodes selected to copy.');
       setCopiedNodes([]);
+      setCopiedEdges([]);
       return;
     }
 
@@ -133,9 +135,18 @@ const App = () => {
     });
 
     const finalNodesToCopy = Array.from(nodesToCopySet).map(node => ({ ...node }));
+    const copiedNodeIds = new Set(finalNodesToCopy.map(n => n.id));
+
+    // Copy edges where both source and target are in the copied set
+    const edgesToCopy = edges
+      .filter(edge => copiedNodeIds.has(edge.source) && copiedNodeIds.has(edge.target))
+      .map(edge => ({ ...edge }));
+
     setCopiedNodes(finalNodesToCopy);
+    setCopiedEdges(edgesToCopy);
     console.log('Nodes copied:', finalNodesToCopy.map(n => n.id));
-  }, [nodes, getAllDescendants]);
+    console.log('Edges copied:', edgesToCopy.map(e => e.id));
+  }, [nodes, edges, getAllDescendants]);
 
     const handlePaste = useCallback(() => {
       if (copiedNodes.length === 0) {
@@ -178,15 +189,16 @@ const App = () => {
         }
   
         // Calculate position
-        let newPosition = { ...oldNode.position };
+        let newPosition;
         if (potentialParentNodeId && newNodeParentId === potentialParentNodeId) {
           // If it's becoming a child of the selected node, place it at a default relative position
-          newPosition.x = offset.x; // Relative to parent
-          newPosition.y = offset.y; // Relative to parent
+          newPosition = { x: offset.x, y: offset.y };
+        } else if (oldNode.parentId && copiedNodes.some(n => n.id === oldNode.parentId)) {
+          // Child of another copied node - keep same relative position within parent
+          newPosition = { ...oldNode.position };
         } else {
-          // Top-level or child of another copied node, use absolute offset from original position
-          newPosition.x = oldNode.position.x + offset.x;
-          newPosition.y = oldNode.position.y + offset.y;
+          // Top-level node (no parent, or parent not copied), apply offset
+          newPosition = { x: oldNode.position.x + offset.x, y: oldNode.position.y + offset.y };
         }
   
         const newNode = {
@@ -204,15 +216,26 @@ const App = () => {
         newNodes.push(newNode);
       });
       
+      // Paste edges with remapped IDs
+      const pastedEdges = copiedEdges.map(edge => ({
+        ...edge,
+        id: `e${newIdMap.get(edge.source)}-${newIdMap.get(edge.target)}`,
+        source: newIdMap.get(edge.source),
+        target: newIdMap.get(edge.target),
+        selected: false,
+      }));
+
       setNodes((nds) => {
         const deselectedExistingNodes = nds.map(node => ({ ...node, selected: false }));
         return deselectedExistingNodes.concat(newNodes.map(node => ({...node, selected: true})));
       });
+      setEdges((eds) => eds.concat(pastedEdges));
       setSelectedTreeItem(newNodes.length > 0 ? newNodes[0].id : null);
-  
+
       // Removed setCopiedNodes([]); to allow multiple pastes
       console.log('Nodes pasted.');
-    }, [copiedNodes, nodes, setNodes, generateUniqueNodeLabel, setSelectedTreeItem]);
+      console.log('Edges pasted:', pastedEdges.map(e => e.id));
+    }, [copiedNodes, copiedEdges, nodes, setNodes, setEdges, generateUniqueNodeLabel, setSelectedTreeItem]);
   const handleDuplicate = useCallback(() => {
     const selectedNodes = nodes.filter(node => node.selected);
     if (selectedNodes.length === 0) {
@@ -270,15 +293,16 @@ const App = () => {
       }
 
       // Calculate position
-      let newPosition = { ...oldNode.position };
+      let newPosition;
       if (potentialParentNodeId && newNodeParentId === potentialParentNodeId) {
         // If it's becoming a child of the selected external node, place it at a default relative position
-        newPosition.x = offset.x; // Relative to parent
-        newPosition.y = offset.y; // Relative to parent
+        newPosition = { x: offset.x, y: offset.y };
+      } else if (oldNode.parentId && nodesToDuplicate.some(n => n.id === oldNode.parentId)) {
+        // Child of another duplicated node - keep same relative position within parent
+        newPosition = { ...oldNode.position };
       } else {
-        // Top-level or child of another duplicated node, use absolute offset from original position
-        newPosition.x = oldNode.position.x + offset.x;
-        newPosition.y = oldNode.position.y + offset.y;
+        // Top-level node (no parent, or parent not duplicated), apply offset
+        newPosition = { x: oldNode.position.x + offset.x, y: oldNode.position.y + offset.y };
       }
 
       const newNode = {
@@ -296,14 +320,27 @@ const App = () => {
       duplicatedNodes.push(newNode);
     });
 
+    // Duplicate edges (transitions) where both source and target are in the duplicated set
+    const duplicatedNodeIds = new Set(nodesToDuplicate.map(n => n.id));
+    const duplicatedEdges = edges
+      .filter(edge => duplicatedNodeIds.has(edge.source) && duplicatedNodeIds.has(edge.target))
+      .map(edge => ({
+        ...edge,
+        id: `e${newIdMap.get(edge.source)}-${newIdMap.get(edge.target)}`,
+        source: newIdMap.get(edge.source),
+        target: newIdMap.get(edge.target),
+        selected: false,
+      }));
+
     setNodes((nds) => {
       const deselectedExistingNodes = nds.map(node => ({ ...node, selected: false }));
       return deselectedExistingNodes.concat(duplicatedNodes.map(node => ({...node, selected: true})));
     });
-    setSelectedTreeItem(duplicatedNodes.length > 0 ? duplicatedNodes[0].id : null); 
+    setEdges((eds) => eds.concat(duplicatedEdges));
+    setSelectedTreeItem(duplicatedNodes.length > 0 ? duplicatedNodes[0].id : null);
 
     console.log('Nodes duplicated.');
-  }, [nodes, getAllDescendants, getNextId, generateUniqueNodeLabel, setNodes, setSelectedTreeItem]);
+  }, [nodes, edges, getAllDescendants, getNextId, generateUniqueNodeLabel, setNodes, setEdges, setSelectedTreeItem]);
 
   const buildTreeData = useCallback(() => {
     const nodesMap = new Map(nodes.map(node => [node.id, { ...node, children: [] }]));
