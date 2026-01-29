@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  TextField,
+  FormControlLabel,
+  Checkbox,
+  Typography,
+} from '@mui/material';
 
 const PropertiesPanel = ({ selectedNode, onPropertyChange }) => {
-  // All Hooks must be called unconditionally at the top level
   const [tempName, setTempName] = useState('');
   const [tempEntry, setTempEntry] = useState('');
   const [tempExit, setTempExit] = useState('');
   const [tempDo, setTempDo] = useState('');
 
-  // Effect to update local states when selectedNode changes
   useEffect(() => {
     if (selectedNode && selectedNode.data) {
       setTempName(selectedNode.data.label || '');
@@ -22,8 +27,6 @@ const PropertiesPanel = ({ selectedNode, onPropertyChange }) => {
     }
   }, [selectedNode]);
 
-  // All event handlers must be defined here, before the conditional return,
-  // to ensure they are available in the JSX.
   const handleNameChangeLocal = (event) => {
     setTempName(event.target.value);
   };
@@ -36,7 +39,7 @@ const PropertiesPanel = ({ selectedNode, onPropertyChange }) => {
 
   const handleNameKeyDown = (event) => {
     if (event.key === 'Enter') {
-      event.target.blur(); // Trigger onBlur to save the change
+      event.target.blur();
     }
   };
 
@@ -51,7 +54,7 @@ const PropertiesPanel = ({ selectedNode, onPropertyChange }) => {
     }
   };
   const handleEntryKeyDown = (event) => {
-    if (event.key === 'Enter' && !event.shiftKey) { // Allow Shift+Enter for new lines
+    if (event.key === 'Enter' && !event.shiftKey) {
       event.target.blur();
     }
   };
@@ -82,78 +85,77 @@ const PropertiesPanel = ({ selectedNode, onPropertyChange }) => {
 
   if (!selectedNode || !selectedNode.data) {
     return (
-      <div className="properties-panel-content">
-        <p>Select a state to view its properties.</p>
-      </div>
+      <Box sx={{ p: 2 }}>
+        <Typography variant="body2" color="text.secondary">
+          Select a state to view its properties.
+        </Typography>
+      </Box>
     );
   }
 
   return (
-    <div className="properties-panel-content">
-      <h4>Properties for: {selectedNode.data.label}</h4>
-      <div>
-        <label>
-          Name:
-          <input
-            type="text"
-            value={tempName} // Use local state
-            onChange={handleNameChangeLocal} // Update local state on change
-            onBlur={handleNameBlur} // Update global state on blur
-            onKeyDown={handleNameKeyDown} // Trigger blur on Enter
-            disabled={selectedNode.id === '/'} // Disable if root node
-          />
-        </label>
-      </div>
-      <div>
-        <label>
-          History:
-          <input
-            type="checkbox"
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <TextField
+        label="Name"
+        size="small"
+        fullWidth
+        value={tempName}
+        onChange={handleNameChangeLocal}
+        onBlur={handleNameBlur}
+        onKeyDown={handleNameKeyDown}
+        disabled={selectedNode.id === '/'}
+      />
+
+      <FormControlLabel
+        control={
+          <Checkbox
             checked={selectedNode.data.history || false}
             onChange={handleHistoryChange}
+            size="small"
           />
-        </label>
-      </div>
+        }
+        label="History"
+      />
 
-      <div>
-        <label>
-          Entry:
-          <textarea
-            rows={4}
-            value={tempEntry}
-            onChange={handleEntryChangeLocal}
-            onBlur={handleEntryBlur}
-            onKeyDown={handleEntryKeyDown}
-          />
-        </label>
-      </div>
+      <TextField
+        label="Entry"
+        size="small"
+        fullWidth
+        multiline
+        rows={3}
+        value={tempEntry}
+        onChange={handleEntryChangeLocal}
+        onBlur={handleEntryBlur}
+        onKeyDown={handleEntryKeyDown}
+        placeholder="Entry action code..."
+      />
 
-      <div>
-        <label>
-          Exit:
-          <textarea
-            rows={4}
-            value={tempExit}
-            onChange={handleExitChangeLocal}
-            onBlur={handleExitBlur}
-            onKeyDown={handleExitKeyDown}
-          />
-        </label>
-      </div>
+      <TextField
+        label="Exit"
+        size="small"
+        fullWidth
+        multiline
+        rows={3}
+        value={tempExit}
+        onChange={handleExitChangeLocal}
+        onBlur={handleExitBlur}
+        onKeyDown={handleExitKeyDown}
+        placeholder="Exit action code..."
+      />
 
-      <div>
-        <label>
-          Do:
-          <textarea
-            rows={4}
-            value={tempDo}
-            onChange={handleDoChangeLocal}
-            onBlur={handleDoBlur}
-            onKeyDown={handleDoKeyDown}
-          />
-        </label>
-      </div>
-    </div>
+      <TextField
+        label="Do"
+        size="small"
+        fullWidth
+        multiline
+        rows={3}
+        value={tempDo}
+        onChange={handleDoChangeLocal}
+        onBlur={handleDoBlur}
+        onKeyDown={handleDoKeyDown}
+        placeholder="Activity code..."
+      />
+    </Box>
   );
 };
 

@@ -7,13 +7,67 @@ import ReactFlow, {
   useReactFlow,
   ReactFlowProvider,
   MarkerType,
+  Node,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
+import {
+  ThemeProvider,
+  createTheme,
+  CssBaseline,
+  AppBar,
+  Toolbar,
+  Button,
+  Box,
+  Paper,
+  Typography,
+  Divider,
+  Tooltip,
+} from '@mui/material';
+import {
+  Add as AddIcon,
+  FolderOpen as OpenIcon,
+  Save as SaveIcon,
+  FileDownload as ExportIcon,
+} from '@mui/icons-material';
+
 import './index.css';
-import StateNode from './StateNode'; // Import the custom node
-import StateTree from './StateTree'; // Import the StateTree component
-import PropertiesPanel from './PropertiesPanel'; // Import the PropertiesPanel component
+import StateNode from './StateNode';
+import StateTree from './StateTree';
+import PropertiesPanel from './PropertiesPanel';
+import { convertToYaml, convertFromYaml } from './yamlConverter';
+
+const theme = createTheme({
+  palette: {
+    mode: 'light',
+    primary: {
+      main: '#1976d2',
+    },
+    background: {
+      default: '#fafafa',
+    },
+  },
+  components: {
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          textTransform: 'none',
+        },
+      },
+    },
+  },
+});
+
+// Type declaration for the file API exposed from preload
+declare global {
+  interface Window {
+    fileAPI: {
+      saveFile: (content: string, defaultName: string) => Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
+      exportFile: (content: string, defaultName: string) => Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
+      openFile: () => Promise<{ success: boolean; content?: string; filePath?: string; canceled?: boolean; error?: string }>;
+    };
+  }
+}
 
 const nodeTypes = { stateNode: StateNode }; // Define the custom node type
 
@@ -342,6 +396,68 @@ const App = () => {
     console.log('Nodes duplicated.');
   }, [nodes, edges, getAllDescendants, getNextId, generateUniqueNodeLabel, setNodes, setEdges, setSelectedTreeItem]);
 
+  const handleSave = useCallback(async () => {
+    const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, true);
+    const result = await window.fileAPI.saveFile(yamlContent, 'statemachine.yaml');
+    if (result.success) {
+      console.log('Saved to:', result.filePath);
+    } else if (result.error) {
+      alert('Error saving file: ' + result.error);
+    }
+  }, [nodes, edges, rootHistory]);
+
+  const handleExport = useCallback(async () => {
+    const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, false);
+    const result = await window.fileAPI.exportFile(yamlContent, 'statemachine.yaml');
+    if (result.success) {
+      console.log('Exported to:', result.filePath);
+    } else if (result.error) {
+      alert('Error exporting file: ' + result.error);
+    }
+  }, [nodes, edges, rootHistory]);
+
+  const handleOpen = useCallback(async () => {
+    const result = await window.fileAPI.openFile();
+    if (result.success && result.content) {
+      try {
+        const { nodes: loadedNodes, edges: loadedEdges, rootHistory: loadedRootHistory } = convertFromYaml(result.content);
+        setNodes(loadedNodes);
+        setEdges(loadedEdges);
+        setRootHistory(loadedRootHistory);
+        setSelectedTreeItem(null);
+        // Update idCounter to avoid conflicts
+        const maxId = loadedNodes.reduce((max, node) => {
+          const match = node.id.match(/node_(\d+)/);
+          if (match) {
+            return Math.max(max, parseInt(match[1], 10));
+          }
+          return max;
+        }, 0);
+        idCounter = maxId + 1;
+        console.log('Opened:', result.filePath);
+      } catch (error) {
+        alert('Error parsing YAML file: ' + (error as Error).message);
+      }
+    } else if (result.error) {
+      alert('Error opening file: ' + result.error);
+    }
+  }, [setNodes, setEdges, setRootHistory, setSelectedTreeItem]);
+
+  const handleNew = useCallback(() => {
+    if (nodes.length > 0) {
+      const confirmed = window.confirm('Are you sure you want to create a new state machine? Unsaved changes will be lost.');
+      if (!confirmed) {
+        return;
+      }
+    }
+    setNodes([]);
+    setEdges([]);
+    setRootHistory(false);
+    setSelectedTreeItem(null);
+    idCounter = 1;
+    console.log('New state machine created.');
+  }, [nodes, setNodes, setEdges, setRootHistory, setSelectedTreeItem]);
+
   const buildTreeData = useCallback(() => {
     const nodesMap = new Map(nodes.map(node => [node.id, { ...node, children: [] }]));
     
@@ -517,7 +633,7 @@ const App = () => {
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
       const isModifierPressed = isMac ? event.metaKey : event.ctrlKey;
 
-      if (event.key === 'n') {
+      if (event.key === 'n' && !isModifierPressed) {
         event.preventDefault();
         setIsAddingNode(true);
       } else if (isModifierPressed) {
@@ -534,6 +650,18 @@ const App = () => {
             event.preventDefault();
             handleDuplicate();
             break;
+          case 's':
+            event.preventDefault();
+            if (event.shiftKey) {
+              handleExport();
+            } else {
+              handleSave();
+            }
+            break;
+          case 'o':
+            event.preventDefault();
+            handleOpen();
+            break;
           default:
             break;
         }
@@ -544,7 +672,7 @@ const App = () => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleCopy, handlePaste, handleDuplicate, setIsAddingNode]);
+  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleExport, handleOpen, setIsAddingNode]);
 
   const onPaneClick = useCallback(
     (event) => {
@@ -629,43 +757,116 @@ const App = () => {
   );
 
   return (
-    <div className="app-container" style={{ display: 'flex', height: '100vh', width: '100vw' }}>
-      <div className="sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
-        <div style={{ flexShrink: 0 }}>
-          <h3>State Tree</h3>
-          <StateTree treeData={treeData} onSelect={handleTreeSelect} selectedItemId={selectedTreeItem} />
-        </div>
-        <div className="properties-panel" style={{ flexGrow: 1, overflowY: 'auto', padding: '10px' }}>
-          <h3>Properties</h3>
-          <PropertiesPanel 
-            selectedNode={selectedNode} 
-            onPropertyChange={handlePropertyChange} 
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw' }}>
+      <AppBar position="static" color="default" elevation={1}>
+        <Toolbar variant="dense" sx={{ gap: 1 }}>
+          <Tooltip title="New (Cmd+N)">
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<AddIcon />}
+              onClick={handleNew}
+            >
+              New
+            </Button>
+          </Tooltip>
+          <Tooltip title="Open (Cmd+O)">
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<OpenIcon />}
+              onClick={handleOpen}
+            >
+              Open
+            </Button>
+          </Tooltip>
+          <Tooltip title="Save (Cmd+S)">
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={<SaveIcon />}
+              onClick={handleSave}
+            >
+              Save
+            </Button>
+          </Tooltip>
+          <Tooltip title="Export (Cmd+Shift+S)">
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<ExportIcon />}
+              onClick={handleExport}
+            >
+              Export
+            </Button>
+          </Tooltip>
+          <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
+            Cmd+S: Save | Cmd+Shift+S: Export | Cmd+O: Open
+          </Typography>
+        </Toolbar>
+      </AppBar>
+
+      <Box sx={{ display: 'flex', flexGrow: 1, overflow: 'hidden' }}>
+        <Paper
+          elevation={0}
+          sx={{
+            width: 280,
+            display: 'flex',
+            flexDirection: 'column',
+            borderRight: 1,
+            borderColor: 'divider',
+          }}
+        >
+          <Box sx={{ p: 2, flexShrink: 0 }}>
+            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+              State Tree
+            </Typography>
+            <StateTree treeData={treeData} onSelect={handleTreeSelect} selectedItemId={selectedTreeItem} />
+          </Box>
+
+          <Divider />
+
+          <Box sx={{ p: 2, flexGrow: 1, overflowY: 'auto' }}>
+            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+              Properties
+            </Typography>
+            <PropertiesPanel
+              selectedNode={selectedNode}
+              onPropertyChange={handlePropertyChange}
+            />
+          </Box>
+        </Paper>
+
+        <Box
+          className={isAddingNode ? 'crosshair' : ''}
+          sx={{ flexGrow: 1, position: 'relative' }}
+        >
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChangeWithSelection}
+            onEdgesChange={onEdgesChangeWithSelection}
+            onConnect={onConnect}
+            onPaneClick={onPaneClick}
+            onNodeClick={onNodeClick}
+            nodeTypes={nodeTypes}
+            isValidConnection={isValidConnection}
+            fitView
           />
-        </div>
-      </div>
-      <div className={`reactflow-container ${isAddingNode ? 'crosshair' : ''}`} style={{ flexGrow: 1 }}>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChangeWithSelection}
-          onEdgesChange={onEdgesChangeWithSelection}
-          onConnect={onConnect}
-          onPaneClick={onPaneClick}
-          onNodeClick={onNodeClick}
-          nodeTypes={nodeTypes}
-          isValidConnection={isValidConnection}
-          fitView
-        />
-      </div>
-    </div>
+        </Box>
+      </Box>
+    </Box>
   );
 };
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <ReactFlowProvider>
-      <App />
-    </ReactFlowProvider>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <ReactFlowProvider>
+        <App />
+      </ReactFlowProvider>
+    </ThemeProvider>
   </React.StrictMode>
 );

@@ -1,18 +1,18 @@
 import React from 'react';
+import { SimpleTreeView } from '@mui/x-tree-view/SimpleTreeView';
+import { TreeItem } from '@mui/x-tree-view/TreeItem';
+import { Box } from '@mui/material';
 
 const TreeNode = ({ node, onSelect, selectedItemId }) => {
-  const isSelected = selectedItemId === node.id;
   return (
-    <div style={{ marginLeft: 10 }}>
-      <div
-        style={{ cursor: 'pointer', 
-                 fontWeight: isSelected ? 'bold' : 'normal',
-                 color: isSelected ? '#007bff' : 'inherit' // Make it blue when selected
-              }}
-        onClick={() => onSelect(node.id, node.type)}
-      >
-        {node.label}
-      </div>
+    <TreeItem
+      itemId={node.id}
+      label={node.label}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect(node.id, node.type);
+      }}
+    >
       {node.children && node.children.map(child => (
         <TreeNode
           key={child.id}
@@ -21,22 +21,30 @@ const TreeNode = ({ node, onSelect, selectedItemId }) => {
           selectedItemId={selectedItemId}
         />
       ))}
-    </div>
+    </TreeItem>
   );
 };
 
 const StateTree = ({ treeData, onSelect, selectedItemId }) => {
   return (
-    <div>
-      {treeData.map(node => (
-        <TreeNode
-          key={node.id}
-          node={node}
-          onSelect={onSelect}
-          selectedItemId={selectedItemId}
-        />
-      ))}
-    </div>
+    <Box sx={{ minHeight: 200, flexGrow: 1 }}>
+      <SimpleTreeView
+        selectedItems={selectedItemId}
+        onSelectedItemsChange={() => {
+          // Selection is handled by TreeNode onClick
+        }}
+        defaultExpandedItems={['/']}
+      >
+        {treeData.map(node => (
+          <TreeNode
+            key={node.id}
+            node={node}
+            onSelect={onSelect}
+            selectedItemId={selectedItemId}
+          />
+        ))}
+      </SimpleTreeView>
+    </Box>
   );
 };
 
