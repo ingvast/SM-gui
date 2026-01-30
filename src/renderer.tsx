@@ -35,6 +35,7 @@ import './index.css';
 import StateNode from './StateNode';
 import StateTree from './StateTree';
 import PropertiesPanel from './PropertiesPanel';
+import SplineEdge from './SplineEdge';
 import { convertToYaml, convertFromYaml } from './yamlConverter';
 
 const theme = createTheme({
@@ -69,7 +70,8 @@ declare global {
   }
 }
 
-const nodeTypes = { stateNode: StateNode }; // Define the custom node type
+const nodeTypes = { stateNode: StateNode };
+const edgeTypes = { spline: SplineEdge };
 
 const initialNodes = [
   { 
@@ -89,10 +91,12 @@ const initialNodes = [
 ];
 
 const initialEdges = [
-  { 
-    id: 'e1-2', 
-    source: '1', 
-    target: '2', 
+  {
+    id: 'e1-2',
+    source: '1',
+    target: '2',
+    type: 'spline',
+    data: { controlPoints: [], label: '' },
     markerEnd: { type: MarkerType.ArrowClosed },
   },
 ];
@@ -106,13 +110,39 @@ const App = () => {
   const { screenToFlowPosition } = useReactFlow(); // Use screenToFlowPosition instead of project
 
   const onConnect = useCallback(
-    (params) => setEdges((eds) => addEdge({ ...params, markerEnd: { type: MarkerType.ArrowClosed } }, eds)),
+    (params) => setEdges((eds) => addEdge({
+      ...params,
+      type: 'spline',
+      data: { controlPoints: [], label: '' },
+      markerEnd: { type: MarkerType.ArrowClosed },
+    }, eds)),
     [setEdges]
   );
 
   const isValidConnection = useCallback(
     (connection) => connection.source !== connection.target,
     []
+  );
+
+  // Handle edge reconnection (dragging edge endpoints to new handles/nodes)
+  const onReconnect = useCallback(
+    (oldEdge, newConnection) => {
+      setEdges((eds) =>
+        eds.map((edge) => {
+          if (edge.id === oldEdge.id) {
+            return {
+              ...edge,
+              source: newConnection.source,
+              target: newConnection.target,
+              sourceHandle: newConnection.sourceHandle,
+              targetHandle: newConnection.targetHandle,
+            };
+          }
+          return edge;
+        })
+      );
+    },
+    [setEdges]
   );
 
   const [isAddingNode, setIsAddingNode] = useState(false);
@@ -191,10 +221,16 @@ const App = () => {
     const finalNodesToCopy = Array.from(nodesToCopySet).map(node => ({ ...node }));
     const copiedNodeIds = new Set(finalNodesToCopy.map(n => n.id));
 
-    // Copy edges where both source and target are in the copied set
+    // Copy edges where both source and target are in the copied set (deep copy data)
     const edgesToCopy = edges
       .filter(edge => copiedNodeIds.has(edge.source) && copiedNodeIds.has(edge.target))
-      .map(edge => ({ ...edge }));
+      .map(edge => ({
+        ...edge,
+        data: edge.data ? {
+          ...edge.data,
+          controlPoints: edge.data.controlPoints ? [...edge.data.controlPoints] : [],
+        } : { controlPoints: [], label: '' },
+      }));
 
     setCopiedNodes(finalNodesToCopy);
     setCopiedEdges(edgesToCopy);
@@ -270,13 +306,17 @@ const App = () => {
         newNodes.push(newNode);
       });
       
-      // Paste edges with remapped IDs
+      // Paste edges with remapped IDs (deep copy data)
       const pastedEdges = copiedEdges.map(edge => ({
         ...edge,
         id: `e${newIdMap.get(edge.source)}-${newIdMap.get(edge.target)}`,
         source: newIdMap.get(edge.source),
         target: newIdMap.get(edge.target),
         selected: false,
+        data: edge.data ? {
+          ...edge.data,
+          controlPoints: edge.data.controlPoints ? [...edge.data.controlPoints] : [],
+        } : { controlPoints: [], label: '' },
       }));
 
       setNodes((nds) => {
@@ -374,7 +414,7 @@ const App = () => {
       duplicatedNodes.push(newNode);
     });
 
-    // Duplicate edges (transitions) where both source and target are in the duplicated set
+    // Duplicate edges (transitions) where both source and target are in the duplicated set (deep copy data)
     const duplicatedNodeIds = new Set(nodesToDuplicate.map(n => n.id));
     const duplicatedEdges = edges
       .filter(edge => duplicatedNodeIds.has(edge.source) && duplicatedNodeIds.has(edge.target))
@@ -384,6 +424,10 @@ const App = () => {
         source: newIdMap.get(edge.source),
         target: newIdMap.get(edge.target),
         selected: false,
+        data: edge.data ? {
+          ...edge.data,
+          controlPoints: edge.data.controlPoints ? [...edge.data.controlPoints] : [],
+        } : { controlPoints: [], label: '' },
       }));
 
     setNodes((nds) => {
@@ -847,10 +891,13 @@ const App = () => {
             onNodesChange={onNodesChangeWithSelection}
             onEdgesChange={onEdgesChangeWithSelection}
             onConnect={onConnect}
+            onReconnect={onReconnect}
             onPaneClick={onPaneClick}
             onNodeClick={onNodeClick}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             isValidConnection={isValidConnection}
+            reconnectRadius={10}
             fitView
           />
         </Box>
