@@ -103,11 +103,48 @@ const initialEdges = [
 
 let idCounter = 3; // Use a distinct name for clarity
 const getNextId = () => `node_${idCounter++}`;
-  
+
+// Scale factor for nested states (will be configurable later)
+const NESTING_SCALE_FACTOR = 0.85;
+
+// Calculate the nesting depth of a node by traversing parentId chain
+function calculateNodeDepth(nodeId: string, nodesArray: Node[], cache: Map<string, number> = new Map()): number {
+  if (cache.has(nodeId)) {
+    return cache.get(nodeId)!;
+  }
+
+  const node = nodesArray.find(n => n.id === nodeId);
+  if (!node || !node.parentId) {
+    cache.set(nodeId, 0);
+    return 0;
+  }
+
+  const parentDepth = calculateNodeDepth(node.parentId, nodesArray, cache);
+  const depth = parentDepth + 1;
+  cache.set(nodeId, depth);
+  return depth;
+}
+
 const App = () => {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const { screenToFlowPosition } = useReactFlow(); // Use screenToFlowPosition instead of project
+  const { screenToFlowPosition } = useReactFlow();
+
+  // Compute nodes with depth information for scaling
+  const nodesWithDepth = useMemo(() => {
+    const depthCache = new Map<string, number>();
+    return nodes.map(node => {
+      const depth = calculateNodeDepth(node.id, nodes, depthCache);
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          depth,
+          scaleFactor: NESTING_SCALE_FACTOR,
+        },
+      };
+    });
+  }, [nodes]);
 
   const onConnect = useCallback(
     (params) => setEdges((eds) => addEdge({
@@ -763,26 +800,34 @@ const App = () => {
       if (isAddingNode && node.selected && node.width && node.height) {
         const flowPosition = screenToFlowPosition({ x: event.clientX, y: event.clientY });
 
-        const defaultNodeWidth = 150;
-        const defaultNodeHeight = 50;
+        // Calculate the parent's depth and scale factor for the new child
+        const parentDepth = calculateNodeDepth(node.id, nodes);
+        const childDepth = parentDepth + 1;
+        const scale = Math.pow(NESTING_SCALE_FACTOR, childDepth);
 
-        let newRelativePosition = {
+        // Scale the default node size
+        const baseNodeWidth = 150;
+        const baseNodeHeight = 50;
+        const scaledNodeWidth = baseNodeWidth * scale;
+        const scaledNodeHeight = baseNodeHeight * scale;
+
+        const newRelativePosition = {
           x: flowPosition.x - node.position.x,
           y: flowPosition.y - node.position.y,
         };
 
-        const safePadding = 10;
+        const safePadding = 10 * scale;
 
         newRelativePosition.x = Math.max(safePadding, newRelativePosition.x);
         if (node.width) {
-            newRelativePosition.x = Math.min(node.width - defaultNodeWidth - safePadding, newRelativePosition.x);
+            newRelativePosition.x = Math.min(node.width - scaledNodeWidth - safePadding, newRelativePosition.x);
         }
-        
+
         newRelativePosition.y = Math.max(safePadding, newRelativePosition.y);
         if (node.height) {
-            newRelativePosition.y = Math.min(node.height - defaultNodeHeight - safePadding, newRelativePosition.y);
+            newRelativePosition.y = Math.min(node.height - scaledNodeHeight - safePadding, newRelativePosition.y);
         }
-        
+
         const newNode = {
           id: getNextId(),
           type: 'stateNode',
@@ -790,7 +835,7 @@ const App = () => {
           parentId: node.id,
           extent: 'parent',
           data: { label: generateUniqueNodeLabel('New Nested State', node.id, nodes), history: false, entry: '', exit: '', do: '' },
-          style: { width: defaultNodeWidth, height: defaultNodeHeight },
+          style: { width: scaledNodeWidth, height: scaledNodeHeight },
         };
         setNodes((nds) => nds.concat(newNode));
         setIsAddingNode(false);
@@ -886,7 +931,7 @@ const App = () => {
           sx={{ flexGrow: 1, position: 'relative' }}
         >
           <ReactFlow
-            nodes={nodes}
+            nodes={nodesWithDepth}
             edges={edges}
             onNodesChange={onNodesChangeWithSelection}
             onEdgesChange={onEdgesChangeWithSelection}

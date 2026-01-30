@@ -1,40 +1,15 @@
 .state-node {
-  border: 1px solid #1a192b;
-  border-radius: 5px;
-  background-color: white;
-  width: 100%;
-  height: 100%;
-}
-
-.state-node .label {
-  text-align: center;
-  margin-top: 5px;
+  box-sizing: border-box;
 }
 
 .state-node .react-flow__handle {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1px solid white;
+  /* Base handle styles - sizes are set inline based on depth */
 }
 
-/* Make the source handle blue, slightly larger, and on top */
 .state-node .react-flow__handle.source {
-  background-color: #007bff;
-  width: 12px;
-  height: 12px;
-  z-index: 10; /* Higher z-index for source handles */
+  z-index: 10;
 }
 
-/* Make the target handle green and below */
 .state-node .react-flow__handle.target {
-  background-color: #28a745;
-  width: 10px;
-  height: 10px;
-  z-index: 5; /* Lower z-index for target handles */
-}
-
-.state-node.is-parent {
-  border: 2px dashed #666; /* Example style for parent nodes */
-  background-color: #f9f9f9;
+  z-index: 5;
 }
