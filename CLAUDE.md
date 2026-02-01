@@ -71,7 +71,14 @@ Nodes represent states:
 }
 ```
 
+#### Edges
 Edges represent transitions with source/target node IDs and arrow markers.
+Edges connect states.
+Cases when the connection is between an ancestor and descendant. 
+  For the ancestor, the edge connect to the inside edge of the state with a few pixles offset (to the inside). 
+  In case the ancestor is a target, the arrow head is on the inside pointing toward the border.
+  For all other cases of connections, the transition edge engage on the outside with the same few pixels offset.
+   
 
 ### Key Patterns
 
@@ -86,6 +93,7 @@ Edges represent transitions with source/target node IDs and arrow markers.
 ### Keyboard Shortcuts
 
 - `n` - Enter "add node" mode
+- `z` - Zoom to fit selected state
 - `Ctrl/Cmd + c` - Copy selected nodes and descendants
 - `Ctrl/Cmd + v` - Paste copied nodes
 - `Ctrl/Cmd + d` - Duplicate selected nodes

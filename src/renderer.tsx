@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import ReactFlow, {
   useNodesState,
@@ -37,6 +37,11 @@ import StateTree from './StateTree';
 import PropertiesPanel from './PropertiesPanel';
 import SplineEdge from './SplineEdge';
 import { convertToYaml, convertFromYaml } from './yamlConverter';
+import {
+  useSemanticZoomStore,
+  getAbsoluteNodeBounds,
+  SEMANTIC_ZOOM_CONFIG,
+} from './semanticZoom';
 
 const theme = createTheme({
   palette: {
@@ -128,23 +133,310 @@ function calculateNodeDepth(nodeId: string, nodesArray: Node[], cache: Map<strin
 const App = () => {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const { screenToFlowPosition } = useReactFlow();
+  const { setViewport } = useReactFlow();
 
-  // Compute nodes with depth information for scaling
-  const nodesWithDepth = useMemo(() => {
-    const depthCache = new Map<string, number>();
-    return nodes.map(node => {
-      const depth = calculateNodeDepth(node.id, nodes, depthCache);
+  // Semantic zoom state
+  const {
+    focusNodeId,
+    zoomLevel,
+    panOffset,
+    isAnimating,
+    animationStartTime,
+    setFocusNode,
+    adjustZoom,
+    adjustPan,
+    startAnimation,
+    updateAnimation,
+    finishAnimation,
+  } = useSemanticZoomStore();
+
+  // Viewport size tracking
+  const [viewportSize, setViewportSize] = useState({ width: 800, height: 600 });
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
+
+  // Track viewport size
+  useEffect(() => {
+    const updateSize = () => {
+      if (reactFlowWrapper.current) {
+        const rect = reactFlowWrapper.current.getBoundingClientRect();
+        setViewportSize({ width: rect.width, height: rect.height });
+      }
+    };
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, []);
+
+  // Animation loop for smooth transitions
+  useEffect(() => {
+    if (!isAnimating) return;
+
+    let animationFrame: number;
+    const animate = () => {
+      const elapsed = performance.now() - animationStartTime;
+      const progress = Math.min(elapsed / SEMANTIC_ZOOM_CONFIG.TRANSITION_DURATION, 1);
+
+      updateAnimation(progress);
+
+      if (progress < 1) {
+        animationFrame = requestAnimationFrame(animate);
+      } else {
+        finishAnimation();
+      }
+    };
+
+    animationFrame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [isAnimating, animationStartTime, updateAnimation, finishAnimation]);
+
+  // Lock ReactFlow viewport to identity - we handle zoom/pan via node transforms
+  useEffect(() => {
+    setViewport({ x: 0, y: 0, zoom: 1 }, { duration: 0 });
+  }, [setViewport]);
+
+  // Calculate the effective scale for the current semantic zoom state
+  const effectiveScale = useMemo(() => {
+    if (focusNodeId) {
+      const focusBounds = getAbsoluteNodeBounds(focusNodeId, nodes);
+      if (focusBounds) {
+        const padding = 0.1;
+        const scaleX = viewportSize.width * (1 - padding * 2) / focusBounds.width;
+        const scaleY = viewportSize.height * (1 - padding * 2) / focusBounds.height;
+        return Math.min(scaleX, scaleY) * zoomLevel;
+      }
+    }
+    return zoomLevel;
+  }, [focusNodeId, nodes, viewportSize, zoomLevel]);
+
+  // Calculate the pan offset that centers on focus node
+  const effectivePan = useMemo(() => {
+    if (focusNodeId) {
+      const focusBounds = getAbsoluteNodeBounds(focusNodeId, nodes);
+      if (focusBounds) {
+        const centerX = focusBounds.x + focusBounds.width / 2;
+        const centerY = focusBounds.y + focusBounds.height / 2;
+        return {
+          x: viewportSize.width / 2 - centerX * effectiveScale + panOffset.x,
+          y: viewportSize.height / 2 - centerY * effectiveScale + panOffset.y,
+        };
+      }
+    }
+    return panOffset;
+  }, [focusNodeId, nodes, viewportSize, effectiveScale, panOffset]);
+
+  // Transform nodes to screen coordinates based on semantic zoom
+  const transformedNodes = useMemo(() => {
+    const result = nodes.map(node => {
+      const bounds = getAbsoluteNodeBounds(node.id, nodes);
+      if (!bounds) return node;
+
+      // Calculate screen position and size
+      const screenX = bounds.x * effectiveScale + effectivePan.x;
+      const screenY = bounds.y * effectiveScale + effectivePan.y;
+      const screenWidth = bounds.width * effectiveScale;
+      const screenHeight = bounds.height * effectiveScale;
+
+      // Don't cull selected nodes or their descendants (they might be being dragged/edited)
+      const isSelected = node.selected;
+      const hasSelectedAncestor = (() => {
+        let current = node;
+        while (current.parentId) {
+          const parent = nodes.find(n => n.id === current.parentId);
+          if (parent?.selected) return true;
+          current = parent;
+          if (!current) break;
+        }
+        return false;
+      })();
+
+      // Check visibility
+      const isTooSmall = screenWidth < SEMANTIC_ZOOM_CONFIG.MIN_VISIBLE_SIZE ||
+                         screenHeight < SEMANTIC_ZOOM_CONFIG.MIN_VISIBLE_SIZE;
+      const isTooLarge = screenWidth > SEMANTIC_ZOOM_CONFIG.MAX_VISIBLE_SIZE ||
+                         screenHeight > SEMANTIC_ZOOM_CONFIG.MAX_VISIBLE_SIZE;
+      const isOutside = screenX + screenWidth < -SEMANTIC_ZOOM_CONFIG.VIEWPORT_MARGIN ||
+                        screenY + screenHeight < -SEMANTIC_ZOOM_CONFIG.VIEWPORT_MARGIN ||
+                        screenX > viewportSize.width + SEMANTIC_ZOOM_CONFIG.VIEWPORT_MARGIN ||
+                        screenY > viewportSize.height + SEMANTIC_ZOOM_CONFIG.VIEWPORT_MARGIN;
+
+      if (!isSelected && !hasSelectedAncestor && (isTooSmall || isTooLarge || isOutside)) {
+        return null; // Filter out
+      }
+
+      // Calculate depth for z-index (children should render on top of parents)
+      const depth = calculateNodeDepth(node.id, nodes);
+
       return {
         ...node,
+        // Remove parentId so ReactFlow doesn't try to handle hierarchy
+        parentId: undefined,
+        extent: undefined,
+        // Set screen position and size directly
+        position: { x: screenX, y: screenY },
+        // Use zIndex based on depth so children render on top of parents
+        // Selected nodes in ReactFlow get z-index 1000, so we add to that
+        zIndex: 1000 + depth * 10,
+        style: {
+          ...node.style,
+          width: screenWidth,
+          height: screenHeight,
+        },
         data: {
           ...node.data,
-          depth,
-          scaleFactor: NESTING_SCALE_FACTOR,
+          semanticScale: effectiveScale,
         },
       };
+    }).filter(Boolean) as typeof nodes;
+
+    // Sort by depth so children render after (on top of) parents
+    result.sort((a, b) => {
+      const depthA = calculateNodeDepth(a.id, nodes);
+      const depthB = calculateNodeDepth(b.id, nodes);
+      return depthA - depthB;
     });
+
+    return result;
+  }, [nodes, effectiveScale, effectivePan, viewportSize]);
+
+  // Build a set of visible node IDs for edge filtering
+  const visibleNodeIds = useMemo(() => {
+    return new Set(transformedNodes.map(n => n.id));
+  }, [transformedNodes]);
+
+  // Check if nodeA is an ancestor of nodeB (any level)
+  const isAncestorOf = useCallback((ancestorId: string, descendantId: string): boolean => {
+    let current = nodes.find(n => n.id === descendantId);
+    while (current?.parentId) {
+      if (current.parentId === ancestorId) return true;
+      current = nodes.find(n => n.id === current!.parentId);
+    }
+    return false;
   }, [nodes]);
+
+  // Filter edges and add effectiveScale and ancestor info
+  const transformedEdges = useMemo(() => {
+    return edges
+      .filter(edge => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target))
+      .map(edge => {
+        // Check if this is an ancestor-descendant relationship (any level)
+        // sourceIsAncestor: source is an ancestor of target (source is parent/grandparent/etc of target)
+        // targetIsAncestor: target is an ancestor of source (target is parent/grandparent/etc of source)
+        const sourceIsAncestor = isAncestorOf(edge.source, edge.target);
+        const targetIsAncestor = isAncestorOf(edge.target, edge.source);
+
+        return {
+          ...edge,
+          data: {
+            ...edge.data,
+            effectiveScale,
+            sourceIsAncestor,  // true if source is ancestor of target
+            targetIsAncestor,  // true if target is ancestor of source
+          },
+        };
+      });
+  }, [edges, visibleNodeIds, effectiveScale, isAncestorOf]);
+
+  // Custom wheel handler for semantic zoom (added manually to avoid passive listener)
+  useEffect(() => {
+    const wrapper = reactFlowWrapper.current;
+    if (!wrapper) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const delta = -event.deltaY * 0.001;
+      const rect = wrapper.getBoundingClientRect();
+      adjustZoom(delta, event.clientX - rect.left, event.clientY - rect.top);
+    };
+
+    wrapper.addEventListener('wheel', handleWheel, { passive: false });
+    return () => wrapper.removeEventListener('wheel', handleWheel);
+  }, [adjustZoom]);
+
+  // Pan handling - drag background to pan
+  const isPanning = useRef(false);
+  const lastPanPos = useRef({ x: 0, y: 0 });
+
+  const handlePaneMouseDown = useCallback((event: React.MouseEvent) => {
+    // Left mouse button on pane starts panning
+    if (event.button === 0) {
+      isPanning.current = true;
+      lastPanPos.current = { x: event.clientX, y: event.clientY };
+    }
+  }, []);
+
+  const handlePaneMouseMove = useCallback((event: React.MouseEvent) => {
+    if (isPanning.current) {
+      const deltaX = event.clientX - lastPanPos.current.x;
+      const deltaY = event.clientY - lastPanPos.current.y;
+      lastPanPos.current = { x: event.clientX, y: event.clientY };
+      adjustPan(deltaX, deltaY);
+    }
+  }, [adjustPan]);
+
+  const handlePaneMouseUp = useCallback(() => {
+    isPanning.current = false;
+  }, []);
+
+  // Zoom to focus on selected node (Z key)
+  const handleSemanticZoomToSelected = useCallback(() => {
+    const selectedNode = nodes.find(n => n.selected);
+    if (!selectedNode) {
+      console.log('No node selected to zoom to.');
+      return;
+    }
+
+    const bounds = getAbsoluteNodeBounds(selectedNode.id, nodes);
+    if (!bounds) return;
+
+    // Calculate target zoom and pan to center the node
+    const padding = 0.1;
+    const scaleX = viewportSize.width * (1 - padding * 2) / bounds.width;
+    const scaleY = viewportSize.height * (1 - padding * 2) / bounds.height;
+    const targetZoom = Math.min(scaleX, scaleY);
+
+    const centerX = bounds.x + bounds.width / 2;
+    const centerY = bounds.y + bounds.height / 2;
+    const targetPanX = viewportSize.width / 2 - centerX * targetZoom;
+    const targetPanY = viewportSize.height / 2 - centerY * targetZoom;
+
+    setFocusNode(selectedNode.id);
+    startAnimation(1.0, { x: targetPanX, y: targetPanY });
+  }, [nodes, viewportSize, setFocusNode, startAnimation]);
+
+  // Navigate up one level (Escape key)
+  const handleNavigateUp = useCallback(() => {
+    if (!focusNodeId) return;
+
+    const focusNode = nodes.find(n => n.id === focusNodeId);
+    if (!focusNode) {
+      setFocusNode(null);
+      startAnimation(1.0, { x: viewportSize.width / 2, y: viewportSize.height / 2 });
+      return;
+    }
+
+    if (focusNode.parentId) {
+      // Navigate to parent
+      const parentBounds = getAbsoluteNodeBounds(focusNode.parentId, nodes);
+      if (parentBounds) {
+        const padding = 0.1;
+        const scaleX = viewportSize.width * (1 - padding * 2) / parentBounds.width;
+        const scaleY = viewportSize.height * (1 - padding * 2) / parentBounds.height;
+        const targetZoom = Math.min(scaleX, scaleY);
+
+        const centerX = parentBounds.x + parentBounds.width / 2;
+        const centerY = parentBounds.y + parentBounds.height / 2;
+        const targetPanX = viewportSize.width / 2 - centerX * targetZoom;
+        const targetPanY = viewportSize.height / 2 - centerY * targetZoom;
+
+        setFocusNode(focusNode.parentId);
+        startAnimation(1.0, { x: targetPanX, y: targetPanY });
+      }
+    } else {
+      // Navigate to root view
+      setFocusNode(null);
+      startAnimation(1.0, { x: viewportSize.width / 2, y: viewportSize.height / 2 });
+    }
+  }, [focusNodeId, nodes, viewportSize, setFocusNode, startAnimation]);
 
   const onConnect = useCallback(
     (params) => setEdges((eds) => addEdge({
@@ -156,8 +448,102 @@ const App = () => {
     [setEdges]
   );
 
+  // Calculate best handles for connecting two nodes based on their positions
+  const calculateBestHandles = useCallback((sourceId: string, targetId: string) => {
+    const sourceBounds = getAbsoluteNodeBounds(sourceId, nodes);
+    const targetBounds = getAbsoluteNodeBounds(targetId, nodes);
+
+    if (!sourceBounds || !targetBounds) {
+      return { sourceHandle: 'right-source', targetHandle: 'left-target' };
+    }
+
+    // Check for parent-child relationship
+    const sourceIsParent = isAncestorOf(sourceId, targetId);
+    const targetIsParent = isAncestorOf(targetId, sourceId);
+
+    if (sourceIsParent || targetIsParent) {
+      // For parent-child connections, find which edge of the child is closest to the parent's edge
+      const child = sourceIsParent ? targetBounds : sourceBounds;
+      const parent = sourceIsParent ? sourceBounds : targetBounds;
+
+      // Calculate distances from child center to each parent edge
+      const childCenterX = child.x + child.width / 2;
+      const childCenterY = child.y + child.height / 2;
+
+      const distToTop = childCenterY - parent.y;
+      const distToBottom = (parent.y + parent.height) - childCenterY;
+      const distToLeft = childCenterX - parent.x;
+      const distToRight = (parent.x + parent.width) - childCenterX;
+
+      const minDist = Math.min(distToTop, distToBottom, distToLeft, distToRight);
+
+      // Both handles should be on the same side (edge goes inward)
+      if (minDist === distToTop) {
+        return sourceIsParent
+          ? { sourceHandle: 'top-source', targetHandle: 'top-target' }
+          : { sourceHandle: 'top-source', targetHandle: 'top-target' };
+      } else if (minDist === distToBottom) {
+        return sourceIsParent
+          ? { sourceHandle: 'bottom-source', targetHandle: 'bottom-target' }
+          : { sourceHandle: 'bottom-source', targetHandle: 'bottom-target' };
+      } else if (minDist === distToLeft) {
+        return sourceIsParent
+          ? { sourceHandle: 'left-source', targetHandle: 'left-target' }
+          : { sourceHandle: 'left-source', targetHandle: 'left-target' };
+      } else {
+        return sourceIsParent
+          ? { sourceHandle: 'right-source', targetHandle: 'right-target' }
+          : { sourceHandle: 'right-source', targetHandle: 'right-target' };
+      }
+    }
+
+    // Normal case: nodes are not in parent-child relationship
+    const sourceCenterX = sourceBounds.x + sourceBounds.width / 2;
+    const sourceCenterY = sourceBounds.y + sourceBounds.height / 2;
+    const targetCenterX = targetBounds.x + targetBounds.width / 2;
+    const targetCenterY = targetBounds.y + targetBounds.height / 2;
+
+    const dx = targetCenterX - sourceCenterX;
+    const dy = targetCenterY - sourceCenterY;
+
+    // Determine primary direction
+    if (Math.abs(dx) > Math.abs(dy)) {
+      // Horizontal: target is to the right or left
+      if (dx > 0) {
+        return { sourceHandle: 'right-source', targetHandle: 'left-target' };
+      } else {
+        return { sourceHandle: 'left-source', targetHandle: 'right-target' };
+      }
+    } else {
+      // Vertical: target is below or above
+      if (dy > 0) {
+        return { sourceHandle: 'bottom-source', targetHandle: 'top-target' };
+      } else {
+        return { sourceHandle: 'top-source', targetHandle: 'bottom-target' };
+      }
+    }
+  }, [nodes, isAncestorOf]);
+
+  // Create a transition between two nodes
+  const createTransition = useCallback((sourceId: string, targetId: string) => {
+    const { sourceHandle, targetHandle } = calculateBestHandles(sourceId, targetId);
+
+    const newEdge = {
+      id: `e${sourceId}-${targetId}-${Date.now()}`,
+      source: sourceId,
+      target: targetId,
+      sourceHandle,
+      targetHandle,
+      type: 'spline',
+      data: { controlPoints: [], label: '' },
+      markerEnd: { type: MarkerType.ArrowClosed },
+    };
+
+    setEdges((eds) => eds.concat(newEdge));
+  }, [calculateBestHandles, setEdges]);
+
   const isValidConnection = useCallback(
-    (connection) => connection.source !== connection.target,
+    () => true, // Allow all connections including self-loops
     []
   );
 
@@ -183,6 +569,8 @@ const App = () => {
   );
 
   const [isAddingNode, setIsAddingNode] = useState(false);
+  const [isAddingTransition, setIsAddingTransition] = useState(false);
+  const [transitionSourceId, setTransitionSourceId] = useState<string | null>(null);
   const [selectedTreeItem, setSelectedTreeItem] = useState(null);
   const [rootHistory, setRootHistory] = useState(false);
   const [copiedNodes, setCopiedNodes] = useState([]);
@@ -539,6 +927,7 @@ const App = () => {
     console.log('New state machine created.');
   }, [nodes, setNodes, setEdges, setRootHistory, setSelectedTreeItem]);
 
+
   const buildTreeData = useCallback(() => {
     const nodesMap = new Map(nodes.map(node => [node.id, { ...node, children: [] }]));
     
@@ -587,7 +976,72 @@ const App = () => {
 
   const onNodesChangeWithSelection = useCallback(
     (changes) => {
-      onNodesChange(changes);
+      // Convert position and dimension changes from screen coordinates to world coordinates
+      const convertedChanges = changes.map(change => {
+        if (change.type === 'position' && change.position) {
+          // Find the original node to get its absolute position offset
+          const node = nodes.find(n => n.id === change.id);
+          if (node) {
+            const bounds = getAbsoluteNodeBounds(change.id, nodes);
+            if (bounds) {
+              // The screen position from ReactFlow
+              const screenX = change.position.x;
+              const screenY = change.position.y;
+
+              // Convert back to world coordinates
+              let worldX = (screenX - effectivePan.x) / effectiveScale;
+              let worldY = (screenY - effectivePan.y) / effectiveScale;
+
+              // For nested nodes, we need relative position to parent
+              if (node.parentId) {
+                const parentBounds = getAbsoluteNodeBounds(node.parentId, nodes);
+                if (parentBounds) {
+                  // Calculate relative position
+                  let relX = worldX - parentBounds.x;
+                  let relY = worldY - parentBounds.y;
+
+                  // Get node dimensions (in world coordinates)
+                  const nodeWidth = (node.style?.width as number) || node.width || 150;
+                  const nodeHeight = (node.style?.height as number) || node.height || 50;
+
+                  // Constrain to parent bounds (with small padding)
+                  const padding = 5;
+                  relX = Math.max(padding, Math.min(relX, parentBounds.width - nodeWidth - padding));
+                  relY = Math.max(padding, Math.min(relY, parentBounds.height - nodeHeight - padding));
+
+                  return {
+                    ...change,
+                    position: { x: relX, y: relY },
+                  };
+                }
+              }
+
+              // Top-level node
+              return {
+                ...change,
+                position: { x: worldX, y: worldY },
+              };
+            }
+          }
+        }
+
+        // Handle dimension changes (from NodeResizer)
+        if (change.type === 'dimensions' && change.updateStyle && change.dimensions) {
+          // Only scale actual resize operations (updateStyle: true)
+          // DOM measurement updates (no updateStyle) pass through unchanged
+          return {
+            ...change,
+            dimensions: {
+              width: change.dimensions.width / effectiveScale,
+              height: change.dimensions.height / effectiveScale,
+            },
+          };
+        }
+
+        return change;
+      });
+
+      onNodesChange(convertedChanges);
       changes.forEach(change => {
         if (change.type === 'select' && change.selected) {
           setSelectedTreeItem(change.id);
@@ -596,7 +1050,7 @@ const App = () => {
         }
       });
     },
-    [onNodesChange, selectedTreeItem]
+    [onNodesChange, selectedTreeItem, nodes, effectiveScale, effectivePan]
   );
 
   const onEdgesChangeWithSelection = useCallback(
@@ -717,6 +1171,42 @@ const App = () => {
       if (event.key === 'n' && !isModifierPressed) {
         event.preventDefault();
         setIsAddingNode(true);
+      } else if (event.key === 't' && !isModifierPressed) {
+        event.preventDefault();
+        // Check if a transition (edge) is selected - if so, recompute its handles
+        const selectedEdge = edges.find(e => e.selected);
+        if (selectedEdge) {
+          const { sourceHandle, targetHandle } = calculateBestHandles(selectedEdge.source, selectedEdge.target);
+          setEdges((eds) =>
+            eds.map((edge) => {
+              if (edge.id === selectedEdge.id) {
+                return {
+                  ...edge,
+                  sourceHandle,
+                  targetHandle,
+                };
+              }
+              return edge;
+            })
+          );
+        } else {
+          // Start transition creation from currently selected node
+          const selectedNode = nodes.find(n => n.selected);
+          if (selectedNode) {
+            setIsAddingTransition(true);
+            setTransitionSourceId(selectedNode.id);
+          }
+        }
+      } else if (event.key === 'Escape' && isAddingTransition) {
+        event.preventDefault();
+        setIsAddingTransition(false);
+        setTransitionSourceId(null);
+      } else if (event.key === 'z' && !isModifierPressed) {
+        event.preventDefault();
+        handleSemanticZoomToSelected();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        handleNavigateUp();
       } else if (isModifierPressed) {
         switch (event.key) {
           case 'c':
@@ -753,16 +1243,24 @@ const App = () => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleExport, handleOpen, setIsAddingNode]);
+  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleExport, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, setIsAddingNode, nodes, edges, isAddingTransition, calculateBestHandles, setEdges]);
 
   const onPaneClick = useCallback(
     (event) => {
       if (isAddingNode) {
-        const flowPosition = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+        // Convert screen click position to world coordinates
+        const rect = reactFlowWrapper.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        const screenX = event.clientX - rect.left;
+        const screenY = event.clientY - rect.top;
+        const worldX = (screenX - effectivePan.x) / effectiveScale;
+        const worldY = (screenY - effectivePan.y) / effectiveScale;
+
         const newNode = {
           id: getNextId(),
           type: 'stateNode',
-          position: flowPosition,
+          position: { x: worldX, y: worldY },
           data: { label: generateUniqueNodeLabel('New State', undefined, nodes), history: false, entry: '', exit: '', do: '' },
           style: { width: 150, height: 50 },
         };
@@ -778,11 +1276,21 @@ const App = () => {
         );
       }
     },
-    [isAddingNode, screenToFlowPosition, setNodes, setEdges, generateUniqueNodeLabel, nodes]
+    [isAddingNode, setNodes, setEdges, generateUniqueNodeLabel, nodes, effectiveScale, effectivePan]
   );
 
   const onNodeClick = useCallback(
     (event, node) => {
+      // Handle transition creation mode
+      if (isAddingTransition && transitionSourceId) {
+        // Create transition from source to this node
+        createTransition(transitionSourceId, node.id);
+        setIsAddingTransition(false);
+        setTransitionSourceId(null);
+        event.stopPropagation();
+        return;
+      }
+
       setNodes((nds) =>
         nds.map((n) => ({
           ...n,
@@ -797,36 +1305,50 @@ const App = () => {
       );
       setSelectedTreeItem(node.id);
 
-      if (isAddingNode && node.selected && node.width && node.height) {
-        const flowPosition = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      if (isAddingNode && node.selected) {
+        // Get the wrapper's bounding rect for screen-to-world conversion
+        const rect = reactFlowWrapper.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        // Convert screen click position to world coordinates
+        const screenX = event.clientX - rect.left;
+        const screenY = event.clientY - rect.top;
+        const worldClickX = (screenX - effectivePan.x) / effectiveScale;
+        const worldClickY = (screenY - effectivePan.y) / effectiveScale;
+
+        // Find the original (non-transformed) parent node
+        const originalParent = nodes.find(n => n.id === node.id);
+        if (!originalParent) return;
+
+        // Get parent's absolute world position
+        const parentBounds = getAbsoluteNodeBounds(node.id, nodes);
+        if (!parentBounds) return;
 
         // Calculate the parent's depth and scale factor for the new child
         const parentDepth = calculateNodeDepth(node.id, nodes);
         const childDepth = parentDepth + 1;
         const scale = Math.pow(NESTING_SCALE_FACTOR, childDepth);
 
-        // Scale the default node size
+        // Scale the default node size (in world coordinates)
         const baseNodeWidth = 150;
         const baseNodeHeight = 50;
         const scaledNodeWidth = baseNodeWidth * scale;
         const scaledNodeHeight = baseNodeHeight * scale;
 
+        // Calculate relative position within parent (in world coordinates)
         const newRelativePosition = {
-          x: flowPosition.x - node.position.x,
-          y: flowPosition.y - node.position.y,
+          x: worldClickX - parentBounds.x,
+          y: worldClickY - parentBounds.y,
         };
 
         const safePadding = 10 * scale;
 
+        // Clamp to parent bounds (using world coordinate dimensions)
         newRelativePosition.x = Math.max(safePadding, newRelativePosition.x);
-        if (node.width) {
-            newRelativePosition.x = Math.min(node.width - scaledNodeWidth - safePadding, newRelativePosition.x);
-        }
+        newRelativePosition.x = Math.min(parentBounds.width - scaledNodeWidth - safePadding, newRelativePosition.x);
 
         newRelativePosition.y = Math.max(safePadding, newRelativePosition.y);
-        if (node.height) {
-            newRelativePosition.y = Math.min(node.height - scaledNodeHeight - safePadding, newRelativePosition.y);
-        }
+        newRelativePosition.y = Math.min(parentBounds.height - scaledNodeHeight - safePadding, newRelativePosition.y);
 
         const newNode = {
           id: getNextId(),
@@ -842,7 +1364,7 @@ const App = () => {
         event.stopPropagation();
       }
     },
-    [isAddingNode, setNodes, setEdges, screenToFlowPosition, getNextId, setSelectedTreeItem, nodes, generateUniqueNodeLabel]
+    [isAddingNode, isAddingTransition, transitionSourceId, createTransition, setNodes, setEdges, setSelectedTreeItem, nodes, generateUniqueNodeLabel, effectiveScale, effectivePan]
   );
 
   return (
@@ -927,12 +1449,17 @@ const App = () => {
         </Paper>
 
         <Box
-          className={isAddingNode ? 'crosshair' : ''}
+          ref={reactFlowWrapper}
+          className={isAddingNode || isAddingTransition ? 'crosshair' : ''}
           sx={{ flexGrow: 1, position: 'relative' }}
+          onMouseDown={handlePaneMouseDown}
+          onMouseMove={handlePaneMouseMove}
+          onMouseUp={handlePaneMouseUp}
+          onMouseLeave={handlePaneMouseUp}
         >
           <ReactFlow
-            nodes={nodesWithDepth}
-            edges={edges}
+            nodes={transformedNodes}
+            edges={transformedEdges}
             onNodesChange={onNodesChangeWithSelection}
             onEdgesChange={onEdgesChangeWithSelection}
             onConnect={onConnect}
@@ -943,7 +1470,16 @@ const App = () => {
             edgeTypes={edgeTypes}
             isValidConnection={isValidConnection}
             reconnectRadius={10}
-            fitView
+            minZoom={1}
+            maxZoom={1}
+            zoomOnScroll={false}
+            zoomOnPinch={false}
+            zoomOnDoubleClick={false}
+            panOnDrag={false}
+            panOnScroll={false}
+            autoPanOnNodeDrag={false}
+            autoPanOnConnect={false}
+            elevateNodesOnSelect={false}
           />
         </Box>
       </Box>

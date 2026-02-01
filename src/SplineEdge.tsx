@@ -13,6 +13,9 @@ interface ControlPoint {
 interface SplineEdgeData {
   controlPoints?: ControlPoint[];
   label?: string;
+  effectiveScale?: number;
+  sourceIsAncestor?: boolean;  // true if source is ancestor of target
+  targetIsAncestor?: boolean;  // true if target is ancestor of source
 }
 
 // Transform from local (normalized) coordinates to absolute canvas coordinates
@@ -74,6 +77,30 @@ function getPositionDirection(position: Position): { x: number; y: number } {
   }
 }
 
+// Generate a self-loop path from source handle to target handle on the same node
+function generateSelfLoopPath(
+  sourceX: number,
+  sourceY: number,
+  targetX: number,
+  targetY: number,
+  sourcePosition: Position,
+  targetPosition: Position,
+  loopSize = 50
+): string {
+  const sourceDir = getPositionDirection(sourcePosition);
+  const targetDir = getPositionDirection(targetPosition);
+
+  // Calculate control points that bow outward from both handles
+  // The bow goes in the direction of the handles
+  const cp1x = sourceX + sourceDir.x * loopSize;
+  const cp1y = sourceY + sourceDir.y * loopSize;
+  const cp2x = targetX + targetDir.x * loopSize;
+  const cp2y = targetY + targetDir.y * loopSize;
+
+  // Use a cubic bezier from source to target with control points bowing outward
+  return `M ${sourceX} ${sourceY} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${targetX} ${targetY}`;
+}
+
 // Generate a Catmull-Rom spline path that passes THROUGH all control points
 // with orthogonal exit/entry at source/target
 function generateSplinePath(
@@ -83,7 +110,9 @@ function generateSplinePath(
   targetY: number,
   controlPoints: ControlPoint[],
   sourcePosition: Position,
-  targetPosition: Position
+  targetPosition: Position,
+  sourceIsAncestor = false,
+  targetIsAncestor = false
 ): string {
   const absPoints = controlPoints.map(cp =>
     localToAbsolute(cp, sourceX, sourceY, targetX, targetY)
@@ -97,16 +126,25 @@ function generateSplinePath(
   const sourceDir = getPositionDirection(sourcePosition);
   const targetDir = getPositionDirection(targetPosition);
 
-  // Create phantom points for orthogonal tangents at source and target
-  // These points are "before" source and "after" target for Catmull-Rom calculation
+  // For ancestor endpoints, INVERT the direction (curve goes inward)
+  // For descendant/normal endpoints, use normal direction (curve goes outward)
+  const effectiveSourceDir = sourceIsAncestor
+    ? { x: -sourceDir.x, y: -sourceDir.y }
+    : sourceDir;
+  const effectiveTargetDir = targetIsAncestor
+    ? { x: -targetDir.x, y: -targetDir.y }
+    : targetDir;
+
   const phantomSource = {
-    x: sourceX - sourceDir.x * tangentOffset,
-    y: sourceY - sourceDir.y * tangentOffset,
+    x: sourceX - effectiveSourceDir.x * tangentOffset,
+    y: sourceY - effectiveSourceDir.y * tangentOffset,
   };
   const phantomTarget = {
-    x: targetX - targetDir.x * tangentOffset,
-    y: targetY - targetDir.y * tangentOffset,
+    x: targetX - effectiveTargetDir.x * tangentOffset,
+    y: targetY - effectiveTargetDir.y * tangentOffset,
   };
+  const cp1Dir = effectiveSourceDir;
+  const cp2Dir = effectiveTargetDir;
 
   const allPoints = [
     { x: sourceX, y: sourceY },
@@ -115,37 +153,34 @@ function generateSplinePath(
   ];
 
   if (allPoints.length === 2) {
-    // No control points - use cubic bezier with orthogonal tangents
-    const cp1x = sourceX + sourceDir.x * tangentOffset;
-    const cp1y = sourceY + sourceDir.y * tangentOffset;
-    const cp2x = targetX + targetDir.x * tangentOffset;
-    const cp2y = targetY + targetDir.y * tangentOffset;
+    // No control points - use cubic bezier with tangents
+    const cp1x = sourceX + cp1Dir.x * tangentOffset;
+    const cp1y = sourceY + cp1Dir.y * tangentOffset;
+    const cp2x = targetX + cp2Dir.x * tangentOffset;
+    const cp2y = targetY + cp2Dir.y * tangentOffset;
     return `M ${sourceX} ${sourceY} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${targetX} ${targetY}`;
   }
 
-  // Catmull-Rom spline with phantom points for orthogonal tangents
+  // Catmull-Rom spline with phantom points for tangents
   let path = `M ${allPoints[0].x} ${allPoints[0].y}`;
 
   for (let i = 0; i < allPoints.length - 1; i++) {
-    // Get 4 points for Catmull-Rom segment
-    // Use phantom points at the ends for orthogonal tangents
     let p0, p3;
     const p1 = allPoints[i];
     const p2 = allPoints[i + 1];
 
     if (i === 0) {
-      p0 = phantomSource; // Phantom point before source
+      p0 = phantomSource;
     } else {
       p0 = allPoints[i - 1];
     }
 
     if (i === allPoints.length - 2) {
-      p3 = phantomTarget; // Phantom point after target
+      p3 = phantomTarget;
     } else {
       p3 = allPoints[i + 2];
     }
 
-    // Catmull-Rom to Cubic Bezier conversion
     const tension = 1 / 6;
 
     const cp1x = p1.x + (p2.x - p0.x) * tension;
@@ -175,6 +210,8 @@ function screenToFlow(
 
 const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   id,
+  source,
+  target,
   sourceX,
   sourceY,
   targetX,
@@ -182,12 +219,13 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   sourcePosition,
   targetPosition,
   style = {},
-  markerEnd,
   selected,
   data,
 }) => {
   const { setEdges } = useReactFlow();
   const transform = useStore((state) => ({ x: state.transform[0], y: state.transform[1], zoom: state.transform[2] }));
+
+  // No counter-scaling needed - viewport is locked at zoom=1 and edges are at screen coordinates
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const dragDataRef = useRef({
     sourceX,
@@ -197,25 +235,82 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
     edgeId: id
   });
 
-  // Keep ref updated with latest positions
-  useEffect(() => {
-    dragDataRef.current = {
-      sourceX,
-      sourceY,
-      targetX,
-      targetY,
-      edgeId: id
-    };
-  }, [sourceX, sourceY, targetX, targetY, id]);
+  // Check for self-loop
+  const isSelfLoop = source === target;
 
   const controlPoints: ControlPoint[] = data?.controlPoints || [];
-  const pathD = generateSplinePath(sourceX, sourceY, targetX, targetY, controlPoints, sourcePosition, targetPosition);
-  const absoluteControlPoints = controlPoints.map(cp =>
-    localToAbsolute(cp, sourceX, sourceY, targetX, targetY)
+
+  // Get ancestor relationship info from edge data
+  const sourceIsAncestor = data?.sourceIsAncestor ?? false;
+  const targetIsAncestor = data?.targetIsAncestor ?? false;
+  const isAncestorDescendant = sourceIsAncestor || targetIsAncestor;
+
+  // Offset for edge endpoints (pixels from border)
+  const edgeOffset = 5;
+
+  // Calculate adjusted positions based on ancestor relationship
+  // Rule: Ancestor endpoint is INSIDE, descendant/other endpoint is OUTSIDE
+  let adjustedSourceX = sourceX;
+  let adjustedSourceY = sourceY;
+  let adjustedTargetX = targetX;
+  let adjustedTargetY = targetY;
+
+  const sourceDir = getPositionDirection(sourcePosition);
+  const targetDir = getPositionDirection(targetPosition);
+
+  if (sourceIsAncestor) {
+    // Source is ancestor: offset source INWARD (opposite to handle direction)
+    adjustedSourceX = sourceX - sourceDir.x * edgeOffset;
+    adjustedSourceY = sourceY - sourceDir.y * edgeOffset;
+    // Target is descendant: offset target OUTWARD (same as handle direction)
+    adjustedTargetX = targetX + targetDir.x * edgeOffset;
+    adjustedTargetY = targetY + targetDir.y * edgeOffset;
+  } else if (targetIsAncestor) {
+    // Source is descendant: offset source OUTWARD (same as handle direction)
+    adjustedSourceX = sourceX + sourceDir.x * edgeOffset;
+    adjustedSourceY = sourceY + sourceDir.y * edgeOffset;
+    // Target is ancestor: offset target INWARD (opposite to handle direction)
+    adjustedTargetX = targetX - targetDir.x * edgeOffset;
+    adjustedTargetY = targetY - targetDir.y * edgeOffset;
+  } else {
+    // Normal edge (siblings/unrelated): both endpoints OUTSIDE
+    adjustedSourceX = sourceX + sourceDir.x * edgeOffset;
+    adjustedSourceY = sourceY + sourceDir.y * edgeOffset;
+    adjustedTargetX = targetX + targetDir.x * edgeOffset;
+    adjustedTargetY = targetY + targetDir.y * edgeOffset;
+  }
+
+  // Keep ref updated with latest positions (use adjusted positions for control point dragging)
+  useEffect(() => {
+    dragDataRef.current = {
+      sourceX: adjustedSourceX,
+      sourceY: adjustedSourceY,
+      targetX: adjustedTargetX,
+      targetY: adjustedTargetY,
+      edgeId: id
+    };
+  }, [adjustedSourceX, adjustedSourceY, adjustedTargetX, adjustedTargetY, id]);
+
+  // Generate appropriate path based on edge type
+  let pathD: string;
+  if (isSelfLoop) {
+    pathD = generateSelfLoopPath(sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition);
+  } else {
+    pathD = generateSplinePath(
+      adjustedSourceX, adjustedSourceY, adjustedTargetX, adjustedTargetY,
+      controlPoints, sourcePosition, targetPosition,
+      sourceIsAncestor, targetIsAncestor
+    );
+  }
+
+  const absoluteControlPoints = isSelfLoop ? [] : controlPoints.map(cp =>
+    localToAbsolute(cp, adjustedSourceX, adjustedSourceY, adjustedTargetX, adjustedTargetY)
   );
 
-  // Handle double-click to add a new control point
+  // Handle double-click to add a new control point (disabled for self-loops)
   const handleDoubleClick = useCallback((event: React.MouseEvent) => {
+    if (isSelfLoop) return;
+
     event.stopPropagation();
     event.preventDefault();
 
@@ -223,9 +318,8 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
     if (!container) return;
 
     const flowPos = screenToFlow(event.clientX, event.clientY, transform, container);
-    const newPoint = absoluteToLocal(flowPos.x, flowPos.y, sourceX, sourceY, targetX, targetY);
+    const newPoint = absoluteToLocal(flowPos.x, flowPos.y, adjustedSourceX, adjustedSourceY, adjustedTargetX, adjustedTargetY);
 
-    // Find insertion position based on x coordinate
     let insertIndex = 0;
     for (let i = 0; i < controlPoints.length; i++) {
       if (controlPoints[i].x < newPoint.x) {
@@ -245,9 +339,9 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
       }
       return edge;
     }));
-  }, [id, sourceX, sourceY, targetX, targetY, controlPoints, setEdges, transform]);
+  }, [id, adjustedSourceX, adjustedSourceY, adjustedTargetX, adjustedTargetY, controlPoints, setEdges, transform, isSelfLoop]);
 
-  // Mouse move handler for dragging - store transform in ref for use in event handler
+  // Mouse move handler for dragging
   const transformRef = useRef(transform);
   useEffect(() => {
     transformRef.current = transform;
@@ -290,14 +384,12 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
     };
   }, [draggingIndex, setEdges]);
 
-  // Handle control point drag start
   const handleControlPointMouseDown = useCallback((index: number, event: React.MouseEvent) => {
     event.stopPropagation();
     event.preventDefault();
     setDraggingIndex(index);
   }, []);
 
-  // Handle right-click to remove control point
   const handleControlPointContextMenu = useCallback((index: number, event: React.MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -315,6 +407,55 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
     }));
   }, [id, setEdges]);
 
+  // Calculate label position
+  let labelX = (adjustedSourceX + adjustedTargetX) / 2;
+  let labelY = (adjustedSourceY + adjustedTargetY) / 2 - 10;
+  if (isSelfLoop) {
+    // Position label at the apex of the bow
+    const sourceDir = getPositionDirection(sourcePosition);
+    const targetDir = getPositionDirection(targetPosition);
+    const midX = (sourceX + targetX) / 2;
+    const midY = (sourceY + targetY) / 2;
+    // Offset toward the average of both directions
+    labelX = midX + (sourceDir.x + targetDir.x) * 30;
+    labelY = midY + (sourceDir.y + targetDir.y) * 30;
+  }
+
+  // Fixed visual sizes in screen pixels
+  const strokeWidth = selected ? 2 : 1.5;
+  const hitAreaWidth = 20;
+  const controlPointRadius = 8;
+  const controlPointStrokeWidth = 2;
+  const labelFontSize = 12;
+  const arrowSize = 10;
+
+  // Calculate arrowhead at target position
+  // The arrow should point along the tangent of the bezier at the target
+  let arrowDirX: number;
+  let arrowDirY: number;
+
+  if (targetIsAncestor) {
+    // Target is ancestor: arrow is inside, pointing TOWARD the border (outward direction)
+    arrowDirX = targetDir.x;
+    arrowDirY = targetDir.y;
+  } else {
+    // Normal case: arrow points INTO the target (opposite to handle's outward direction)
+    arrowDirX = -targetDir.x;
+    arrowDirY = -targetDir.y;
+  }
+
+  // Arrow tip is at the adjusted target position
+  const arrowTipX = adjustedTargetX;
+  const arrowTipY = adjustedTargetY;
+
+  // Arrowhead points
+  const arrowAngle = Math.PI / 6; // 30 degrees
+  const ax1 = arrowTipX - arrowSize * (arrowDirX * Math.cos(arrowAngle) - arrowDirY * Math.sin(arrowAngle));
+  const ay1 = arrowTipY - arrowSize * (arrowDirY * Math.cos(arrowAngle) + arrowDirX * Math.sin(arrowAngle));
+  const ax2 = arrowTipX - arrowSize * (arrowDirX * Math.cos(arrowAngle) + arrowDirY * Math.sin(arrowAngle));
+  const ay2 = arrowTipY - arrowSize * (arrowDirY * Math.cos(arrowAngle) - arrowDirX * Math.sin(arrowAngle));
+  const arrowPath = `M ${arrowTipX} ${arrowTipY} L ${ax1} ${ay1} L ${ax2} ${ay2} Z`;
+
   return (
     <g>
       {/* Invisible wider path for easier clicking/double-clicking */}
@@ -322,7 +463,7 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
         d={pathD}
         fill="none"
         stroke="transparent"
-        strokeWidth={20}
+        strokeWidth={hitAreaWidth}
         onDoubleClick={handleDoubleClick}
         style={{ cursor: 'pointer' }}
       />
@@ -332,22 +473,28 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
         d={pathD}
         fill="none"
         stroke={selected ? '#1976d2' : '#b1b1b7'}
-        strokeWidth={selected ? 2 : 1.5}
-        markerEnd={markerEnd}
+        strokeWidth={strokeWidth}
         style={style}
         className="react-flow__edge-path"
       />
 
-      {/* Control point handles (only shown when selected) */}
-      {selected && absoluteControlPoints.map((point, index) => (
+      {/* Custom arrowhead */}
+      <path
+        d={arrowPath}
+        fill={selected ? '#1976d2' : '#b1b1b7'}
+        stroke="none"
+      />
+
+      {/* Control point handles (only shown when selected, not for self-loops) */}
+      {selected && !isSelfLoop && absoluteControlPoints.map((point, index) => (
         <circle
           key={index}
           cx={point.x}
           cy={point.y}
-          r={8}
+          r={controlPointRadius}
           fill={draggingIndex === index ? '#1976d2' : '#fff'}
           stroke="#1976d2"
-          strokeWidth={2}
+          strokeWidth={controlPointStrokeWidth}
           style={{ cursor: draggingIndex === index ? 'grabbing' : 'grab', pointerEvents: 'all' }}
           onMouseDown={(e) => handleControlPointMouseDown(index, e)}
           onContextMenu={(e) => handleControlPointContextMenu(index, e)}
@@ -357,11 +504,11 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
       {/* Label */}
       {data?.label && (
         <text
-          x={(sourceX + targetX) / 2}
-          y={(sourceY + targetY) / 2 - 10}
+          x={labelX}
+          y={labelY}
           textAnchor="middle"
           style={{
-            fontSize: 12,
+            fontSize: labelFontSize,
             fill: '#333',
             pointerEvents: 'none',
           }}

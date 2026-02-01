@@ -13,6 +13,7 @@ interface StateNodeData {
   do?: string;
   depth?: number;
   scaleFactor?: number;
+  semanticScale?: number;
 }
 
 interface StateNodeProps {
@@ -21,33 +22,45 @@ interface StateNodeProps {
   isParent?: boolean;
 }
 
+// Visual handle dot - just the visible part
+const HandleVisual: React.FC<{
+  color: string;
+  top: string;
+  left: string;
+}> = ({ color, top, left }) => {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: top,
+        left: left,
+        width: '10px',
+        height: '10px',
+        backgroundColor: color,
+        borderRadius: '50%',
+        transform: 'translate(-50%, -50%)',
+        pointerEvents: 'none',
+        zIndex: 10,
+      }}
+    />
+  );
+};
+
 export default memo(({ data, selected, isParent }: StateNodeProps) => {
-  const depth = data.depth || 0;
-  const scaleFactor = data.scaleFactor || 0.85;
-
-  // Calculate cumulative scale based on depth
-  const scale = Math.pow(scaleFactor, depth);
-
-  // Base values that will be scaled
-  const baseFontSize = 14;
-  const baseBorderWidth = 1;
-  const baseSourceHandleSize = 12;
-  const baseTargetHandleSize = 10;
-  const baseLabelMargin = 5;
-
-  // Scaled values
-  const fontSize = baseFontSize * scale;
-  const borderWidth = Math.max(1, baseBorderWidth * scale);
-  const sourceHandleSize = Math.max(6, baseSourceHandleSize * scale);
-  const targetHandleSize = Math.max(5, baseTargetHandleSize * scale);
-  const labelMargin = baseLabelMargin * scale;
+  // Fixed screen-pixel sizes (no counter-scaling needed since viewport zoom is 1
+  // and nodes are already rendered at their screen size)
+  const fontSize = 14;
+  const borderWidth = 1;
+  const labelMargin = 5;
+  const borderRadius = 5;
 
   const nodeStyle: React.CSSProperties = {
+    position: 'relative',
     fontSize: `${fontSize}px`,
     borderWidth: `${borderWidth}px`,
     borderStyle: isParent ? 'dashed' : 'solid',
     borderColor: isParent ? '#666' : '#1a192b',
-    borderRadius: `${5 * scale}px`,
+    borderRadius: `${borderRadius}px`,
     backgroundColor: isParent ? '#f9f9f9' : 'white',
     width: '100%',
     height: '100%',
@@ -58,41 +71,36 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
     marginTop: `${labelMargin}px`,
   };
 
-  const sourceHandleStyle: React.CSSProperties = {
-    width: `${sourceHandleSize}px`,
-    height: `${sourceHandleSize}px`,
-    backgroundColor: '#007bff',
-    borderRadius: '50%',
-    border: `${Math.max(1, scale)}px solid white`,
-  };
-
-  const targetHandleStyle: React.CSSProperties = {
-    width: `${targetHandleSize}px`,
-    height: `${targetHandleSize}px`,
-    backgroundColor: '#28a745',
-    borderRadius: '50%',
-    border: `${Math.max(1, scale)}px solid white`,
-  };
+  const sourceColor = '#007bff';
+  const targetColor = '#28a745';
 
   return (
     <div className="state-node" style={nodeStyle}>
       <NodeResizer isVisible={selected} />
 
-      {/* Top Handles */}
-      <Handle type="source" position={Position.Top} id="top-source" style={{ ...sourceHandleStyle, left: '25%' }} />
-      <Handle type="target" position={Position.Top} id="top-target" style={{ ...targetHandleStyle, left: '75%' }} />
+      {/* Invisible ReactFlow Handles for connection logic */}
+      <Handle type="source" position={Position.Top} id="top-source" className="invisible-handle" />
+      <Handle type="target" position={Position.Top} id="top-target" className="invisible-handle" />
+      <Handle type="source" position={Position.Right} id="right-source" className="invisible-handle" />
+      <Handle type="target" position={Position.Right} id="right-target" className="invisible-handle" />
+      <Handle type="source" position={Position.Bottom} id="bottom-source" className="invisible-handle" />
+      <Handle type="target" position={Position.Bottom} id="bottom-target" className="invisible-handle" />
+      <Handle type="source" position={Position.Left} id="left-source" className="invisible-handle" />
+      <Handle type="target" position={Position.Left} id="left-target" className="invisible-handle" />
 
-      {/* Right Handles */}
-      <Handle type="source" position={Position.Right} id="right-source" style={{ ...sourceHandleStyle, top: '25%' }} />
-      <Handle type="target" position={Position.Right} id="right-target" style={{ ...targetHandleStyle, top: '75%' }} />
-
-      {/* Bottom Handles */}
-      <Handle type="source" position={Position.Bottom} id="bottom-source" style={{ ...sourceHandleStyle, left: '25%' }} />
-      <Handle type="target" position={Position.Bottom} id="bottom-target" style={{ ...targetHandleStyle, left: '75%' }} />
-
-      {/* Left Handles */}
-      <Handle type="source" position={Position.Left} id="left-source" style={{ ...sourceHandleStyle, top: '25%' }} />
-      <Handle type="target" position={Position.Left} id="left-target" style={{ ...targetHandleStyle, top: '75%' }} />
+      {/* Visual handle dots - rendered separately */}
+      {/* Top */}
+      <HandleVisual color={sourceColor} left="25%" top="0px" />
+      <HandleVisual color={targetColor} left="75%" top="0px" />
+      {/* Right */}
+      <HandleVisual color={sourceColor} top="25%" left="100%" />
+      <HandleVisual color={targetColor} top="75%" left="100%" />
+      {/* Bottom */}
+      <HandleVisual color={sourceColor} left="25%" top="100%" />
+      <HandleVisual color={targetColor} left="75%" top="100%" />
+      {/* Left */}
+      <HandleVisual color={sourceColor} top="25%" left="0px" />
+      <HandleVisual color={targetColor} top="75%" left="0px" />
 
       <div style={labelStyle}>{data.label}</div>
     </div>
