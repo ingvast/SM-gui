@@ -2,13 +2,12 @@
   box-sizing: border-box;
 }
 
-/* ReactFlow handles are invisible - we render custom visuals */
+/* Hide ReactFlow handles - they exist for connection logic but are not visible */
 .state-node .react-flow__handle {
   background: transparent !important;
   border: none !important;
 }
 
-/* Completely hide the functional handles - only show our custom visuals */
 .state-node .invisible-handle {
   width: 10px !important;
   height: 10px !important;

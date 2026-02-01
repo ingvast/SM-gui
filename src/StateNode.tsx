@@ -22,30 +22,6 @@ interface StateNodeProps {
   isParent?: boolean;
 }
 
-// Visual handle dot - just the visible part
-const HandleVisual: React.FC<{
-  color: string;
-  top: string;
-  left: string;
-}> = ({ color, top, left }) => {
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        top: top,
-        left: left,
-        width: '10px',
-        height: '10px',
-        backgroundColor: color,
-        borderRadius: '50%',
-        transform: 'translate(-50%, -50%)',
-        pointerEvents: 'none',
-        zIndex: 10,
-      }}
-    />
-  );
-};
-
 export default memo(({ data, selected, isParent }: StateNodeProps) => {
   // Fixed screen-pixel sizes (no counter-scaling needed since viewport zoom is 1
   // and nodes are already rendered at their screen size)
@@ -71,9 +47,6 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
     marginTop: `${labelMargin}px`,
   };
 
-  const sourceColor = '#007bff';
-  const targetColor = '#28a745';
-
   return (
     <div className="state-node" style={nodeStyle}>
       <NodeResizer isVisible={selected} />
@@ -87,20 +60,6 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
       <Handle type="target" position={Position.Bottom} id="bottom-target" className="invisible-handle" />
       <Handle type="source" position={Position.Left} id="left-source" className="invisible-handle" />
       <Handle type="target" position={Position.Left} id="left-target" className="invisible-handle" />
-
-      {/* Visual handle dots - rendered separately */}
-      {/* Top */}
-      <HandleVisual color={sourceColor} left="25%" top="0px" />
-      <HandleVisual color={targetColor} left="75%" top="0px" />
-      {/* Right */}
-      <HandleVisual color={sourceColor} top="25%" left="100%" />
-      <HandleVisual color={targetColor} top="75%" left="100%" />
-      {/* Bottom */}
-      <HandleVisual color={sourceColor} left="25%" top="100%" />
-      <HandleVisual color={targetColor} left="75%" top="100%" />
-      {/* Left */}
-      <HandleVisual color={sourceColor} top="25%" left="0px" />
-      <HandleVisual color={targetColor} top="75%" left="0px" />
 
       <div style={labelStyle}>{data.label}</div>
     </div>
