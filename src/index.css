@@ -26,11 +26,13 @@ html, body {
   flex-grow: 1; /* ReactFlow container takes remaining space */
 }
 
-.crosshair {
+.crosshair,
+.crosshair * {
   cursor: crosshair !important;
 }
 
-.ungroup-cursor {
+.ungroup-cursor,
+.ungroup-cursor * {
   cursor: n-resize !important;
 }
 

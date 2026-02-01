@@ -1363,12 +1363,10 @@ const App = () => {
         const selectedNode = nodes.find(n => n.selected);
         if (selectedNode && selectedNode.parentId) {
           handleUngroupState(selectedNode.id);
-          setIsUngroupingMode(true);
-        } else if (selectedNode && !selectedNode.parentId) {
-          console.log('Selected node is already at root level.');
-        } else {
-          console.log('No node selected for ungrouping.');
         }
+        // Always enter ungroup mode so user can click on nodes to ungroup them
+        setIsUngroupingMode(true);
+        console.log('Entered ungroup mode');
       } else if (event.key === 'Escape' && isUngroupingMode) {
         event.preventDefault();
         setIsUngroupingMode(false);
@@ -1630,7 +1628,14 @@ const App = () => {
         <Box
           ref={reactFlowWrapper}
           className={isAddingNode || isAddingTransition ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
-          sx={{ flexGrow: 1, position: 'relative' }}
+          sx={{
+            flexGrow: 1,
+            position: 'relative',
+            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingTransition ? 'crosshair' : 'default'),
+            '& *': {
+              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingTransition ? 'crosshair !important' : undefined),
+            },
+          }}
           onMouseDown={handlePaneMouseDown}
           onMouseMove={handlePaneMouseMove}
           onMouseUp={handlePaneMouseUp}
