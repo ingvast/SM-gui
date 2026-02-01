@@ -526,6 +526,67 @@ const App = () => {
     console.log(`Grouped ${nodesToGroup.length} state(s) into ${selectedNode.data.label}.`);
   }, [nodes, setNodes, isAncestorOf]);
 
+  // Ungroup state: move a node out of its parent (Shift+G key)
+  const handleUngroupState = useCallback((nodeId: string) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) {
+      console.log('Node not found for ungrouping.');
+      return false;
+    }
+
+    if (!node.parentId) {
+      console.log('Node is already at root level, cannot ungroup.');
+      return false;
+    }
+
+    const parentNode = nodes.find(n => n.id === node.parentId);
+    if (!parentNode) {
+      console.log('Parent node not found.');
+      return false;
+    }
+
+    // Get the node's current absolute position
+    const nodeBounds = getAbsoluteNodeBounds(nodeId, nodes);
+    if (!nodeBounds) return false;
+
+    // Determine the new parent (grandparent or null for root level)
+    const grandparentId = parentNode.parentId || undefined;
+
+    // Calculate new position relative to grandparent (or absolute if root level)
+    let newPosition: { x: number; y: number };
+    if (grandparentId) {
+      const grandparentBounds = getAbsoluteNodeBounds(grandparentId, nodes);
+      if (grandparentBounds) {
+        newPosition = {
+          x: nodeBounds.x - grandparentBounds.x,
+          y: nodeBounds.y - grandparentBounds.y,
+        };
+      } else {
+        newPosition = { x: nodeBounds.x, y: nodeBounds.y };
+      }
+    } else {
+      // Moving to root level - use absolute position
+      newPosition = { x: nodeBounds.x, y: nodeBounds.y };
+    }
+
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.id === nodeId) {
+          return {
+            ...n,
+            parentId: grandparentId,
+            extent: grandparentId ? 'parent' as const : undefined,
+            position: newPosition,
+          };
+        }
+        return n;
+      })
+    );
+
+    console.log(`Ungrouped ${node.data.label} from ${parentNode.data.label}.`);
+    return true;
+  }, [nodes, setNodes]);
+
   const onConnect = useCallback(
     (params) => setEdges((eds) => addEdge({
       ...params,
@@ -659,6 +720,7 @@ const App = () => {
   const [isAddingNode, setIsAddingNode] = useState(false);
   const [isAddingTransition, setIsAddingTransition] = useState(false);
   const [transitionSourceId, setTransitionSourceId] = useState<string | null>(null);
+  const [isUngroupingMode, setIsUngroupingMode] = useState(false);
   const [selectedTreeItem, setSelectedTreeItem] = useState(null);
   const [rootHistory, setRootHistory] = useState(false);
   const [copiedNodes, setCopiedNodes] = useState([]);
@@ -1292,9 +1354,24 @@ const App = () => {
       } else if (event.key === 'z' && !isModifierPressed) {
         event.preventDefault();
         handleSemanticZoomToSelected();
-      } else if (event.key === 'g' && !isModifierPressed) {
+      } else if (event.key === 'g' && !isModifierPressed && !event.shiftKey) {
         event.preventDefault();
         handleGroupStates();
+      } else if (event.key === 'G' && event.shiftKey && !isModifierPressed) {
+        event.preventDefault();
+        // Shift+G: ungroup selected node and enter ungroup mode
+        const selectedNode = nodes.find(n => n.selected);
+        if (selectedNode && selectedNode.parentId) {
+          handleUngroupState(selectedNode.id);
+          setIsUngroupingMode(true);
+        } else if (selectedNode && !selectedNode.parentId) {
+          console.log('Selected node is already at root level.');
+        } else {
+          console.log('No node selected for ungrouping.');
+        }
+      } else if (event.key === 'Escape' && isUngroupingMode) {
+        event.preventDefault();
+        setIsUngroupingMode(false);
       } else if (event.key === 'Escape') {
         event.preventDefault();
         handleNavigateUp();
@@ -1334,7 +1411,7 @@ const App = () => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleExport, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, setIsAddingNode, nodes, edges, isAddingTransition, calculateBestHandles, setEdges]);
+  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleExport, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState, setIsAddingNode, nodes, edges, isAddingTransition, isUngroupingMode, calculateBestHandles, setEdges]);
 
   const onPaneClick = useCallback(
     (event) => {
@@ -1378,6 +1455,17 @@ const App = () => {
         createTransition(transitionSourceId, node.id);
         setIsAddingTransition(false);
         setTransitionSourceId(null);
+        event.stopPropagation();
+        return;
+      }
+
+      // Handle ungroup mode - move clicked node out of its parent
+      if (isUngroupingMode) {
+        // Find the original node (not the transformed one)
+        const originalNode = nodes.find(n => n.id === node.id);
+        if (originalNode && originalNode.parentId) {
+          handleUngroupState(node.id);
+        }
         event.stopPropagation();
         return;
       }
@@ -1455,7 +1543,7 @@ const App = () => {
         event.stopPropagation();
       }
     },
-    [isAddingNode, isAddingTransition, transitionSourceId, createTransition, setNodes, setEdges, setSelectedTreeItem, nodes, generateUniqueNodeLabel, effectiveScale, effectivePan]
+    [isAddingNode, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, setNodes, setEdges, setSelectedTreeItem, nodes, generateUniqueNodeLabel, effectiveScale, effectivePan]
   );
 
   return (
@@ -1541,7 +1629,7 @@ const App = () => {
 
         <Box
           ref={reactFlowWrapper}
-          className={isAddingNode || isAddingTransition ? 'crosshair' : ''}
+          className={isAddingNode || isAddingTransition ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
           sx={{ flexGrow: 1, position: 'relative' }}
           onMouseDown={handlePaneMouseDown}
           onMouseMove={handlePaneMouseMove}

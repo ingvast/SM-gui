@@ -30,6 +30,10 @@ html, body {
   cursor: crosshair !important;
 }
 
+.ungroup-cursor {
+  cursor: n-resize !important;
+}
+
 .react-flow__nodes {
   z-index: -1;
 }
