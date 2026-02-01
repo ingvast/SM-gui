@@ -377,30 +377,50 @@ const App = () => {
     isPanning.current = false;
   }, []);
 
-  // Zoom to focus on selected node (Z key)
+  // Zoom to focus on selected node (Z key), or fit all if nothing selected
   const handleSemanticZoomToSelected = useCallback(() => {
     const selectedNode = nodes.find(n => n.selected);
-    if (!selectedNode) {
-      console.log('No node selected to zoom to.');
-      return;
-    }
-
-    const bounds = getAbsoluteNodeBounds(selectedNode.id, nodes);
-    if (!bounds) return;
-
-    // Calculate target zoom and pan to center the node
     const padding = 0.1;
-    const scaleX = viewportSize.width * (1 - padding * 2) / bounds.width;
-    const scaleY = viewportSize.height * (1 - padding * 2) / bounds.height;
-    const targetZoom = Math.min(scaleX, scaleY);
 
-    const centerX = bounds.x + bounds.width / 2;
-    const centerY = bounds.y + bounds.height / 2;
-    const targetPanX = viewportSize.width / 2 - centerX * targetZoom;
-    const targetPanY = viewportSize.height / 2 - centerY * targetZoom;
+    if (selectedNode) {
+      // Zoom to selected node
+      // When focusNodeId is set, effectivePan automatically centers on the node,
+      // so we just need panOffset to be zero
+      setFocusNode(selectedNode.id);
+      startAnimation(1.0, { x: 0, y: 0 });
+    } else {
+      // Fit all nodes in view
+      if (nodes.length === 0) return;
 
-    setFocusNode(selectedNode.id);
-    startAnimation(1.0, { x: targetPanX, y: targetPanY });
+      // Calculate bounding box of all nodes
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const node of nodes) {
+        const bounds = getAbsoluteNodeBounds(node.id, nodes);
+        if (bounds) {
+          minX = Math.min(minX, bounds.x);
+          minY = Math.min(minY, bounds.y);
+          maxX = Math.max(maxX, bounds.x + bounds.width);
+          maxY = Math.max(maxY, bounds.y + bounds.height);
+        }
+      }
+
+      if (!isFinite(minX)) return;
+
+      const totalWidth = maxX - minX;
+      const totalHeight = maxY - minY;
+
+      const scaleX = viewportSize.width * (1 - padding * 2) / totalWidth;
+      const scaleY = viewportSize.height * (1 - padding * 2) / totalHeight;
+      const targetZoom = Math.min(scaleX, scaleY);
+
+      const centerX = minX + totalWidth / 2;
+      const centerY = minY + totalHeight / 2;
+      const targetPanX = viewportSize.width / 2 - centerX * targetZoom;
+      const targetPanY = viewportSize.height / 2 - centerY * targetZoom;
+
+      setFocusNode(null);
+      startAnimation(targetZoom, { x: targetPanX, y: targetPanY });
+    }
   }, [nodes, viewportSize, setFocusNode, startAnimation]);
 
   // Navigate up one level (Escape key)
@@ -437,6 +457,74 @@ const App = () => {
       startAnimation(1.0, { x: viewportSize.width / 2, y: viewportSize.height / 2 });
     }
   }, [focusNodeId, nodes, viewportSize, setFocusNode, startAnimation]);
+
+  // Group states: make all states visually inside the selected state into children (G key)
+  const handleGroupStates = useCallback(() => {
+    const selectedNode = nodes.find(n => n.selected);
+    if (!selectedNode) {
+      console.log('No node selected for grouping.');
+      return;
+    }
+
+    const parentBounds = getAbsoluteNodeBounds(selectedNode.id, nodes);
+    if (!parentBounds) return;
+
+    // Find all nodes that are visually inside the selected node but not already children
+    // A node is "inside" if its entire bounds are within the parent bounds
+    const nodesToGroup: string[] = [];
+
+    for (const node of nodes) {
+      // Skip the selected node itself
+      if (node.id === selectedNode.id) continue;
+      // Skip nodes that are already children of the selected node
+      if (node.parentId === selectedNode.id) continue;
+      // Skip nodes that are ancestors of the selected node (to avoid circular references)
+      if (isAncestorOf(node.id, selectedNode.id)) continue;
+
+      const nodeBounds = getAbsoluteNodeBounds(node.id, nodes);
+      if (!nodeBounds) continue;
+
+      // Check if the node is fully contained within the parent bounds
+      const isInside =
+        nodeBounds.x >= parentBounds.x &&
+        nodeBounds.y >= parentBounds.y &&
+        nodeBounds.x + nodeBounds.width <= parentBounds.x + parentBounds.width &&
+        nodeBounds.y + nodeBounds.height <= parentBounds.y + parentBounds.height;
+
+      if (isInside) {
+        nodesToGroup.push(node.id);
+      }
+    }
+
+    if (nodesToGroup.length === 0) {
+      console.log('No nodes found inside the selected state to group.');
+      return;
+    }
+
+    // Update nodes: change parentId and convert position to relative
+    setNodes((nds) =>
+      nds.map((node) => {
+        if (nodesToGroup.includes(node.id)) {
+          const nodeBounds = getAbsoluteNodeBounds(node.id, nds);
+          if (!nodeBounds) return node;
+
+          // Calculate relative position within the new parent
+          const relativeX = nodeBounds.x - parentBounds.x;
+          const relativeY = nodeBounds.y - parentBounds.y;
+
+          return {
+            ...node,
+            parentId: selectedNode.id,
+            extent: 'parent' as const,
+            position: { x: relativeX, y: relativeY },
+          };
+        }
+        return node;
+      })
+    );
+
+    console.log(`Grouped ${nodesToGroup.length} state(s) into ${selectedNode.data.label}.`);
+  }, [nodes, setNodes, isAncestorOf]);
 
   const onConnect = useCallback(
     (params) => setEdges((eds) => addEdge({
@@ -1204,6 +1292,9 @@ const App = () => {
       } else if (event.key === 'z' && !isModifierPressed) {
         event.preventDefault();
         handleSemanticZoomToSelected();
+      } else if (event.key === 'g' && !isModifierPressed) {
+        event.preventDefault();
+        handleGroupStates();
       } else if (event.key === 'Escape') {
         event.preventDefault();
         handleNavigateUp();
@@ -1243,7 +1334,7 @@ const App = () => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleExport, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, setIsAddingNode, nodes, edges, isAddingTransition, calculateBestHandles, setEdges]);
+  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleExport, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, setIsAddingNode, nodes, edges, isAddingTransition, calculateBestHandles, setEdges]);
 
   const onPaneClick = useCallback(
     (event) => {

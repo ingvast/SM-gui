@@ -37,7 +37,7 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
     borderStyle: isParent ? 'dashed' : 'solid',
     borderColor: isParent ? '#666' : '#1a192b',
     borderRadius: `${borderRadius}px`,
-    backgroundColor: isParent ? '#f9f9f9' : 'white',
+    backgroundColor: isParent ? 'rgba(249, 249, 249, 0.85)' : 'rgba(255, 255, 255, 0.85)',
     width: '100%',
     height: '100%',
   };
