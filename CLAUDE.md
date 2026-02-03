@@ -92,11 +92,18 @@ Cases when the connection is between an ancestor and descendant.
 
 ### Keyboard Shortcuts
 
-- `n` - Enter "add node" mode
-- `z` - Zoom to fit selected state
+- `n` - Enter "add node" mode (click to place new state)
+- `t` - Start transition from selected node (click target to complete), or recompute handles if a transition is selected
+- `z` - Zoom to fit selected state, or fit all states if nothing selected
+- `g` - Group: make all states visually inside the selected state into its children
+- `Shift+G` - Ungroup mode: move selected node out of its parent, then click additional nodes to move them out. Cursor changes to up-arrow.
+- `Escape` - Exit current mode (add node, transition, ungroup) or navigate up one level in semantic zoom
 - `Ctrl/Cmd + c` - Copy selected nodes and descendants
 - `Ctrl/Cmd + v` - Paste copied nodes
 - `Ctrl/Cmd + d` - Duplicate selected nodes
+- `Ctrl/Cmd + s` - Save
+- `Ctrl/Cmd + Shift + s` - Export
+- `Ctrl/Cmd + o` - Open
 
 ## Build Configuration
 

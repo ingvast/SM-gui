@@ -4,16 +4,50 @@ import { Node, Edge, MarkerType } from 'reactflow';
 interface StateData {
   label: string;
   history: boolean;
+  orthogonal: boolean;
   entry: string;
   exit: string;
   do: string;
 }
+
+export interface MachineProperties {
+  language: string;
+  includes: string;
+  context: string;
+  context_init: string;
+  entry: string;
+  exit: string;
+  do: string;
+  hooks: {
+    entry: string;
+    exit: string;
+    do: string;
+    transition: string;
+  };
+}
+
+export const defaultMachineProperties: MachineProperties = {
+  language: '',
+  includes: '',
+  context: '',
+  context_init: '',
+  entry: '',
+  exit: '',
+  do: '',
+  hooks: {
+    entry: '',
+    exit: '',
+    do: '',
+    transition: '',
+  },
+};
 
 interface YamlState {
   entry?: string;
   exit?: string;
   do?: string;
   history?: boolean;
+  orthogonal?: boolean;
   states?: Record<string, YamlState>;
   transitions?: YamlTransition[];
   graphics?: {
@@ -31,6 +65,19 @@ interface YamlTransition {
 }
 
 interface YamlDocument {
+  language?: string;
+  includes?: string;
+  context?: string;
+  context_init?: string;
+  hooks?: {
+    entry?: string;
+    exit?: string;
+    do?: string;
+    transition?: string;
+  };
+  entry?: string;
+  exit?: string;
+  do?: string;
   history?: boolean;
   states?: Record<string, YamlState>;
 }
@@ -75,7 +122,8 @@ export function convertToYaml(
   nodes: Node<StateData>[],
   edges: Edge[],
   rootHistory: boolean,
-  includeGraphics: boolean
+  includeGraphics: boolean,
+  machineProperties?: MachineProperties
 ): string {
   const pathMap = buildNodePathMap(nodes);
 
@@ -103,6 +151,9 @@ export function convertToYaml(
     }
     if (node.data.history) {
       stateObj.history = true;
+    }
+    if (node.data.orthogonal) {
+      stateObj.orthogonal = true;
     }
 
     // Add graphics if requested
@@ -147,14 +198,59 @@ export function convertToYaml(
     return stateObj;
   }
 
-  // Build the document
+  // Build the document with explicit property ordering
+  // Machine properties go first, then states
   const doc: YamlDocument = {};
 
+  // 1. Language first
+  if (machineProperties?.language?.trim()) {
+    doc.language = machineProperties.language;
+  }
+
+  // 2. Includes
+  if (machineProperties?.includes?.trim()) {
+    doc.includes = machineProperties.includes;
+  }
+
+  // 3. Context
+  if (machineProperties?.context?.trim()) {
+    doc.context = machineProperties.context;
+  }
+
+  // 4. Context init
+  if (machineProperties?.context_init?.trim()) {
+    doc.context_init = machineProperties.context_init;
+  }
+
+  // 5. Hooks (global hooks for all states)
+  if (machineProperties) {
+    const hooks = machineProperties.hooks;
+    if (hooks.entry?.trim() || hooks.exit?.trim() || hooks.do?.trim() || hooks.transition?.trim()) {
+      doc.hooks = {};
+      if (hooks.entry?.trim()) doc.hooks.entry = hooks.entry;
+      if (hooks.exit?.trim()) doc.hooks.exit = hooks.exit;
+      if (hooks.do?.trim()) doc.hooks.do = hooks.do;
+      if (hooks.transition?.trim()) doc.hooks.transition = hooks.transition;
+    }
+  }
+
+  // 6. Root state entry/exit/do
+  if (machineProperties?.entry?.trim()) {
+    doc.entry = machineProperties.entry;
+  }
+  if (machineProperties?.exit?.trim()) {
+    doc.exit = machineProperties.exit;
+  }
+  if (machineProperties?.do?.trim()) {
+    doc.do = machineProperties.do;
+  }
+
+  // 7. Root history
   if (rootHistory) {
     doc.history = true;
   }
 
-  // Get top-level states (no parent)
+  // 8. Get top-level states (no parent)
   const topLevelNodes = nodes.filter(n => !n.parentId);
   if (topLevelNodes.length > 0) {
     const states: Record<string, YamlState> = {};
@@ -171,6 +267,7 @@ interface ConvertFromYamlResult {
   nodes: Node<StateData>[];
   edges: Edge[];
   rootHistory: boolean;
+  machineProperties: MachineProperties;
 }
 
 export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
@@ -190,7 +287,7 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
 
   function processState(
     stateName: string,
-    stateData: YamlState,
+    stateData: YamlState | null | undefined,
     parentId: string | undefined,
     parentPath: string,
     autoLayoutX: number,
@@ -200,17 +297,20 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     const fullPath = parentPath ? `${parentPath}/${stateName}` : stateName;
     pathToIdMap.set(fullPath, nodeId);
 
+    // Handle null/undefined or empty state data
+    const safeStateData = stateData || {};
+
     // Use graphics if present, otherwise auto-layout
     let x = autoLayoutX;
     let y = autoLayoutY;
     let width = defaultWidth;
     let height = defaultHeight;
 
-    if (stateData.graphics) {
-      x = stateData.graphics.x;
-      y = stateData.graphics.y;
-      width = stateData.graphics.width;
-      height = stateData.graphics.height;
+    if (safeStateData.graphics) {
+      x = safeStateData.graphics.x;
+      y = safeStateData.graphics.y;
+      width = safeStateData.graphics.width;
+      height = safeStateData.graphics.height;
     }
 
     const node: Node<StateData> = {
@@ -219,10 +319,11 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
       position: { x, y },
       data: {
         label: stateName,
-        history: stateData.history || false,
-        entry: stateData.entry || '',
-        exit: stateData.exit || '',
-        do: stateData.do || '',
+        history: safeStateData.history || false,
+        orthogonal: safeStateData.orthogonal || false,
+        entry: safeStateData.entry || '',
+        exit: safeStateData.exit || '',
+        do: safeStateData.do || '',
       },
       style: { width, height },
     };
@@ -241,11 +342,10 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     let maxChildHeight = 0;
     let totalChildrenWidth = 0;
 
-    if (stateData.states) {
-      const childNames = Object.keys(stateData.states);
+    if (safeStateData.states) {
+      const childNames = Object.keys(safeStateData.states);
       childNames.forEach((childName) => {
-        const childData = stateData.states ? stateData.states[childName] : null;
-        if (!childData) return;
+        const childData = safeStateData.states ? safeStateData.states[childName] : null;
         const childResult = processState(childName, childData, nodeId, fullPath, childX, childY);
 
         childX += childResult.width + horizontalGap;
@@ -255,7 +355,7 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     }
 
     // If no graphics, expand node to fit children
-    if (!stateData.graphics && stateData.states) {
+    if (!safeStateData.graphics && safeStateData.states) {
       const neededWidth = Math.max(defaultWidth, totalChildrenWidth + 40);
       const neededHeight = Math.max(defaultHeight, maxChildHeight + childY + 20);
       node.style = { width: neededWidth, height: neededHeight };
@@ -282,14 +382,19 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
 
   // Process transitions after all nodes are created
   function processTransitions(
-    stateData: YamlState,
+    stateData: YamlState | null | undefined,
     sourcePath: string
   ) {
+    if (!stateData) return;
+
     const sourceId = pathToIdMap.get(sourcePath);
 
     if (stateData.transitions && sourceId) {
       stateData.transitions.forEach(transition => {
         let targetPath = transition.to;
+
+        // Skip transitions with null/undefined target (e.g., to: null)
+        if (!targetPath) return;
 
         // Handle relative paths (state name only) vs absolute paths
         if (!targetPath.includes('/')) {
@@ -355,9 +460,27 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     });
   }
 
+  // Extract machine properties
+  const machineProperties: MachineProperties = {
+    language: doc.language || '',
+    includes: doc.includes || '',
+    context: doc.context || '',
+    context_init: doc.context_init || '',
+    entry: doc.entry || '',
+    exit: doc.exit || '',
+    do: doc.do || '',
+    hooks: {
+      entry: doc.hooks?.entry || '',
+      exit: doc.hooks?.exit || '',
+      do: doc.hooks?.do || '',
+      transition: doc.hooks?.transition || '',
+    },
+  };
+
   return {
     nodes,
     edges,
     rootHistory: doc.history || false,
+    machineProperties,
   };
 }

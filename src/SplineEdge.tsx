@@ -13,6 +13,8 @@ interface ControlPoint {
 interface SplineEdgeData {
   controlPoints?: ControlPoint[];
   label?: string;
+  guard?: string;
+  action?: string;
   effectiveScale?: number;
   sourceIsAncestor?: boolean;  // true if source is ancestor of target
   targetIsAncestor?: boolean;  // true if target is ancestor of source
@@ -407,9 +409,10 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
     }));
   }, [id, setEdges]);
 
-  // Calculate label position
-  let labelX = (adjustedSourceX + adjustedTargetX) / 2;
-  let labelY = (adjustedSourceY + adjustedTargetY) / 2 - 10;
+  // Calculate label position at 1/3 from source to target
+  const labelT = 0.33; // Position along the edge (0 = source, 1 = target)
+  let labelX = adjustedSourceX + (adjustedTargetX - adjustedSourceX) * labelT;
+  let labelY = adjustedSourceY + (adjustedTargetY - adjustedSourceY) * labelT - 10;
   if (isSelfLoop) {
     // Position label at the apex of the bow
     const sourceDir = getPositionDirection(sourcePosition);
@@ -420,6 +423,9 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
     labelX = midX + (sourceDir.x + targetDir.x) * 30;
     labelY = midY + (sourceDir.y + targetDir.y) * 30;
   }
+
+  // Get guard text to display
+  const guardText = data?.guard;
 
   // Fixed visual sizes in screen pixels
   const strokeWidth = selected ? 2 : 1.5;
@@ -501,11 +507,28 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
         />
       ))}
 
-      {/* Label */}
-      {data?.label && (
+      {/* Guard label */}
+      {guardText && (
         <text
           x={labelX}
           y={labelY}
+          textAnchor="middle"
+          style={{
+            fontSize: labelFontSize,
+            fill: '#666',
+            fontFamily: '"Consolas", "Monaco", "Courier New", monospace',
+            pointerEvents: 'none',
+          }}
+        >
+          [{guardText}]
+        </text>
+      )}
+
+      {/* Custom label */}
+      {data?.label && (
+        <text
+          x={labelX}
+          y={labelY + (guardText ? 14 : 0)}
           textAnchor="middle"
           style={{
             fontSize: labelFontSize,

@@ -29,6 +29,7 @@ import {
   FolderOpen as OpenIcon,
   Save as SaveIcon,
   FileDownload as ExportIcon,
+  Settings as SettingsIcon,
 } from '@mui/icons-material';
 
 import './index.css';
@@ -36,7 +37,8 @@ import StateNode from './StateNode';
 import StateTree from './StateTree';
 import PropertiesPanel from './PropertiesPanel';
 import SplineEdge from './SplineEdge';
-import { convertToYaml, convertFromYaml } from './yamlConverter';
+import MachinePropertiesDialog from './MachinePropertiesDialog';
+import { convertToYaml, convertFromYaml, MachineProperties, defaultMachineProperties } from './yamlConverter';
 import {
   useSemanticZoomStore,
   getAbsoluteNodeBounds,
@@ -83,14 +85,14 @@ const initialNodes = [
     id: '1', 
     type: 'stateNode', // Set the type
     position: { x: 0, y: 0 }, 
-    data: { label: 'State 1', history: false, entry: '', exit: '', do: '' }, // Add new properties
+    data: { label: 'State 1', history: false, orthogonal: false, entry: '', exit: '', do: '' }, // Add new properties
     style: { width: 150, height: 50 }, // Set initial size
   },
   { 
     id: '2', 
     type: 'stateNode', // Set the type
     position: { x: 0, y: 150 }, 
-    data: { label: 'State 2', history: false, entry: '', exit: '', do: '' }, // Add new properties
+    data: { label: 'State 2', history: false, orthogonal: false, entry: '', exit: '', do: '' }, // Add new properties
     style: { width: 150, height: 50 }, // Set initial size
   },
 ];
@@ -723,19 +725,27 @@ const App = () => {
   const [isUngroupingMode, setIsUngroupingMode] = useState(false);
   const [selectedTreeItem, setSelectedTreeItem] = useState(null);
   const [rootHistory, setRootHistory] = useState(false);
+  const [machineProperties, setMachineProperties] = useState<MachineProperties>(defaultMachineProperties);
+  const [machinePropertiesDialogOpen, setMachinePropertiesDialogOpen] = useState(false);
   const [copiedNodes, setCopiedNodes] = useState([]);
   const [copiedEdges, setCopiedEdges] = useState([]);
 
   const selectedNode = useMemo(() => {
     if (selectedTreeItem === '/') {
-      // Ensure root node also has entry, exit, do properties
+      // Root node uses machineProperties for entry/exit/do
       return {
         id: '/',
-        data: { label: '/', history: rootHistory, entry: '', exit: '', do: '' },
+        data: {
+          label: '/',
+          history: rootHistory,
+          entry: machineProperties.entry,
+          exit: machineProperties.exit,
+          do: machineProperties.do,
+        },
       };
     }
     return nodes.find(n => n.id === selectedTreeItem);
-  }, [nodes, selectedTreeItem, rootHistory]);
+  }, [nodes, selectedTreeItem, rootHistory, machineProperties]);
 
   const generateUniqueNodeLabel = useCallback((baseLabel, parentId, currentNodes) => {
     let counter = 1;
@@ -1016,33 +1026,34 @@ const App = () => {
   }, [nodes, edges, getAllDescendants, getNextId, generateUniqueNodeLabel, setNodes, setEdges, setSelectedTreeItem]);
 
   const handleSave = useCallback(async () => {
-    const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, true);
+    const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, true, machineProperties);
     const result = await window.fileAPI.saveFile(yamlContent, 'statemachine.yaml');
     if (result.success) {
       console.log('Saved to:', result.filePath);
     } else if (result.error) {
       alert('Error saving file: ' + result.error);
     }
-  }, [nodes, edges, rootHistory]);
+  }, [nodes, edges, rootHistory, machineProperties]);
 
   const handleExport = useCallback(async () => {
-    const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, false);
+    const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, false, machineProperties);
     const result = await window.fileAPI.exportFile(yamlContent, 'statemachine.yaml');
     if (result.success) {
       console.log('Exported to:', result.filePath);
     } else if (result.error) {
       alert('Error exporting file: ' + result.error);
     }
-  }, [nodes, edges, rootHistory]);
+  }, [nodes, edges, rootHistory, machineProperties]);
 
   const handleOpen = useCallback(async () => {
     const result = await window.fileAPI.openFile();
     if (result.success && result.content) {
       try {
-        const { nodes: loadedNodes, edges: loadedEdges, rootHistory: loadedRootHistory } = convertFromYaml(result.content);
+        const { nodes: loadedNodes, edges: loadedEdges, rootHistory: loadedRootHistory, machineProperties: loadedMachineProperties } = convertFromYaml(result.content);
         setNodes(loadedNodes);
         setEdges(loadedEdges);
         setRootHistory(loadedRootHistory);
+        setMachineProperties(loadedMachineProperties);
         setSelectedTreeItem(null);
         // Update idCounter to avoid conflicts
         const maxId = loadedNodes.reduce((max, node) => {
@@ -1060,7 +1071,7 @@ const App = () => {
     } else if (result.error) {
       alert('Error opening file: ' + result.error);
     }
-  }, [setNodes, setEdges, setRootHistory, setSelectedTreeItem]);
+  }, [setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem]);
 
   const handleNew = useCallback(() => {
     if (nodes.length > 0) {
@@ -1072,10 +1083,11 @@ const App = () => {
     setNodes([]);
     setEdges([]);
     setRootHistory(false);
+    setMachineProperties(defaultMachineProperties);
     setSelectedTreeItem(null);
     idCounter = 1;
     console.log('New state machine created.');
-  }, [nodes, setNodes, setEdges, setRootHistory, setSelectedTreeItem]);
+  }, [nodes, setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem]);
 
 
   const buildTreeData = useCallback(() => {
@@ -1267,9 +1279,10 @@ const App = () => {
       if (propertyName === 'history') {
         setRootHistory(newValue);
       } else if (propertyName === 'entry' || propertyName === 'exit' || propertyName === 'do') {
-        // If other properties need to be stored for the root, a dedicated state for root properties would be needed.
-        // For now, we will just ignore these properties for the root unless a specific state is created for them.
-        console.log(`Attempted to change root property ${propertyName} to ${newValue}, but root properties are currently read-only except 'history'.`);
+        setMachineProperties(prev => ({
+          ...prev,
+          [propertyName]: newValue,
+        }));
       }
       return;
     }
@@ -1311,12 +1324,43 @@ const App = () => {
         return node;
       })
     );
-  }, [nodes, setNodes, setRootHistory]);
+  }, [nodes, setNodes, setRootHistory, setMachineProperties]);
+
+  const handleEdgePropertyChange = useCallback((edgeId: string, propertyName: string, newValue: unknown) => {
+    setEdges((eds) =>
+      eds.map((edge) => {
+        if (edge.id === edgeId) {
+          return {
+            ...edge,
+            data: {
+              ...edge.data,
+              [propertyName]: newValue,
+            },
+          };
+        }
+        return edge;
+      })
+    );
+  }, [setEdges]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
+      // Skip keyboard shortcuts when user is typing in an input field
+      const activeElement = document.activeElement;
+      const isInTextInput = activeElement && (
+        activeElement.tagName === 'INPUT' ||
+        activeElement.tagName === 'TEXTAREA' ||
+        (activeElement as HTMLElement).isContentEditable
+      );
+
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
       const isModifierPressed = isMac ? event.metaKey : event.ctrlKey;
+
+      // Allow Escape to work even in text inputs (to close dialogs, exit modes)
+      // But skip other single-key shortcuts when in text input
+      if (isInTextInput && event.key !== 'Escape') {
+        return;
+      }
 
       if (event.key === 'n' && !isModifierPressed) {
         event.preventDefault();
@@ -1427,7 +1471,7 @@ const App = () => {
           id: getNextId(),
           type: 'stateNode',
           position: { x: worldX, y: worldY },
-          data: { label: generateUniqueNodeLabel('New State', undefined, nodes), history: false, entry: '', exit: '', do: '' },
+          data: { label: generateUniqueNodeLabel('New State', undefined, nodes), history: false, orthogonal: false, entry: '', exit: '', do: '' },
           style: { width: 150, height: 50 },
         };
         setNodes((nds) => nds.concat(newNode));
@@ -1533,7 +1577,7 @@ const App = () => {
           position: newRelativePosition,
           parentId: node.id,
           extent: 'parent',
-          data: { label: generateUniqueNodeLabel('New Nested State', node.id, nodes), history: false, entry: '', exit: '', do: '' },
+          data: { label: generateUniqueNodeLabel('New Nested State', node.id, nodes), history: false, orthogonal: false, entry: '', exit: '', do: '' },
           style: { width: scaledNodeWidth, height: scaledNodeHeight },
         };
         setNodes((nds) => nds.concat(newNode));
@@ -1588,6 +1632,17 @@ const App = () => {
               Export
             </Button>
           </Tooltip>
+          <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
+          <Tooltip title="Machine Properties">
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<SettingsIcon />}
+              onClick={() => setMachinePropertiesDialogOpen(true)}
+            >
+              Properties
+            </Button>
+          </Tooltip>
           <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
             Cmd+S: Save | Cmd+Shift+S: Export | Cmd+O: Open
           </Typography>
@@ -1620,7 +1675,11 @@ const App = () => {
             </Typography>
             <PropertiesPanel
               selectedNode={selectedNode}
+              selectedCanvasEdge={edges.find(e => e.selected) || null}
+              nodes={nodes}
+              edges={edges}
               onPropertyChange={handlePropertyChange}
+              onEdgePropertyChange={handleEdgePropertyChange}
             />
           </Box>
         </Paper>
@@ -1667,6 +1726,13 @@ const App = () => {
           />
         </Box>
       </Box>
+
+      <MachinePropertiesDialog
+        open={machinePropertiesDialogOpen}
+        onClose={() => setMachinePropertiesDialogOpen(false)}
+        machineProperties={machineProperties}
+        onSave={setMachineProperties}
+      />
     </Box>
   );
 };

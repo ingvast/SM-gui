@@ -8,6 +8,7 @@ import './StateNode.css';
 interface StateNodeData {
   label: string;
   history?: boolean;
+  orthogonal?: boolean;
   entry?: string;
   exit?: string;
   do?: string;
@@ -30,14 +31,16 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
   const labelMargin = 5;
   const borderRadius = 5;
 
+  const isOrthogonal = data.orthogonal;
+
   const nodeStyle: React.CSSProperties = {
     position: 'relative',
     fontSize: `${fontSize}px`,
-    borderWidth: `${borderWidth}px`,
-    borderStyle: isParent ? 'dashed' : 'solid',
-    borderColor: isParent ? '#666' : '#1a192b',
+    borderWidth: isOrthogonal ? '2px' : `${borderWidth}px`,
+    borderStyle: isOrthogonal ? 'dashed' : (isParent ? 'dashed' : 'solid'),
+    borderColor: isOrthogonal ? '#0066cc' : (isParent ? '#666' : '#1a192b'),
     borderRadius: `${borderRadius}px`,
-    backgroundColor: isParent ? 'rgba(249, 249, 249, 0.85)' : 'rgba(255, 255, 255, 0.85)',
+    backgroundColor: isOrthogonal ? 'rgba(240, 248, 255, 0.9)' : (isParent ? 'rgba(249, 249, 249, 0.85)' : 'rgba(255, 255, 255, 0.85)'),
     width: '100%',
     height: '100%',
   };
