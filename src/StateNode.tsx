@@ -15,6 +15,7 @@ interface StateNodeData {
   depth?: number;
   scaleFactor?: number;
   semanticScale?: number;
+  screenWidth?: number;  // Current rendered width in pixels
 }
 
 interface StateNodeProps {
@@ -28,10 +29,15 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
   // and nodes are already rendered at their screen size)
   const fontSize = 14;
   const borderWidth = 1;
-  const labelMargin = 5;
+  const labelMargin = -3;
   const borderRadius = 5;
 
   const isOrthogonal = data.orthogonal;
+
+  // Hide label if it would be wider than the state box
+  // Approximate label width: ~0.6 * fontSize per character (for typical fonts)
+  const estimatedLabelWidth = data.label.length * fontSize * 0.6;
+  const showLabel = !data.screenWidth || estimatedLabelWidth < data.screenWidth;
 
   const nodeStyle: React.CSSProperties = {
     position: 'relative',
@@ -64,7 +70,7 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
       <Handle type="source" position={Position.Left} id="left-source" className="invisible-handle" />
       <Handle type="target" position={Position.Left} id="left-target" className="invisible-handle" />
 
-      <div style={labelStyle}>{data.label}</div>
+      {showLabel && <div style={labelStyle}>{data.label}</div>}
     </div>
   );
 });

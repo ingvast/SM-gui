@@ -423,15 +423,15 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
             id: `e${sourceId}-${targetId}`,
             source: sourceId,
             target: targetId,
+            type: 'spline',
+            data: {
+              controlPoints: [],
+              label: '',
+              guard: transition.guard || '',
+              action: transition.action || '',
+            },
             markerEnd: { type: MarkerType.ArrowClosed },
           };
-
-          if (transition.guard || transition.action) {
-            edge.data = {
-              guard: transition.guard,
-              action: transition.action,
-            };
-          }
 
           edges.push(edge);
         }

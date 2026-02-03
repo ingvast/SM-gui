@@ -3,7 +3,7 @@ import { Node } from 'reactflow';
 
 // Configuration constants
 export const SEMANTIC_ZOOM_CONFIG = {
-  MIN_VISIBLE_SIZE: 20,       // Hide nodes smaller than 20px
+  MIN_VISIBLE_SIZE: 10,       // Hide nodes smaller than 20px
   MAX_VISIBLE_SIZE: 5000,     // Hide nodes larger than 5000px
   TRANSITION_DURATION: 300,   // Animation duration in ms
   VIEWPORT_MARGIN: 50,        // Margin for viewport culling

@@ -81,19 +81,19 @@ const nodeTypes = { stateNode: StateNode };
 const edgeTypes = { spline: SplineEdge };
 
 const initialNodes = [
-  { 
-    id: '1', 
-    type: 'stateNode', // Set the type
-    position: { x: 0, y: 0 }, 
-    data: { label: 'State 1', history: false, orthogonal: false, entry: '', exit: '', do: '' }, // Add new properties
-    style: { width: 150, height: 50 }, // Set initial size
+  {
+    id: '1',
+    type: 'stateNode',
+    position: { x: 0, y: 0 },
+    data: { label: 'S1', history: false, orthogonal: false, entry: '', exit: '', do: '' },
+    style: { width: 150, height: 75 },
   },
-  { 
-    id: '2', 
-    type: 'stateNode', // Set the type
-    position: { x: 0, y: 150 }, 
-    data: { label: 'State 2', history: false, orthogonal: false, entry: '', exit: '', do: '' }, // Add new properties
-    style: { width: 150, height: 50 }, // Set initial size
+  {
+    id: '2',
+    type: 'stateNode',
+    position: { x: 0, y: 100 },
+    data: { label: 'S2', history: false, orthogonal: false, entry: '', exit: '', do: '' },
+    style: { width: 150, height: 75 },
   },
 ];
 
@@ -110,6 +110,9 @@ const initialEdges = [
 
 let idCounter = 3; // Use a distinct name for clarity
 const getNextId = () => `node_${idCounter++}`;
+
+let stateNameCounter = 3; // Counter for S# naming (starts at 3 since initial states are S1, S2)
+const getNextStateName = () => `S${stateNameCounter++}`;
 
 // Scale factor for nested states (will be configurable later)
 const NESTING_SCALE_FACTOR = 0.85;
@@ -228,17 +231,28 @@ const App = () => {
 
   // Transform nodes to screen coordinates based on semantic zoom
   const transformedNodes = useMemo(() => {
-    const result = nodes.map(node => {
-      const bounds = getAbsoluteNodeBounds(node.id, nodes);
-      if (!bounds) return node;
+    // First pass: compute transforms and visibility for all nodes
+    const nodeTransforms = new Map<string, {
+      screenX: number;
+      screenY: number;
+      screenWidth: number;
+      screenHeight: number;
+      isTooSmall: boolean;
+      isTooLarge: boolean;
+      isOutside: boolean;
+      isSelected: boolean;
+      hasSelectedAncestor: boolean;
+    }>();
 
-      // Calculate screen position and size
+    for (const node of nodes) {
+      const bounds = getAbsoluteNodeBounds(node.id, nodes);
+      if (!bounds) continue;
+
       const screenX = bounds.x * effectiveScale + effectivePan.x;
       const screenY = bounds.y * effectiveScale + effectivePan.y;
       const screenWidth = bounds.width * effectiveScale;
       const screenHeight = bounds.height * effectiveScale;
 
-      // Don't cull selected nodes or their descendants (they might be being dragged/edited)
       const isSelected = node.selected;
       const hasSelectedAncestor = (() => {
         let current = node;
@@ -251,7 +265,6 @@ const App = () => {
         return false;
       })();
 
-      // Check visibility
       const isTooSmall = screenWidth < SEMANTIC_ZOOM_CONFIG.MIN_VISIBLE_SIZE ||
                          screenHeight < SEMANTIC_ZOOM_CONFIG.MIN_VISIBLE_SIZE;
       const isTooLarge = screenWidth > SEMANTIC_ZOOM_CONFIG.MAX_VISIBLE_SIZE ||
@@ -261,31 +274,66 @@ const App = () => {
                         screenX > viewportSize.width + SEMANTIC_ZOOM_CONFIG.VIEWPORT_MARGIN ||
                         screenY > viewportSize.height + SEMANTIC_ZOOM_CONFIG.VIEWPORT_MARGIN;
 
-      if (!isSelected && !hasSelectedAncestor && (isTooSmall || isTooLarge || isOutside)) {
-        return null; // Filter out
-      }
+      nodeTransforms.set(node.id, {
+        screenX, screenY, screenWidth, screenHeight,
+        isTooSmall, isTooLarge, isOutside,
+        isSelected, hasSelectedAncestor,
+      });
+    }
 
-      // Calculate depth for z-index (children should render on top of parents)
+    // Identify nodes that are "intrinsically visible" (in viewport, right size)
+    const intrinsicallyVisible = new Set<string>();
+    for (const [nodeId, t] of nodeTransforms) {
+      if (t.isSelected || t.hasSelectedAncestor || (!t.isTooSmall && !t.isTooLarge && !t.isOutside)) {
+        intrinsicallyVisible.add(nodeId);
+      }
+    }
+
+    // Find nodes outside viewport that have edges to intrinsically visible nodes
+    const connectedToVisible = new Set<string>();
+    for (const edge of edges) {
+      const sourceVisible = intrinsicallyVisible.has(edge.source);
+      const targetVisible = intrinsicallyVisible.has(edge.target);
+      // If one end is visible and the other is outside (but not too small/large), include it
+      if (sourceVisible && !targetVisible) {
+        const t = nodeTransforms.get(edge.target);
+        if (t && !t.isTooSmall && !t.isTooLarge) {
+          connectedToVisible.add(edge.target);
+        }
+      }
+      if (targetVisible && !sourceVisible) {
+        const t = nodeTransforms.get(edge.source);
+        if (t && !t.isTooSmall && !t.isTooLarge) {
+          connectedToVisible.add(edge.source);
+        }
+      }
+    }
+
+    // Build result with all visible nodes
+    const result = nodes.map(node => {
+      const t = nodeTransforms.get(node.id);
+      if (!t) return null;
+
+      const shouldInclude = intrinsicallyVisible.has(node.id) || connectedToVisible.has(node.id);
+      if (!shouldInclude) return null;
+
       const depth = calculateNodeDepth(node.id, nodes);
 
       return {
         ...node,
-        // Remove parentId so ReactFlow doesn't try to handle hierarchy
         parentId: undefined,
         extent: undefined,
-        // Set screen position and size directly
-        position: { x: screenX, y: screenY },
-        // Use zIndex based on depth so children render on top of parents
-        // Selected nodes in ReactFlow get z-index 1000, so we add to that
+        position: { x: t.screenX, y: t.screenY },
         zIndex: 1000 + depth * 10,
         style: {
           ...node.style,
-          width: screenWidth,
-          height: screenHeight,
+          width: t.screenWidth,
+          height: t.screenHeight,
         },
         data: {
           ...node.data,
           semanticScale: effectiveScale,
+          screenWidth: t.screenWidth,  // Pass to StateNode for label visibility
         },
       };
     }).filter(Boolean) as typeof nodes;
@@ -298,7 +346,7 @@ const App = () => {
     });
 
     return result;
-  }, [nodes, effectiveScale, effectivePan, viewportSize]);
+  }, [nodes, edges, effectiveScale, effectivePan, viewportSize]);
 
   // Build a set of visible node IDs for edge filtering
   const visibleNodeIds = useMemo(() => {
@@ -315,10 +363,10 @@ const App = () => {
     return false;
   }, [nodes]);
 
-  // Filter edges and add effectiveScale and ancestor info
+  // Filter edges: show if at least one endpoint is visible
   const transformedEdges = useMemo(() => {
     return edges
-      .filter(edge => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target))
+      .filter(edge => visibleNodeIds.has(edge.source) || visibleNodeIds.has(edge.target))
       .map(edge => {
         // Check if this is an ancestor-descendant relationship (any level)
         // sourceIsAncestor: source is an ancestor of target (source is parent/grandparent/etc of target)
@@ -1064,6 +1112,15 @@ const App = () => {
           return max;
         }, 0);
         idCounter = maxId + 1;
+        // Update stateNameCounter based on existing S# names
+        const maxStateNum = loadedNodes.reduce((max, node) => {
+          const match = node.data.label.match(/^S(\d+)$/);
+          if (match) {
+            return Math.max(max, parseInt(match[1], 10));
+          }
+          return max;
+        }, 0);
+        stateNameCounter = maxStateNum + 1;
         console.log('Opened:', result.filePath);
       } catch (error) {
         alert('Error parsing YAML file: ' + (error as Error).message);
@@ -1086,6 +1143,7 @@ const App = () => {
     setMachineProperties(defaultMachineProperties);
     setSelectedTreeItem(null);
     idCounter = 1;
+    stateNameCounter = 1;
     console.log('New state machine created.');
   }, [nodes, setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem]);
 
@@ -1467,12 +1525,17 @@ const App = () => {
         const worldX = (screenX - effectivePan.x) / effectiveScale;
         const worldY = (screenY - effectivePan.y) / effectiveScale;
 
+        // Size new states as 10% of viewport width, height is half of width
+        // Convert from screen size to world size
+        const stateWidth = (viewportSize.width * 0.1) / effectiveScale;
+        const stateHeight = stateWidth / 2;
+
         const newNode = {
           id: getNextId(),
           type: 'stateNode',
           position: { x: worldX, y: worldY },
-          data: { label: generateUniqueNodeLabel('New State', undefined, nodes), history: false, orthogonal: false, entry: '', exit: '', do: '' },
-          style: { width: 150, height: 50 },
+          data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '' },
+          style: { width: stateWidth, height: stateHeight },
         };
         setNodes((nds) => nds.concat(newNode));
         setIsAddingNode(false);
@@ -1550,9 +1613,10 @@ const App = () => {
         const childDepth = parentDepth + 1;
         const scale = Math.pow(NESTING_SCALE_FACTOR, childDepth);
 
-        // Scale the default node size (in world coordinates)
-        const baseNodeWidth = 150;
-        const baseNodeHeight = 50;
+        // Size based on 10% of viewport width, scaled for nesting depth
+        // Convert from screen size to world size
+        const baseNodeWidth = (viewportSize.width * 0.1) / effectiveScale;
+        const baseNodeHeight = baseNodeWidth / 2;
         const scaledNodeWidth = baseNodeWidth * scale;
         const scaledNodeHeight = baseNodeHeight * scale;
 
@@ -1577,7 +1641,7 @@ const App = () => {
           position: newRelativePosition,
           parentId: node.id,
           extent: 'parent',
-          data: { label: generateUniqueNodeLabel('New Nested State', node.id, nodes), history: false, orthogonal: false, entry: '', exit: '', do: '' },
+          data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '' },
           style: { width: scaledNodeWidth, height: scaledNodeHeight },
         };
         setNodes((nds) => nds.concat(newNode));
