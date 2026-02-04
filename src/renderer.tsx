@@ -1839,6 +1839,7 @@ const App = () => {
         onClose={() => setMachinePropertiesDialogOpen(false)}
         machineProperties={machineProperties}
         onSave={setMachineProperties}
+        tabWidth={settings.tabWidth}
       />
 
       <SettingsDialog

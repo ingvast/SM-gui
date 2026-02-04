@@ -24,6 +24,78 @@ const codeFieldStyle = {
   fontSize: '0.85rem',
 };
 
+// Helper to handle Tab key in code fields - inserts spaces to align to next tab stop
+const handleCodeFieldTab = (
+  event: React.KeyboardEvent,
+  value: string,
+  onChange: (v: string) => void,
+  tabWidth: number
+) => {
+  if (event.key === 'Tab') {
+    event.preventDefault();
+    const target = event.target as HTMLTextAreaElement;
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+
+    // Find the start of the current line to calculate column position
+    const textBeforeCursor = value.substring(0, start);
+    const lastNewlineIndex = textBeforeCursor.lastIndexOf('\n');
+    const currentColumn = start - (lastNewlineIndex + 1);
+
+    // Calculate spaces needed to reach next tab stop
+    const spacesToAdd = tabWidth - (currentColumn % tabWidth);
+    const spaces = ' '.repeat(spacesToAdd);
+
+    const newValue = value.substring(0, start) + spaces + value.substring(end);
+    onChange(newValue);
+    setTimeout(() => {
+      target.selectionStart = target.selectionEnd = start + spacesToAdd;
+    }, 0);
+  }
+};
+
+type ExpandableField = 'entry' | 'exit' | 'do' | 'hookEntry' | 'hookExit' | 'hookDo' | 'hookTransition' | 'includes' | 'context' | 'context_init' | null;
+
+// Moved outside MachinePropertiesDialog to prevent recreation on each render
+const CodeFieldWithExpand: React.FC<{
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  expandField: ExpandableField;
+  onExpand: (field: ExpandableField) => void;
+  tabWidth: number;
+  rows?: number;
+}> = ({ label, value, onChange, expandField, onExpand, tabWidth, rows = 3 }) => (
+  <Box sx={{ position: 'relative' }}>
+    <TextField
+      label={label}
+      size="small"
+      fullWidth
+      multiline
+      rows={rows}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => handleCodeFieldTab(e, value, onChange, tabWidth)}
+      slotProps={{ input: { sx: codeFieldStyle } }}
+    />
+    <IconButton
+      size="small"
+      onClick={() => onExpand(expandField)}
+      sx={{
+        position: 'absolute',
+        right: 4,
+        top: 4,
+        padding: '2px',
+        opacity: 0.6,
+        '&:hover': { opacity: 1 },
+      }}
+      title="Expand editor"
+    >
+      <OpenInFullIcon sx={{ fontSize: 16 }} />
+    </IconButton>
+  </Box>
+);
+
 const languages = [
   { value: '', label: 'None' },
   { value: 'python', label: 'Python' },
@@ -41,15 +113,15 @@ interface MachinePropertiesDialogProps {
   onClose: () => void;
   machineProperties: MachineProperties;
   onSave: (properties: MachineProperties) => void;
+  tabWidth: number;
 }
-
-type ExpandableField = 'entry' | 'exit' | 'do' | 'hookEntry' | 'hookExit' | 'hookDo' | 'hookTransition' | 'includes' | 'context' | 'context_init' | null;
 
 const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
   open,
   onClose,
   machineProperties,
   onSave,
+  tabWidth,
 }) => {
   const [tempProps, setTempProps] = useState<MachineProperties>(machineProperties);
   const [expandedField, setExpandedField] = useState<ExpandableField>(null);
@@ -133,61 +205,6 @@ const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
     }
   };
 
-  const handleCodeFieldTab = (
-    event: React.KeyboardEvent,
-    value: string,
-    onChange: (v: string) => void
-  ) => {
-    if (event.key === 'Tab') {
-      event.preventDefault();
-      const target = event.target as HTMLTextAreaElement;
-      const start = target.selectionStart;
-      const end = target.selectionEnd;
-      const newValue = value.substring(0, start) + '  ' + value.substring(end);
-      onChange(newValue);
-      setTimeout(() => {
-        target.selectionStart = target.selectionEnd = start + 2;
-      }, 0);
-    }
-  };
-
-  const CodeFieldWithExpand: React.FC<{
-    label: string;
-    value: string;
-    onChange: (value: string) => void;
-    expandField: ExpandableField;
-    rows?: number;
-  }> = ({ label, value, onChange, expandField, rows = 3 }) => (
-    <Box sx={{ position: 'relative' }}>
-      <TextField
-        label={label}
-        size="small"
-        fullWidth
-        multiline
-        rows={rows}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => handleCodeFieldTab(e, value, onChange)}
-        slotProps={{ input: { sx: codeFieldStyle } }}
-      />
-      <IconButton
-        size="small"
-        onClick={() => setExpandedField(expandField)}
-        sx={{
-          position: 'absolute',
-          right: 4,
-          top: 4,
-          padding: '2px',
-          opacity: 0.6,
-          '&:hover': { opacity: 1 },
-        }}
-        title="Expand editor"
-      >
-        <OpenInFullIcon sx={{ fontSize: 16 }} />
-      </IconButton>
-    </Box>
-  );
-
   return (
     <>
       <Dialog
@@ -224,6 +241,8 @@ const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
               value={tempProps.entry}
               onChange={(v) => handleFieldChange('entry', v)}
               expandField="entry"
+              onExpand={setExpandedField}
+              tabWidth={tabWidth}
             />
 
             <CodeFieldWithExpand
@@ -231,6 +250,8 @@ const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
               value={tempProps.exit}
               onChange={(v) => handleFieldChange('exit', v)}
               expandField="exit"
+              onExpand={setExpandedField}
+              tabWidth={tabWidth}
             />
 
             <CodeFieldWithExpand
@@ -238,6 +259,8 @@ const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
               value={tempProps.do}
               onChange={(v) => handleFieldChange('do', v)}
               expandField="do"
+              onExpand={setExpandedField}
+              tabWidth={tabWidth}
             />
 
             <Divider />
@@ -250,6 +273,8 @@ const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
               value={tempProps.hooks.entry}
               onChange={(v) => handleHookChange('entry', v)}
               expandField="hookEntry"
+              onExpand={setExpandedField}
+              tabWidth={tabWidth}
               rows={2}
             />
 
@@ -258,6 +283,8 @@ const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
               value={tempProps.hooks.exit}
               onChange={(v) => handleHookChange('exit', v)}
               expandField="hookExit"
+              onExpand={setExpandedField}
+              tabWidth={tabWidth}
               rows={2}
             />
 
@@ -266,6 +293,8 @@ const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
               value={tempProps.hooks.do}
               onChange={(v) => handleHookChange('do', v)}
               expandField="hookDo"
+              onExpand={setExpandedField}
+              tabWidth={tabWidth}
               rows={2}
             />
 
@@ -274,6 +303,8 @@ const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
               value={tempProps.hooks.transition}
               onChange={(v) => handleHookChange('transition', v)}
               expandField="hookTransition"
+              onExpand={setExpandedField}
+              tabWidth={tabWidth}
               rows={2}
             />
 
@@ -287,6 +318,8 @@ const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
               value={tempProps.includes}
               onChange={(v) => handleFieldChange('includes', v)}
               expandField="includes"
+              onExpand={setExpandedField}
+              tabWidth={tabWidth}
               rows={4}
             />
 
@@ -300,6 +333,8 @@ const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
               value={tempProps.context}
               onChange={(v) => handleFieldChange('context', v)}
               expandField="context"
+              onExpand={setExpandedField}
+              tabWidth={tabWidth}
               rows={4}
             />
 
@@ -308,6 +343,8 @@ const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
               value={tempProps.context_init}
               onChange={(v) => handleFieldChange('context_init', v)}
               expandField="context_init"
+              onExpand={setExpandedField}
+              tabWidth={tabWidth}
               rows={4}
             />
           </Box>

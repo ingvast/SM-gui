@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Box,
   TextField,
@@ -138,20 +138,27 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     return edges.find(e => e.id === selectedEdgeId) || null;
   }, [edges, selectedEdgeId, selectedCanvasEdge]);
 
+  // Track previous node ID to only sync when selection actually changes
+  const prevNodeIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (selectedNode && selectedNode.data) {
-      setTempName(selectedNode.data.label || '');
-      setTempEntry((selectedNode.data.entry as string) || '');
-      setTempExit((selectedNode.data.exit as string) || '');
-      setTempDo((selectedNode.data.do as string) || '');
-    } else {
-      setTempName('');
-      setTempEntry('');
-      setTempExit('');
-      setTempDo('');
+    // Only sync temp values when the selected node ID changes, not on every object reference change
+    if (selectedNode?.id !== prevNodeIdRef.current) {
+      prevNodeIdRef.current = selectedNode?.id || null;
+      if (selectedNode && selectedNode.data) {
+        setTempName(selectedNode.data.label || '');
+        setTempEntry((selectedNode.data.entry as string) || '');
+        setTempExit((selectedNode.data.exit as string) || '');
+        setTempDo((selectedNode.data.do as string) || '');
+      } else {
+        setTempName('');
+        setTempEntry('');
+        setTempExit('');
+        setTempDo('');
+      }
+      // Clear selected edge when node changes
+      setSelectedEdgeId(null);
     }
-    // Clear selected edge when node changes
-    setSelectedEdgeId(null);
   }, [selectedNode]);
 
   // Sync edge properties when selected edge changes
@@ -200,9 +207,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     }
   };
   const handleEntryKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      (event.target as HTMLInputElement).blur();
-    }
     handleCodeFieldTab(event, tempEntry, setTempEntry, settings.tabWidth);
   };
 
@@ -213,9 +217,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     }
   };
   const handleExitKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      (event.target as HTMLInputElement).blur();
-    }
     handleCodeFieldTab(event, tempExit, setTempExit, settings.tabWidth);
   };
 
@@ -226,9 +227,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     }
   };
   const handleDoKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      (event.target as HTMLInputElement).blur();
-    }
     handleCodeFieldTab(event, tempDo, setTempDo, settings.tabWidth);
   };
 
@@ -241,9 +239,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     }
   };
   const handleGuardKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      (event.target as HTMLInputElement).blur();
-    }
     handleCodeFieldTab(event, tempGuard, setTempGuard, settings.tabWidth);
   };
 
@@ -255,9 +250,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     }
   };
   const handleActionKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      (event.target as HTMLInputElement).blur();
-    }
     handleCodeFieldTab(event, tempAction, setTempAction, settings.tabWidth);
   };
 
