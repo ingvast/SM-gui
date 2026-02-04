@@ -8,6 +8,9 @@ interface StateData {
   entry: string;
   exit: string;
   do: string;
+  initial?: string;
+  initialMarkerPos?: { x: number; y: number };
+  initialMarkerSize?: number;
 }
 
 export interface MachineProperties {
@@ -24,6 +27,9 @@ export interface MachineProperties {
     do: string;
     transition: string;
   };
+  initial?: string;  // ID of initial top-level state
+  initialMarkerPos?: { x: number; y: number };
+  initialMarkerSize?: number;
 }
 
 export const defaultMachineProperties: MachineProperties = {
@@ -48,6 +54,7 @@ interface YamlState {
   do?: string;
   history?: boolean;
   orthogonal?: boolean;
+  initial?: string;
   states?: Record<string, YamlState>;
   transitions?: YamlTransition[];
   graphics?: {
@@ -55,6 +62,8 @@ interface YamlState {
     y: number;
     width: number;
     height: number;
+    initialMarkerPos?: { x: number; y: number };
+    initialMarkerSize?: number;
   };
 }
 
@@ -62,6 +71,10 @@ interface YamlTransition {
   to: string;
   guard?: string;
   action?: string;
+  geometry?: {
+    sourceHandle?: string;
+    targetHandle?: string;
+  };
 }
 
 interface YamlDocument {
@@ -79,7 +92,12 @@ interface YamlDocument {
   exit?: string;
   do?: string;
   history?: boolean;
+  initial?: string;
   states?: Record<string, YamlState>;
+  graphics?: {
+    initialMarkerPos?: { x: number; y: number };
+    initialMarkerSize?: number;
+  };
 }
 
 // Build a map of node ID to its full path (e.g., "Parent/Child/Grandchild")
@@ -174,6 +192,27 @@ export function convertToYaml(
         states[child.data.label] = buildStateObj(child);
       });
       stateObj.states = states;
+
+      // Add initial state if set
+      if (node.data.initial) {
+        const initialChild = children.find(c => c.id === node.data.initial);
+        if (initialChild) {
+          stateObj.initial = initialChild.data.label;
+          // Store initial marker position in graphics
+          if (includeGraphics && node.data.initialMarkerPos) {
+            if (!stateObj.graphics) {
+              stateObj.graphics = {
+                x: node.position.x,
+                y: node.position.y,
+                width: (node.style?.width as number) || 150,
+                height: (node.style?.height as number) || 50,
+              };
+            }
+            stateObj.graphics.initialMarkerPos = node.data.initialMarkerPos;
+            stateObj.graphics.initialMarkerSize = node.data.initialMarkerSize;
+          }
+        }
+      }
     }
 
     // Add transitions
@@ -190,6 +229,13 @@ export function convertToYaml(
         }
         if ((edge.data as { action?: string })?.action) {
           transition.action = (edge.data as { action: string }).action;
+        }
+        // Save handle geometry if present (only when includeGraphics is true)
+        if (includeGraphics && (edge.sourceHandle || edge.targetHandle)) {
+          transition.geometry = {
+            sourceHandle: edge.sourceHandle || undefined,
+            targetHandle: edge.targetHandle || undefined,
+          };
         }
         return transition;
       });
@@ -250,7 +296,21 @@ export function convertToYaml(
     doc.history = true;
   }
 
-  // 8. Get top-level states (no parent)
+  // 8. Root initial state
+  if (machineProperties?.initial) {
+    const initialNode = nodes.find(n => n.id === machineProperties.initial);
+    if (initialNode && !initialNode.parentId) {
+      doc.initial = initialNode.data.label;
+      if (includeGraphics && machineProperties.initialMarkerPos) {
+        doc.graphics = {
+          initialMarkerPos: machineProperties.initialMarkerPos,
+          initialMarkerSize: machineProperties.initialMarkerSize,
+        };
+      }
+    }
+  }
+
+  // 9. Get top-level states (no parent)
   const topLevelNodes = nodes.filter(n => !n.parentId);
   if (topLevelNodes.length > 0) {
     const states: Record<string, YamlState> = {};
@@ -324,6 +384,9 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
         entry: safeStateData.entry || '',
         exit: safeStateData.exit || '',
         do: safeStateData.do || '',
+        // initial will be resolved after children are created
+        initialMarkerPos: safeStateData.graphics?.initialMarkerPos,
+        initialMarkerSize: safeStateData.graphics?.initialMarkerSize,
       },
       style: { width, height },
     };
@@ -433,6 +496,14 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
             markerEnd: { type: MarkerType.ArrowClosed },
           };
 
+          // Restore handle geometry if present
+          if (transition.geometry?.sourceHandle) {
+            edge.sourceHandle = transition.geometry.sourceHandle;
+          }
+          if (transition.geometry?.targetHandle) {
+            edge.targetHandle = transition.geometry.targetHandle;
+          }
+
           edges.push(edge);
         }
       });
@@ -460,6 +531,53 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     });
   }
 
+  // Resolve initial state references (name -> node ID)
+  function resolveInitialStates(
+    stateData: YamlState | null | undefined,
+    sourcePath: string
+  ) {
+    if (!stateData) return;
+
+    const sourceId = pathToIdMap.get(sourcePath);
+    const sourceNode = nodes.find(n => n.id === sourceId);
+
+    if (sourceNode && stateData.initial && stateData.states) {
+      // Find the child with the matching label
+      const initialPath = `${sourcePath}/${stateData.initial}`;
+      const initialId = pathToIdMap.get(initialPath);
+      if (initialId) {
+        sourceNode.data.initial = initialId;
+      }
+    }
+
+    // Recurse into child states
+    if (stateData.states) {
+      Object.keys(stateData.states).forEach(childName => {
+        const childPath = sourcePath ? `${sourcePath}/${childName}` : childName;
+        const childData = stateData.states ? stateData.states[childName] : null;
+        if (childData) {
+          resolveInitialStates(childData, childPath);
+        }
+      });
+    }
+  }
+
+  // Resolve all initial state references
+  if (doc.states) {
+    Object.keys(doc.states).forEach(stateName => {
+      const stateData = doc.states ? doc.states[stateName] : null;
+      if (stateData) {
+        resolveInitialStates(stateData, stateName);
+      }
+    });
+  }
+
+  // Resolve root initial state (name -> node ID)
+  let rootInitialId: string | undefined;
+  if (doc.initial) {
+    rootInitialId = pathToIdMap.get(doc.initial);
+  }
+
   // Extract machine properties
   const machineProperties: MachineProperties = {
     language: doc.language || '',
@@ -475,6 +593,9 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
       do: doc.hooks?.do || '',
       transition: doc.hooks?.transition || '',
     },
+    initial: rootInitialId,
+    initialMarkerPos: doc.graphics?.initialMarkerPos,
+    initialMarkerSize: doc.graphics?.initialMarkerSize,
   };
 
   return {

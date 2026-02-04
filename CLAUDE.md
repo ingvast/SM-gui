@@ -66,6 +66,8 @@ Nodes represent states:
     entry: string,             // Entry action code
     exit: string,              // Exit action code
     do: string,                // Activity code
+    initial?: string,          // ID of initial child state
+    initialMarkerPos?: {x,y},  // Position of initial marker circle (relative to parent)
   },
   style: { width, height },
 }
@@ -94,10 +96,11 @@ Cases when the connection is between an ancestor and descendant.
 
 - `n` - Enter "add node" mode (click to place new state)
 - `t` - Start transition from selected node (click target to complete), or recompute handles if a transition is selected
+- `i` - Set initial state: select a child state, press I, then click in the parent to place the initial marker (small filled circle with arrow to the initial state)
 - `z` - Zoom to fit selected state, or fit all states if nothing selected
 - `g` - Group: make all states visually inside the selected state into its children
 - `Shift+G` - Ungroup mode: move selected node out of its parent, then click additional nodes to move them out. Cursor changes to up-arrow.
-- `Escape` - Exit current mode (add node, transition, ungroup) or navigate up one level in semantic zoom
+- `Escape` - Exit current mode (add node, transition, ungroup, initial) or navigate up one level in semantic zoom
 - `Ctrl/Cmd + c` - Copy selected nodes and descendants
 - `Ctrl/Cmd + v` - Paste copied nodes
 - `Ctrl/Cmd + d` - Duplicate selected nodes

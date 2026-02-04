@@ -35,6 +35,7 @@ import {
 
 import './index.css';
 import StateNode from './StateNode';
+import InitialMarker from './InitialMarker';
 import StateTree from './StateTree';
 import PropertiesPanel from './PropertiesPanel';
 import SplineEdge from './SplineEdge';
@@ -93,7 +94,7 @@ declare global {
   }
 }
 
-const nodeTypes = { stateNode: StateNode };
+const nodeTypes = { stateNode: StateNode, initialMarker: InitialMarker };
 const edgeTypes = { spline: SplineEdge };
 
 const initialNodes = [
@@ -174,6 +175,13 @@ const App = () => {
   // Viewport size tracking
   const [viewportSize, setViewportSize] = useState({ width: 800, height: 600 });
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
+
+  // Machine properties (needs to be before transformedNodes useMemo)
+  const [machineProperties, setMachineProperties] = useState<MachineProperties>(defaultMachineProperties);
+
+  // Track dragging marker position (for smooth visual feedback)
+  const [draggingMarkerId, setDraggingMarkerId] = useState<string | null>(null);
+  const [draggingMarkerPos, setDraggingMarkerPos] = useState<{ x: number; y: number } | null>(null);
 
   // Track viewport size
   useEffect(() => {
@@ -370,8 +378,97 @@ const App = () => {
       return depthA - depthB;
     });
 
-    return result;
-  }, [nodes, edges, effectiveScale, effectivePan, viewportSize]);
+    // Add initial marker nodes for parents that have initial set
+    const initialMarkers: typeof nodes = [];
+    for (const node of nodes) {
+      if (node.data.initial && node.data.initialMarkerPos) {
+        const parentBounds = getAbsoluteNodeBounds(node.id, nodes);
+        if (!parentBounds) continue;
+
+        // Check if target state is visible (marker stays as long as target is visible)
+        const targetId = node.data.initial as string;
+        const targetVisible = intrinsicallyVisible.has(targetId) || connectedToVisible.has(targetId);
+        if (!targetVisible) continue;
+
+        // Calculate marker position in screen coordinates
+        const markerWorldX = parentBounds.x + (node.data.initialMarkerPos as { x: number; y: number }).x;
+        const markerWorldY = parentBounds.y + (node.data.initialMarkerPos as { x: number; y: number }).y;
+        const markerScreenX = markerWorldX * effectiveScale + effectivePan.x;
+        const markerScreenY = markerWorldY * effectiveScale + effectivePan.y;
+
+        // Scale the marker size
+        const baseSize = (node.data.initialMarkerSize as number) || parentBounds.width * 0.03;
+        const screenSize = baseSize * effectiveScale;
+
+        // Fixed size marker (15px)
+        const markerSize = 15;
+        const depth = calculateNodeDepth(node.id, nodes);
+        const markerId = `initial-marker-${node.id}`;
+        // Use dragging position if this marker is being dragged
+        const markerPosition = (draggingMarkerId === markerId && draggingMarkerPos)
+          ? draggingMarkerPos
+          : { x: markerScreenX - markerSize / 2, y: markerScreenY - markerSize / 2 };
+        initialMarkers.push({
+          id: markerId,
+          type: 'initialMarker',
+          position: markerPosition,
+          zIndex: 2000 + depth * 10, // Above state nodes
+          style: { width: markerSize, height: markerSize },
+          data: {
+            size: markerSize,
+            parentId: node.id,
+            targetId: node.data.initial,
+          },
+          selectable: true,
+          draggable: true,
+          hidden: false,
+          width: markerSize,
+          height: markerSize,
+        } as typeof nodes[0]);
+      }
+    }
+
+    // Add root initial marker (for top-level states)
+    if (machineProperties.initial && machineProperties.initialMarkerPos) {
+      const targetId = machineProperties.initial;
+      const targetVisible = intrinsicallyVisible.has(targetId) || connectedToVisible.has(targetId);
+      const targetNode = nodes.find(n => n.id === targetId);
+      if (targetNode && !targetNode.parentId && targetVisible) {
+        // Calculate marker position in screen coordinates
+        const markerWorldX = machineProperties.initialMarkerPos.x;
+        const markerWorldY = machineProperties.initialMarkerPos.y;
+        const markerScreenX = markerWorldX * effectiveScale + effectivePan.x;
+        const markerScreenY = markerWorldY * effectiveScale + effectivePan.y;
+
+        // Fixed size marker (15px)
+        const markerSize = 15;
+        const markerId = 'initial-marker-root';
+        // Use dragging position if this marker is being dragged
+        const markerPosition = (draggingMarkerId === markerId && draggingMarkerPos)
+          ? draggingMarkerPos
+          : { x: markerScreenX - markerSize / 2, y: markerScreenY - markerSize / 2 };
+        initialMarkers.push({
+          id: markerId,
+          type: 'initialMarker',
+          position: markerPosition,
+          zIndex: 2000, // Above state nodes
+          style: { width: markerSize, height: markerSize },
+          data: {
+            size: markerSize,
+            parentId: null,
+            targetId: machineProperties.initial,
+          },
+          selectable: true,
+          draggable: true,
+          hidden: false,
+          width: markerSize,
+          height: markerSize,
+        } as typeof nodes[0]);
+      }
+    }
+
+    return [...result, ...initialMarkers];
+  }, [nodes, edges, effectiveScale, effectivePan, viewportSize, machineProperties, draggingMarkerId, draggingMarkerPos]);
 
   // Build a set of visible node IDs for edge filtering
   const visibleNodeIds = useMemo(() => {
@@ -390,7 +487,7 @@ const App = () => {
 
   // Filter edges: show if at least one endpoint is visible
   const transformedEdges = useMemo(() => {
-    return edges
+    const regularEdges = edges
       .filter(edge => visibleNodeIds.has(edge.source) || visibleNodeIds.has(edge.target))
       .map(edge => {
         // Check if this is an ancestor-descendant relationship (any level)
@@ -409,7 +506,134 @@ const App = () => {
           },
         };
       });
-  }, [edges, visibleNodeIds, effectiveScale, isAncestorOf]);
+
+    // Add initial transition edges (from marker to initial child)
+    const initialEdges: typeof edges = [];
+    for (const node of nodes) {
+      if (node.data.initial && node.data.initialMarkerPos) {
+        const markerId = `initial-marker-${node.id}`;
+        const targetId = node.data.initial as string;
+
+        // Check if both marker and target are visible
+        const markerVisible = transformedNodes.some(n => n.id === markerId);
+        const targetVisible = visibleNodeIds.has(targetId);
+
+        if (markerVisible && targetVisible) {
+          // Determine best handle based on relative positions
+          const parentBounds = getAbsoluteNodeBounds(node.id, nodes);
+          const targetBounds = getAbsoluteNodeBounds(targetId, nodes);
+          if (parentBounds && targetBounds) {
+            const markerPos = node.data.initialMarkerPos as { x: number; y: number };
+            const markerX = parentBounds.x + markerPos.x;
+            const markerY = parentBounds.y + markerPos.y;
+            const targetCenterX = targetBounds.x + targetBounds.width / 2;
+            const targetCenterY = targetBounds.y + targetBounds.height / 2;
+
+            const dx = targetCenterX - markerX;
+            const dy = targetCenterY - markerY;
+
+            let sourceHandle: string;
+            let targetHandle: string;
+
+            if (Math.abs(dx) > Math.abs(dy)) {
+              if (dx > 0) {
+                sourceHandle = 'right-source';
+                targetHandle = 'left-target';
+              } else {
+                sourceHandle = 'left-source';
+                targetHandle = 'right-target';
+              }
+            } else {
+              if (dy > 0) {
+                sourceHandle = 'bottom-source';
+                targetHandle = 'top-target';
+              } else {
+                sourceHandle = 'top-source';
+                targetHandle = 'bottom-target';
+              }
+            }
+
+            initialEdges.push({
+              id: `initial-edge-${node.id}`,
+              source: markerId,
+              target: targetId,
+              sourceHandle,
+              targetHandle,
+              type: 'spline',
+              data: {
+                controlPoints: [],
+                effectiveScale,
+                isInitialTransition: true,
+              },
+              markerEnd: { type: MarkerType.ArrowClosed },
+              selectable: false,
+            } as typeof edges[0]);
+          }
+        }
+      }
+    }
+
+    // Add root initial edge
+    if (machineProperties.initial && machineProperties.initialMarkerPos) {
+      const markerId = 'initial-marker-root';
+      const targetId = machineProperties.initial;
+
+      const markerVisible = transformedNodes.some(n => n.id === markerId);
+      const targetVisible = visibleNodeIds.has(targetId);
+
+      if (markerVisible && targetVisible) {
+        const targetBounds = getAbsoluteNodeBounds(targetId, nodes);
+        if (targetBounds) {
+          const markerX = machineProperties.initialMarkerPos.x;
+          const markerY = machineProperties.initialMarkerPos.y;
+          const targetCenterX = targetBounds.x + targetBounds.width / 2;
+          const targetCenterY = targetBounds.y + targetBounds.height / 2;
+
+          const dx = targetCenterX - markerX;
+          const dy = targetCenterY - markerY;
+
+          let sourceHandle: string;
+          let targetHandle: string;
+
+          if (Math.abs(dx) > Math.abs(dy)) {
+            if (dx > 0) {
+              sourceHandle = 'right-source';
+              targetHandle = 'left-target';
+            } else {
+              sourceHandle = 'left-source';
+              targetHandle = 'right-target';
+            }
+          } else {
+            if (dy > 0) {
+              sourceHandle = 'bottom-source';
+              targetHandle = 'top-target';
+            } else {
+              sourceHandle = 'top-source';
+              targetHandle = 'bottom-target';
+            }
+          }
+
+          initialEdges.push({
+            id: 'initial-edge-root',
+            source: markerId,
+            target: targetId,
+            sourceHandle,
+            targetHandle,
+            type: 'spline',
+            data: {
+              controlPoints: [],
+              effectiveScale,
+              isInitialTransition: true,
+            },
+            markerEnd: { type: MarkerType.ArrowClosed },
+            selectable: false,
+          } as typeof edges[0]);
+        }
+      }
+    }
+
+    return [...regularEdges, ...initialEdges];
+  }, [edges, visibleNodeIds, effectiveScale, isAncestorOf, nodes, transformedNodes, machineProperties]);
 
   // Custom wheel handler for semantic zoom (added manually to avoid passive listener)
   useEffect(() => {
@@ -796,9 +1020,10 @@ const App = () => {
   const [isAddingTransition, setIsAddingTransition] = useState(false);
   const [transitionSourceId, setTransitionSourceId] = useState<string | null>(null);
   const [isUngroupingMode, setIsUngroupingMode] = useState(false);
+  const [isSettingInitial, setIsSettingInitial] = useState(false);
+  const [initialTargetId, setInitialTargetId] = useState<string | null>(null);
   const [selectedTreeItem, setSelectedTreeItem] = useState(null);
   const [rootHistory, setRootHistory] = useState(false);
-  const [machineProperties, setMachineProperties] = useState<MachineProperties>(defaultMachineProperties);
   const [machinePropertiesDialogOpen, setMachinePropertiesDialogOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>({
     editorPreference: 'builtin',
@@ -1229,6 +1454,11 @@ const App = () => {
     (changes) => {
       // Convert position and dimension changes from screen coordinates to world coordinates
       const convertedChanges = changes.map(change => {
+        // Skip initial markers - they are virtual nodes
+        if (change.id?.startsWith('initial-marker')) {
+          return change;
+        }
+
         if (change.type === 'position' && change.position) {
           // Find the original node to get its absolute position offset
           const node = nodes.find(n => n.id === change.id);
@@ -1240,8 +1470,8 @@ const App = () => {
               const screenY = change.position.y;
 
               // Convert back to world coordinates
-              let worldX = (screenX - effectivePan.x) / effectiveScale;
-              let worldY = (screenY - effectivePan.y) / effectiveScale;
+              const worldX = (screenX - effectivePan.x) / effectiveScale;
+              const worldY = (screenY - effectivePan.y) / effectiveScale;
 
               // For nested nodes, we need relative position to parent
               if (node.parentId) {
@@ -1500,6 +1730,23 @@ const App = () => {
         // Always enter ungroup mode so user can click on nodes to ungroup them
         setIsUngroupingMode(true);
         console.log('Entered ungroup mode');
+      } else if (event.key === 'i' && !isModifierPressed) {
+        event.preventDefault();
+        // I key: Set selected node as initial state of its parent (or root)
+        const selectedNode = nodes.find(n => n.selected);
+        if (selectedNode) {
+          setIsSettingInitial(true);
+          setInitialTargetId(selectedNode.id);
+          if (selectedNode.parentId) {
+            console.log('Click on parent to place initial marker for:', selectedNode.data.label);
+          } else {
+            console.log('Click on canvas to place root initial marker for:', selectedNode.data.label);
+          }
+        }
+      } else if (event.key === 'Escape' && isSettingInitial) {
+        event.preventDefault();
+        setIsSettingInitial(false);
+        setInitialTargetId(null);
       } else if (event.key === 'Escape' && isUngroupingMode) {
         event.preventDefault();
         setIsUngroupingMode(false);
@@ -1542,10 +1789,47 @@ const App = () => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleExport, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState, setIsAddingNode, nodes, edges, isAddingTransition, isUngroupingMode, calculateBestHandles, setEdges]);
+  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleExport, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState, setIsAddingNode, nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, calculateBestHandles, setEdges]);
 
   const onPaneClick = useCallback(
     (event) => {
+      // Handle setting root initial state (for top-level states)
+      if (isSettingInitial && initialTargetId) {
+        const targetNode = nodes.find(n => n.id === initialTargetId);
+        if (targetNode && !targetNode.parentId) {
+          // Top-level state - place root initial marker
+          const rect = reactFlowWrapper.current?.getBoundingClientRect();
+          if (!rect) return;
+
+          const screenX = event.clientX - rect.left;
+          const screenY = event.clientY - rect.top;
+          const worldX = (screenX - effectivePan.x) / effectiveScale;
+          const worldY = (screenY - effectivePan.y) / effectiveScale;
+
+          // Calculate marker size (3% of viewport width in world coordinates)
+          const markerSize = (viewportSize.width * 0.03) / effectiveScale;
+
+          // Store in machineProperties
+          setMachineProperties(prev => ({
+            ...prev,
+            initial: initialTargetId,
+            initialMarkerPos: { x: worldX, y: worldY },
+            initialMarkerSize: markerSize,
+          }));
+
+          console.log(`Set ${targetNode.data.label} as root initial state`);
+          setIsSettingInitial(false);
+          setInitialTargetId(null);
+          event.stopPropagation();
+          return;
+        } else {
+          // Not a top-level state, cancel
+          setIsSettingInitial(false);
+          setInitialTargetId(null);
+          return;
+        }
+      }
+
       if (isAddingNode) {
         // Convert screen click position to world coordinates
         const rect = reactFlowWrapper.current?.getBoundingClientRect();
@@ -1580,7 +1864,64 @@ const App = () => {
         );
       }
     },
-    [isAddingNode, setNodes, setEdges, generateUniqueNodeLabel, nodes, effectiveScale, effectivePan]
+    [isAddingNode, isSettingInitial, initialTargetId, setNodes, setEdges, setMachineProperties, generateUniqueNodeLabel, nodes, effectiveScale, effectivePan, viewportSize]
+  );
+
+  // Handle initial marker drag
+  const onNodeDrag = useCallback(
+    (event, node) => {
+      if (node.id.startsWith('initial-marker')) {
+        setDraggingMarkerId(node.id);
+        setDraggingMarkerPos(node.position);
+      }
+    },
+    []
+  );
+
+  // Handle initial marker drag stop
+  const onNodeDragStop = useCallback(
+    (event, node) => {
+      if (node.id === 'initial-marker-root') {
+        // Root initial marker - update machineProperties
+        const screenX = node.position.x + 7.5; // Center of 15px marker
+        const screenY = node.position.y + 7.5;
+        const worldX = (screenX - effectivePan.x) / effectiveScale;
+        const worldY = (screenY - effectivePan.y) / effectiveScale;
+        setMachineProperties(prev => ({
+          ...prev,
+          initialMarkerPos: { x: worldX, y: worldY },
+        }));
+        setDraggingMarkerId(null);
+        setDraggingMarkerPos(null);
+      } else if (node.id.startsWith('initial-marker-')) {
+        // Parent initial marker - update parent node
+        const parentId = node.id.replace('initial-marker-', '');
+        const parentBounds = getAbsoluteNodeBounds(parentId, nodes);
+        if (parentBounds) {
+          const screenX = node.position.x + 7.5; // Center of 15px marker
+          const screenY = node.position.y + 7.5;
+          const worldX = (screenX - effectivePan.x) / effectiveScale;
+          const worldY = (screenY - effectivePan.y) / effectiveScale;
+          const relX = worldX - parentBounds.x;
+          const relY = worldY - parentBounds.y;
+          setNodes(nds => nds.map(n => {
+            if (n.id === parentId) {
+              return {
+                ...n,
+                data: {
+                  ...n.data,
+                  initialMarkerPos: { x: relX, y: relY },
+                },
+              };
+            }
+            return n;
+          }));
+        }
+        setDraggingMarkerId(null);
+        setDraggingMarkerPos(null);
+      }
+    },
+    [effectivePan, effectiveScale, nodes, setMachineProperties, setNodes]
   );
 
   const onNodeClick = useCallback(
@@ -1593,6 +1934,56 @@ const App = () => {
         setTransitionSourceId(null);
         event.stopPropagation();
         return;
+      }
+
+      // Handle setting initial state mode
+      if (isSettingInitial && initialTargetId) {
+        const targetNode = nodes.find(n => n.id === initialTargetId);
+        if (targetNode && targetNode.parentId === node.id) {
+          // Clicked on the parent of the target - place initial marker here
+          const rect = reactFlowWrapper.current?.getBoundingClientRect();
+          if (!rect) return;
+
+          const screenX = event.clientX - rect.left;
+          const screenY = event.clientY - rect.top;
+          const worldX = (screenX - effectivePan.x) / effectiveScale;
+          const worldY = (screenY - effectivePan.y) / effectiveScale;
+
+          // Get parent bounds to calculate relative position
+          const parentBounds = getAbsoluteNodeBounds(node.id, nodes);
+          if (parentBounds) {
+            const relativeX = worldX - parentBounds.x;
+            const relativeY = worldY - parentBounds.y;
+
+            // Calculate marker size (3% of parent width)
+            const markerSize = parentBounds.width * 0.03;
+
+            // Update parent node with initial info
+            setNodes((nds) =>
+              nds.map((n) => {
+                if (n.id === node.id) {
+                  return {
+                    ...n,
+                    data: {
+                      ...n.data,
+                      initial: initialTargetId,
+                      initialMarkerPos: { x: relativeX, y: relativeY },
+                      initialMarkerSize: markerSize,
+                    },
+                  };
+                }
+                return n;
+              })
+            );
+
+            console.log(`Set ${targetNode.data.label} as initial state of ${node.data.label}`);
+          }
+
+          setIsSettingInitial(false);
+          setInitialTargetId(null);
+          event.stopPropagation();
+          return;
+        }
       }
 
       // Handle ungroup mode - move clicked node out of its parent
@@ -1680,7 +2071,7 @@ const App = () => {
         event.stopPropagation();
       }
     },
-    [isAddingNode, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, setNodes, setEdges, setSelectedTreeItem, nodes, generateUniqueNodeLabel, effectiveScale, effectivePan]
+    [isAddingNode, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, setNodes, setEdges, setSelectedTreeItem, nodes, generateUniqueNodeLabel, effectiveScale, effectivePan]
   );
 
   return (
@@ -1793,13 +2184,13 @@ const App = () => {
 
         <Box
           ref={reactFlowWrapper}
-          className={isAddingNode || isAddingTransition ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
+          className={isAddingNode || isAddingTransition || isSettingInitial ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
           sx={{
             flexGrow: 1,
             position: 'relative',
-            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingTransition ? 'crosshair' : 'default'),
+            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingTransition || isSettingInitial ? 'crosshair' : 'default'),
             '& *': {
-              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingTransition ? 'crosshair !important' : undefined),
+              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingTransition || isSettingInitial ? 'crosshair !important' : undefined),
             },
           }}
           onMouseDown={handlePaneMouseDown}
@@ -1816,6 +2207,8 @@ const App = () => {
             onReconnect={onReconnect}
             onPaneClick={onPaneClick}
             onNodeClick={onNodeClick}
+            onNodeDrag={onNodeDrag}
+            onNodeDragStop={onNodeDragStop}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             isValidConnection={isValidConnection}
