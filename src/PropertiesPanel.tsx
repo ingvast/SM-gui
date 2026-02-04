@@ -20,21 +20,41 @@ const codeFieldStyle = {
   fontSize: '0.85rem',
 };
 
-// Helper to handle Tab key in code fields - inserts 2 spaces
+const codeFieldInputProps = {
+  style: {
+    whiteSpace: 'pre',
+    overflowX: 'auto',
+    overflowWrap: 'normal',
+    wordBreak: 'keep-all',
+  },
+};
+
+// Helper to handle Tab key in code fields - inserts spaces to align to next tab stop
 const handleCodeFieldTab = (
   event: React.KeyboardEvent,
   value: string,
-  setValue: (v: string) => void
+  setValue: (v: string) => void,
+  tabWidth: number
 ) => {
   if (event.key === 'Tab') {
     event.preventDefault();
     const target = event.target as HTMLTextAreaElement;
     const start = target.selectionStart;
     const end = target.selectionEnd;
-    const newValue = value.substring(0, start) + '  ' + value.substring(end);
+
+    // Find the start of the current line to calculate column position
+    const textBeforeCursor = value.substring(0, start);
+    const lastNewlineIndex = textBeforeCursor.lastIndexOf('\n');
+    const currentColumn = start - (lastNewlineIndex + 1);
+
+    // Calculate spaces needed to reach next tab stop
+    const spacesToAdd = tabWidth - (currentColumn % tabWidth);
+    const spaces = ' '.repeat(spacesToAdd);
+
+    const newValue = value.substring(0, start) + spaces + value.substring(end);
     setValue(newValue);
     setTimeout(() => {
-      target.selectionStart = target.selectionEnd = start + 2;
+      target.selectionStart = target.selectionEnd = start + spacesToAdd;
     }, 0);
   }
 };
@@ -57,6 +77,12 @@ interface Node {
   };
 }
 
+interface Settings {
+  editorPreference: 'system' | 'builtin' | 'custom';
+  customEditorCommand: string;
+  tabWidth: number;
+}
+
 interface PropertiesPanelProps {
   selectedNode: Node | null;
   selectedCanvasEdge: Edge | null;
@@ -64,6 +90,8 @@ interface PropertiesPanelProps {
   edges: Edge[];
   onPropertyChange: (nodeId: string, property: string, value: unknown) => void;
   onEdgePropertyChange: (edgeId: string, property: string, value: unknown) => void;
+  settings: Settings;
+  language: string;
 }
 
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
@@ -73,6 +101,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   edges,
   onPropertyChange,
   onEdgePropertyChange,
+  settings,
+  language,
 }) => {
   const [tempName, setTempName] = useState('');
   const [tempEntry, setTempEntry] = useState('');
@@ -173,7 +203,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     if (event.key === 'Enter' && !event.shiftKey) {
       (event.target as HTMLInputElement).blur();
     }
-    handleCodeFieldTab(event, tempEntry, setTempEntry);
+    handleCodeFieldTab(event, tempEntry, setTempEntry, settings.tabWidth);
   };
 
   const handleExitChangeLocal = (event: React.ChangeEvent<HTMLInputElement>) => setTempExit(event.target.value);
@@ -186,7 +216,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     if (event.key === 'Enter' && !event.shiftKey) {
       (event.target as HTMLInputElement).blur();
     }
-    handleCodeFieldTab(event, tempExit, setTempExit);
+    handleCodeFieldTab(event, tempExit, setTempExit, settings.tabWidth);
   };
 
   const handleDoChangeLocal = (event: React.ChangeEvent<HTMLInputElement>) => setTempDo(event.target.value);
@@ -199,7 +229,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     if (event.key === 'Enter' && !event.shiftKey) {
       (event.target as HTMLInputElement).blur();
     }
-    handleCodeFieldTab(event, tempDo, setTempDo);
+    handleCodeFieldTab(event, tempDo, setTempDo, settings.tabWidth);
   };
 
   // Edge property handlers
@@ -214,7 +244,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     if (event.key === 'Enter' && !event.shiftKey) {
       (event.target as HTMLInputElement).blur();
     }
-    handleCodeFieldTab(event, tempGuard, setTempGuard);
+    handleCodeFieldTab(event, tempGuard, setTempGuard, settings.tabWidth);
   };
 
   const handleActionChangeLocal = (event: React.ChangeEvent<HTMLInputElement>) => setTempAction(event.target.value);
@@ -228,7 +258,58 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     if (event.key === 'Enter' && !event.shiftKey) {
       (event.target as HTMLInputElement).blur();
     }
-    handleCodeFieldTab(event, tempAction, setTempAction);
+    handleCodeFieldTab(event, tempAction, setTempAction, settings.tabWidth);
+  };
+
+  // Handle expand button click - either open external editor or built-in dialog
+  const handleExpandClick = async (field: 'entry' | 'exit' | 'do' | 'guard' | 'action') => {
+    if (settings.editorPreference === 'builtin') {
+      // Use built-in dialog
+      setExpandedField(field);
+      return;
+    }
+
+    // Get current value for this field
+    let currentValue = '';
+    if (field === 'entry') currentValue = tempEntry;
+    else if (field === 'exit') currentValue = tempExit;
+    else if (field === 'do') currentValue = tempDo;
+    else if (field === 'guard') currentValue = tempGuard;
+    else if (field === 'action') currentValue = tempAction;
+
+    try {
+      const result = await window.editorAPI.editExternal(currentValue, language);
+
+      if (result.success && result.content !== undefined) {
+        // Apply the changes
+        if (field === 'entry' && selectedNode) {
+          setTempEntry(result.content);
+          onPropertyChange(selectedNode.id, 'entry', result.content);
+        } else if (field === 'exit' && selectedNode) {
+          setTempExit(result.content);
+          onPropertyChange(selectedNode.id, 'exit', result.content);
+        } else if (field === 'do' && selectedNode) {
+          setTempDo(result.content);
+          onPropertyChange(selectedNode.id, 'do', result.content);
+        } else if (field === 'guard' && (selectedCanvasEdge || selectedEdgeId)) {
+          const edgeId = selectedCanvasEdge?.id || selectedEdgeId!;
+          setTempGuard(result.content);
+          onEdgePropertyChange(edgeId, 'guard', result.content);
+        } else if (field === 'action' && (selectedCanvasEdge || selectedEdgeId)) {
+          const edgeId = selectedCanvasEdge?.id || selectedEdgeId!;
+          setTempAction(result.content);
+          onEdgePropertyChange(edgeId, 'action', result.content);
+        }
+      } else if (result.fallbackToBuiltin || result.useBuiltin) {
+        // Fall back to built-in dialog
+        setExpandedField(field);
+      }
+      // If canceled, do nothing
+    } catch (error) {
+      console.error('Error with external editor:', error);
+      // Fall back to built-in dialog
+      setExpandedField(field);
+    }
   };
 
   const handleDialogSave = (value: string) => {
@@ -270,6 +351,27 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     return '';
   };
 
+  // Handler for opening in external editor from the built-in dialog
+  const handleOpenExternalFromDialog = async (currentValue: string): Promise<string | null> => {
+    if (settings.editorPreference === 'builtin') {
+      // If editor preference is builtin, this button shouldn't be shown
+      // but handle gracefully anyway
+      return null;
+    }
+
+    try {
+      const result = await window.editorAPI.editExternal(currentValue, language);
+      if (result.success && result.content !== undefined) {
+        return result.content;
+      }
+      // If canceled or error, return null to indicate no change
+      return null;
+    } catch (error) {
+      console.error('Error with external editor:', error);
+      return null;
+    }
+  };
+
   // Show transition editing when only an edge is selected on canvas
   if ((!selectedNode || !selectedNode.data) && selectedCanvasEdge) {
     return (
@@ -294,11 +396,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               onBlur={handleGuardBlur}
               onKeyDown={handleGuardKeyDown}
               placeholder="Guard condition..."
-              slotProps={{ input: { sx: codeFieldStyle } }}
+              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
             />
             <IconButton
               size="small"
-              onClick={() => setExpandedField('guard')}
+              onClick={() => handleExpandClick('guard')}
               sx={{
                 position: 'absolute',
                 right: 4,
@@ -325,11 +427,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               onBlur={handleActionBlur}
               onKeyDown={handleActionKeyDown}
               placeholder="Transition action..."
-              slotProps={{ input: { sx: codeFieldStyle } }}
+              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
             />
             <IconButton
               size="small"
-              onClick={() => setExpandedField('action')}
+              onClick={() => handleExpandClick('action')}
               sx={{
                 position: 'absolute',
                 right: 4,
@@ -351,6 +453,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           onSave={handleDialogSave}
           value={getDialogValue()}
           title={getDialogTitle()}
+          onOpenExternal={settings.editorPreference !== 'builtin' ? handleOpenExternalFromDialog : undefined}
+          tabWidth={settings.tabWidth}
         />
       </Box>
     );
@@ -368,6 +472,22 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+        Properties
+      </Typography>
+
+      <TextField
+        label="Name"
+        size="small"
+        fullWidth
+        value={tempName}
+        onChange={handleNameChangeLocal}
+        onBlur={handleNameBlur}
+        onKeyDown={handleNameKeyDown}
+        disabled={selectedNode.id === '/'}
+        sx={{ mb: 1 }}
+      />
+
       <Tabs
         value={activeTab}
         onChange={(_, newValue) => setActiveTab(newValue)}
@@ -380,16 +500,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       {/* State Tab */}
       {activeTab === 0 && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
-          <TextField
-            label="Name"
-            size="small"
-            fullWidth
-            value={tempName}
-            onChange={handleNameChangeLocal}
-            onBlur={handleNameBlur}
-            onKeyDown={handleNameKeyDown}
-            disabled={selectedNode.id === '/'}
-          />
 
           <FormControlLabel
             control={
@@ -426,11 +536,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               onBlur={handleEntryBlur}
               onKeyDown={handleEntryKeyDown}
               placeholder="Entry action code..."
-              slotProps={{ input: { sx: codeFieldStyle } }}
+              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
             />
             <IconButton
               size="small"
-              onClick={() => setExpandedField('entry')}
+              onClick={() => handleExpandClick('entry')}
               sx={{
                 position: 'absolute',
                 right: 4,
@@ -457,11 +567,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               onBlur={handleExitBlur}
               onKeyDown={handleExitKeyDown}
               placeholder="Exit action code..."
-              slotProps={{ input: { sx: codeFieldStyle } }}
+              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
             />
             <IconButton
               size="small"
-              onClick={() => setExpandedField('exit')}
+              onClick={() => handleExpandClick('exit')}
               sx={{
                 position: 'absolute',
                 right: 4,
@@ -488,11 +598,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               onBlur={handleDoBlur}
               onKeyDown={handleDoKeyDown}
               placeholder="Activity code..."
-              slotProps={{ input: { sx: codeFieldStyle } }}
+              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
             />
             <IconButton
               size="small"
-              onClick={() => setExpandedField('do')}
+              onClick={() => handleExpandClick('do')}
               sx={{
                 position: 'absolute',
                 right: 4,
@@ -587,11 +697,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   onBlur={handleGuardBlur}
                   onKeyDown={handleGuardKeyDown}
                   placeholder="Guard condition..."
-                  slotProps={{ input: { sx: codeFieldStyle } }}
+                  slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
                 />
                 <IconButton
                   size="small"
-                  onClick={() => setExpandedField('guard')}
+                  onClick={() => handleExpandClick('guard')}
                   sx={{
                     position: 'absolute',
                     right: 4,
@@ -618,11 +728,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   onBlur={handleActionBlur}
                   onKeyDown={handleActionKeyDown}
                   placeholder="Transition action..."
-                  slotProps={{ input: { sx: codeFieldStyle } }}
+                  slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
                 />
                 <IconButton
                   size="small"
-                  onClick={() => setExpandedField('action')}
+                  onClick={() => handleExpandClick('action')}
                   sx={{
                     position: 'absolute',
                     right: 4,
@@ -647,6 +757,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         onSave={handleDialogSave}
         value={getDialogValue()}
         title={getDialogTitle()}
+        onOpenExternal={settings.editorPreference !== 'builtin' ? handleOpenExternalFromDialog : undefined}
+        tabWidth={settings.tabWidth}
       />
     </Box>
   );

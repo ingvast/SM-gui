@@ -30,6 +30,7 @@ import {
   Save as SaveIcon,
   FileDownload as ExportIcon,
   Settings as SettingsIcon,
+  Tune as TuneIcon,
 } from '@mui/icons-material';
 
 import './index.css';
@@ -38,6 +39,7 @@ import StateTree from './StateTree';
 import PropertiesPanel from './PropertiesPanel';
 import SplineEdge from './SplineEdge';
 import MachinePropertiesDialog from './MachinePropertiesDialog';
+import SettingsDialog, { Settings } from './SettingsDialog';
 import { convertToYaml, convertFromYaml, MachineProperties, defaultMachineProperties } from './yamlConverter';
 import {
   useSemanticZoomStore,
@@ -66,13 +68,27 @@ const theme = createTheme({
   },
 });
 
-// Type declaration for the file API exposed from preload
+// Type declaration for the APIs exposed from preload
 declare global {
   interface Window {
     fileAPI: {
       saveFile: (content: string, defaultName: string) => Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
       exportFile: (content: string, defaultName: string) => Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
       openFile: () => Promise<{ success: boolean; content?: string; filePath?: string; canceled?: boolean; error?: string }>;
+    };
+    settingsAPI: {
+      get: () => Promise<Settings>;
+      save: (settings: Settings) => Promise<{ success: boolean }>;
+    };
+    editorAPI: {
+      editExternal: (content: string, language: string) => Promise<{
+        success: boolean;
+        content?: string;
+        canceled?: boolean;
+        error?: string;
+        useBuiltin?: boolean;
+        fallbackToBuiltin?: boolean;
+      }>;
     };
   }
 }
@@ -170,6 +186,15 @@ const App = () => {
     updateSize();
     window.addEventListener('resize', updateSize);
     return () => window.removeEventListener('resize', updateSize);
+  }, []);
+
+  // Load settings on mount
+  useEffect(() => {
+    window.settingsAPI.get().then((loadedSettings) => {
+      setSettings(loadedSettings);
+    }).catch((error) => {
+      console.error('Error loading settings:', error);
+    });
   }, []);
 
   // Animation loop for smooth transitions
@@ -775,6 +800,12 @@ const App = () => {
   const [rootHistory, setRootHistory] = useState(false);
   const [machineProperties, setMachineProperties] = useState<MachineProperties>(defaultMachineProperties);
   const [machinePropertiesDialogOpen, setMachinePropertiesDialogOpen] = useState(false);
+  const [settings, setSettings] = useState<Settings>({
+    editorPreference: 'builtin',
+    customEditorCommand: 'code -w {file}',
+    tabWidth: 4,
+  });
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [copiedNodes, setCopiedNodes] = useState([]);
   const [copiedEdges, setCopiedEdges] = useState([]);
 
@@ -1707,6 +1738,16 @@ const App = () => {
               Properties
             </Button>
           </Tooltip>
+          <Tooltip title="Editor Settings">
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<TuneIcon />}
+              onClick={() => setSettingsDialogOpen(true)}
+            >
+              Settings
+            </Button>
+          </Tooltip>
           <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
             Cmd+S: Save | Cmd+Shift+S: Export | Cmd+O: Open
           </Typography>
@@ -1744,6 +1785,8 @@ const App = () => {
               edges={edges}
               onPropertyChange={handlePropertyChange}
               onEdgePropertyChange={handleEdgePropertyChange}
+              settings={settings}
+              language={machineProperties.language}
             />
           </Box>
         </Paper>
@@ -1796,6 +1839,18 @@ const App = () => {
         onClose={() => setMachinePropertiesDialogOpen(false)}
         machineProperties={machineProperties}
         onSave={setMachineProperties}
+      />
+
+      <SettingsDialog
+        open={settingsDialogOpen}
+        onClose={() => setSettingsDialogOpen(false)}
+        settings={settings}
+        onSave={(newSettings) => {
+          setSettings(newSettings);
+          window.settingsAPI.save(newSettings).catch((error) => {
+            console.error('Error saving settings:', error);
+          });
+        }}
       />
     </Box>
   );
