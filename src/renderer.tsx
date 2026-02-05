@@ -29,7 +29,6 @@ import {
   Add as AddIcon,
   FolderOpen as OpenIcon,
   Save as SaveIcon,
-  FileDownload as ExportIcon,
   Settings as SettingsIcon,
   Tune as TuneIcon,
 } from '@mui/icons-material';
@@ -75,7 +74,7 @@ declare global {
   interface Window {
     fileAPI: {
       saveFile: (content: string, defaultName: string) => Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
-      exportFile: (content: string, defaultName: string) => Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
+      saveFileDirect: (content: string, filePath: string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
       openFile: () => Promise<{ success: boolean; content?: string; filePath?: string; canceled?: boolean; error?: string }>;
     };
     settingsAPI: {
@@ -179,6 +178,7 @@ const App = () => {
 
   // Machine properties (needs to be before transformedNodes useMemo)
   const [machineProperties, setMachineProperties] = useState<MachineProperties>(defaultMachineProperties);
+  const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
 
   // Track dragging marker position (for smooth visual feedback)
   const [draggingMarkerId, setDraggingMarkerId] = useState<string | null>(null);
@@ -205,6 +205,16 @@ const App = () => {
       console.error('Error loading settings:', error);
     });
   }, []);
+
+  // Update window title based on current file
+  useEffect(() => {
+    if (currentFilePath) {
+      const fileName = currentFilePath.split('/').pop()?.replace(/\.(yaml|yml)$/i, '') || currentFilePath;
+      document.title = `${fileName} - SM Editor`;
+    } else {
+      document.title = 'SM Editor';
+    }
+  }, [currentFilePath]);
 
   // Animation loop for smooth transitions
   useEffect(() => {
@@ -233,35 +243,10 @@ const App = () => {
     setViewport({ x: 0, y: 0, zoom: 1 }, { duration: 0 });
   }, [setViewport]);
 
-  // Calculate the effective scale for the current semantic zoom state
-  const effectiveScale = useMemo(() => {
-    if (focusNodeId) {
-      const focusBounds = getAbsoluteNodeBounds(focusNodeId, nodes);
-      if (focusBounds) {
-        const padding = 0.1;
-        const scaleX = viewportSize.width * (1 - padding * 2) / focusBounds.width;
-        const scaleY = viewportSize.height * (1 - padding * 2) / focusBounds.height;
-        return Math.min(scaleX, scaleY) * zoomLevel;
-      }
-    }
-    return zoomLevel;
-  }, [focusNodeId, nodes, viewportSize, zoomLevel]);
-
-  // Calculate the pan offset that centers on focus node
-  const effectivePan = useMemo(() => {
-    if (focusNodeId) {
-      const focusBounds = getAbsoluteNodeBounds(focusNodeId, nodes);
-      if (focusBounds) {
-        const centerX = focusBounds.x + focusBounds.width / 2;
-        const centerY = focusBounds.y + focusBounds.height / 2;
-        return {
-          x: viewportSize.width / 2 - centerX * effectiveScale + panOffset.x,
-          y: viewportSize.height / 2 - centerY * effectiveScale + panOffset.y,
-        };
-      }
-    }
-    return panOffset;
-  }, [focusNodeId, nodes, viewportSize, effectiveScale, panOffset]);
+  // Zoom and pan are directly driven by the store values.
+  // When 'z' is pressed, the target zoom/pan are computed once and animated to.
+  const effectiveScale = zoomLevel;
+  const effectivePan = panOffset;
 
   // Transform nodes to screen coordinates based on semantic zoom
   const transformedNodes = useMemo(() => {
@@ -693,11 +678,21 @@ const App = () => {
     const padding = 0.1;
 
     if (selectedNode) {
-      // Zoom to selected node
-      // When focusNodeId is set, effectivePan automatically centers on the node,
-      // so we just need panOffset to be zero
+      // Zoom to selected node - compute absolute target zoom and pan
+      const bounds = getAbsoluteNodeBounds(selectedNode.id, nodes);
+      if (!bounds) return;
+
+      const scaleX = viewportSize.width * (1 - padding * 2) / bounds.width;
+      const scaleY = viewportSize.height * (1 - padding * 2) / bounds.height;
+      const targetZoom = Math.min(scaleX, scaleY);
+
+      const centerX = bounds.x + bounds.width / 2;
+      const centerY = bounds.y + bounds.height / 2;
+      const targetPanX = viewportSize.width / 2 - centerX * targetZoom;
+      const targetPanY = viewportSize.height / 2 - centerY * targetZoom;
+
       setFocusNode(selectedNode.id);
-      startAnimation(1.0, { x: 0, y: 0 });
+      startAnimation(targetZoom, { x: targetPanX, y: targetPanY });
     } else {
       // Fit all nodes in view
       if (nodes.length === 0) return;
@@ -740,15 +735,17 @@ const App = () => {
     const focusNode = nodes.find(n => n.id === focusNodeId);
     if (!focusNode) {
       setFocusNode(null);
-      startAnimation(1.0, { x: viewportSize.width / 2, y: viewportSize.height / 2 });
+      // Fit all nodes
+      handleSemanticZoomToSelected();
       return;
     }
 
+    const padding = 0.1;
+
     if (focusNode.parentId) {
-      // Navigate to parent
+      // Navigate to parent - compute absolute zoom and pan
       const parentBounds = getAbsoluteNodeBounds(focusNode.parentId, nodes);
       if (parentBounds) {
-        const padding = 0.1;
         const scaleX = viewportSize.width * (1 - padding * 2) / parentBounds.width;
         const scaleY = viewportSize.height * (1 - padding * 2) / parentBounds.height;
         const targetZoom = Math.min(scaleX, scaleY);
@@ -759,12 +756,32 @@ const App = () => {
         const targetPanY = viewportSize.height / 2 - centerY * targetZoom;
 
         setFocusNode(focusNode.parentId);
-        startAnimation(1.0, { x: targetPanX, y: targetPanY });
+        startAnimation(targetZoom, { x: targetPanX, y: targetPanY });
       }
     } else {
-      // Navigate to root view
+      // Navigate to root view - fit all nodes
       setFocusNode(null);
-      startAnimation(1.0, { x: viewportSize.width / 2, y: viewportSize.height / 2 });
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const node of nodes) {
+        const bounds = getAbsoluteNodeBounds(node.id, nodes);
+        if (bounds) {
+          minX = Math.min(minX, bounds.x);
+          minY = Math.min(minY, bounds.y);
+          maxX = Math.max(maxX, bounds.x + bounds.width);
+          maxY = Math.max(maxY, bounds.y + bounds.height);
+        }
+      }
+      if (!isFinite(minX)) return;
+      const totalWidth = maxX - minX;
+      const totalHeight = maxY - minY;
+      const scaleX = viewportSize.width * (1 - padding * 2) / totalWidth;
+      const scaleY = viewportSize.height * (1 - padding * 2) / totalHeight;
+      const targetZoom = Math.min(scaleX, scaleY);
+      const centerX = minX + totalWidth / 2;
+      const centerY = minY + totalHeight / 2;
+      const targetPanX = viewportSize.width / 2 - centerX * targetZoom;
+      const targetPanY = viewportSize.height / 2 - centerY * targetZoom;
+      startAnimation(targetZoom, { x: targetPanX, y: targetPanY });
     }
   }, [focusNodeId, nodes, viewportSize, setFocusNode, startAnimation]);
 
@@ -1384,23 +1401,18 @@ const App = () => {
 
   const handleSave = useCallback(async () => {
     const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, true, machineProperties);
-    const result = await window.fileAPI.saveFile(yamlContent, 'statemachine.yaml');
-    if (result.success) {
-      console.log('Saved to:', result.filePath);
+    let result;
+    if (currentFilePath) {
+      result = await window.fileAPI.saveFileDirect(yamlContent, currentFilePath);
+    } else {
+      result = await window.fileAPI.saveFile(yamlContent, 'statemachine.yaml');
+    }
+    if (result.success && result.filePath) {
+      setCurrentFilePath(result.filePath);
     } else if (result.error) {
       alert('Error saving file: ' + result.error);
     }
-  }, [nodes, edges, rootHistory, machineProperties]);
-
-  const handleExport = useCallback(async () => {
-    const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, false, machineProperties);
-    const result = await window.fileAPI.exportFile(yamlContent, 'statemachine.yaml');
-    if (result.success) {
-      console.log('Exported to:', result.filePath);
-    } else if (result.error) {
-      alert('Error exporting file: ' + result.error);
-    }
-  }, [nodes, edges, rootHistory, machineProperties]);
+  }, [nodes, edges, rootHistory, machineProperties, currentFilePath]);
 
   const handleOpen = useCallback(async () => {
     const result = await window.fileAPI.openFile();
@@ -1430,7 +1442,7 @@ const App = () => {
           return max;
         }, 0);
         stateNameCounter = maxStateNum + 1;
-        console.log('Opened:', result.filePath);
+        setCurrentFilePath(result.filePath || null);
       } catch (error) {
         alert('Error parsing YAML file: ' + (error as Error).message);
       }
@@ -1451,9 +1463,9 @@ const App = () => {
     setRootHistory(false);
     setMachineProperties(defaultMachineProperties);
     setSelectedTreeItem(null);
+    setCurrentFilePath(null);
     idCounter = 1;
     stateNameCounter = 1;
-    console.log('New state machine created.');
   }, [nodes, setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem]);
 
 
@@ -1822,11 +1834,7 @@ const App = () => {
             break;
           case 's':
             event.preventDefault();
-            if (event.shiftKey) {
-              handleExport();
-            } else {
-              handleSave();
-            }
+            handleSave();
             break;
           case 'o':
             event.preventDefault();
@@ -1842,7 +1850,7 @@ const App = () => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleExport, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState, setIsAddingNode, nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, calculateBestHandles, setEdges]);
+  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState, setIsAddingNode, nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, calculateBestHandles, setEdges]);
 
   const onPaneClick = useCallback(
     (event) => {
@@ -2159,16 +2167,6 @@ const App = () => {
               onClick={handleSave}
             >
               Save
-            </Button>
-          </Tooltip>
-          <Tooltip title="Export (Cmd+Shift+S)">
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<ExportIcon />}
-              onClick={handleExport}
-            >
-              Export
             </Button>
           </Tooltip>
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />

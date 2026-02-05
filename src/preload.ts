@@ -5,7 +5,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 export interface FileAPI {
   saveFile: (content: string, defaultName: string) => Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
-  exportFile: (content: string, defaultName: string) => Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
+  saveFileDirect: (content: string, filePath: string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
   openFile: () => Promise<{ success: boolean; content?: string; filePath?: string; canceled?: boolean; error?: string }>;
 }
 
@@ -33,7 +33,7 @@ export interface EditorAPI {
 
 contextBridge.exposeInMainWorld('fileAPI', {
   saveFile: (content: string, defaultName: string) => ipcRenderer.invoke('save-file', content, defaultName),
-  exportFile: (content: string, defaultName: string) => ipcRenderer.invoke('export-file', content, defaultName),
+  saveFileDirect: (content: string, filePath: string) => ipcRenderer.invoke('save-file-direct', content, filePath),
   openFile: () => ipcRenderer.invoke('open-file'),
 } as FileAPI);
 

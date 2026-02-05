@@ -112,16 +112,7 @@ ipcMain.handle('save-file', async (_event, content: string, defaultName: string)
   }
 });
 
-ipcMain.handle('export-file', async (_event, content: string, defaultName: string) => {
-  const { canceled, filePath } = await dialog.showSaveDialog({
-    defaultPath: defaultName,
-    filters: [{ name: 'YAML Files', extensions: ['yaml', 'yml'] }],
-  });
-
-  if (canceled || !filePath) {
-    return { success: false, canceled: true };
-  }
-
+ipcMain.handle('save-file-direct', async (_event, content: string, filePath: string) => {
   try {
     fs.writeFileSync(filePath, content, 'utf-8');
     return { success: true, filePath };
