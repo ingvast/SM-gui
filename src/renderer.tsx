@@ -328,6 +328,28 @@ const App = () => {
       }
     }
 
+    // Compute minimum screen-space dimensions for each parent node based on children
+    const minScreenDims = new Map<string, { minWidth: number; minHeight: number }>();
+    const childPadding = 5 * effectiveScale; // padding in screen pixels
+    for (const node of nodes) {
+      if (!node.parentId) continue;
+      const parentT = nodeTransforms.get(node.parentId);
+      const childT = nodeTransforms.get(node.id);
+      if (!parentT || !childT) continue;
+
+      // Child's right/bottom edge relative to parent's top-left
+      const childRight = (childT.screenX - parentT.screenX) + childT.screenWidth + childPadding;
+      const childBottom = (childT.screenY - parentT.screenY) + childT.screenHeight + childPadding;
+
+      const existing = minScreenDims.get(node.parentId);
+      if (existing) {
+        existing.minWidth = Math.max(existing.minWidth, childRight);
+        existing.minHeight = Math.max(existing.minHeight, childBottom);
+      } else {
+        minScreenDims.set(node.parentId, { minWidth: childRight, minHeight: childBottom });
+      }
+    }
+
     // Build result with all visible nodes
     const result = nodes.map(node => {
       const t = nodeTransforms.get(node.id);
@@ -337,6 +359,7 @@ const App = () => {
       if (!shouldInclude) return null;
 
       const depth = calculateNodeDepth(node.id, nodes);
+      const mins = minScreenDims.get(node.id);
 
       return {
         ...node,
@@ -352,7 +375,9 @@ const App = () => {
         data: {
           ...node.data,
           semanticScale: effectiveScale,
-          screenWidth: t.screenWidth,  // Pass to StateNode for label visibility
+          screenWidth: t.screenWidth,
+          minWidth: mins?.minWidth,
+          minHeight: mins?.minHeight,
         },
       };
     }).filter(Boolean) as typeof nodes;
@@ -1517,6 +1542,17 @@ const App = () => {
 
   const onNodesChangeWithSelection = useCallback(
     (changes) => {
+      // Detect resize-from-left/top: nodes that have both position and dimensions changes
+      const hasPositionChange = new Set<string>();
+      const hasDimensionsChange = new Set<string>();
+      for (const change of changes) {
+        if (change.type === 'position' && change.position) hasPositionChange.add(change.id);
+        if (change.type === 'dimensions' && change.updateStyle && change.dimensions) hasDimensionsChange.add(change.id);
+      }
+
+      // Track world-space position deltas for nodes being resized from left/top
+      const resizeDeltas = new Map<string, { dx: number; dy: number }>();
+
       // Convert position and dimension changes from screen coordinates to world coordinates
       const convertedChanges = changes.map(change => {
         // Skip initial markers - they are virtual nodes
@@ -1555,6 +1591,14 @@ const App = () => {
                   relX = Math.max(padding, Math.min(relX, parentBounds.width - nodeWidth - padding));
                   relY = Math.max(padding, Math.min(relY, parentBounds.height - nodeHeight - padding));
 
+                  // Track delta if this is a resize-from-left/top
+                  if (hasDimensionsChange.has(change.id)) {
+                    resizeDeltas.set(change.id, {
+                      dx: relX - node.position.x,
+                      dy: relY - node.position.y,
+                    });
+                  }
+
                   return {
                     ...change,
                     position: { x: relX, y: relY },
@@ -1563,6 +1607,14 @@ const App = () => {
               }
 
               // Top-level node
+              // Track delta if this is a resize-from-left/top
+              if (hasDimensionsChange.has(change.id)) {
+                resizeDeltas.set(change.id, {
+                  dx: worldX - node.position.x,
+                  dy: worldY - node.position.y,
+                });
+              }
+
               return {
                 ...change,
                 position: { x: worldX, y: worldY },
@@ -1587,7 +1639,24 @@ const App = () => {
         return change;
       });
 
-      onNodesChange(convertedChanges);
+      // Compensate children for resize-from-left/top so they stay in place on screen
+      const childCompensation = [];
+      for (const [parentId, delta] of resizeDeltas) {
+        if (delta.dx === 0 && delta.dy === 0) continue;
+        const children = nodes.filter(n => n.parentId === parentId);
+        for (const child of children) {
+          childCompensation.push({
+            type: 'position' as const,
+            id: child.id,
+            position: {
+              x: child.position.x - delta.dx,
+              y: child.position.y - delta.dy,
+            },
+          });
+        }
+      }
+
+      onNodesChange([...convertedChanges, ...childCompensation]);
       changes.forEach(change => {
         if (change.type === 'select' && change.selected) {
           setSelectedTreeItem(change.id);

@@ -16,6 +16,8 @@ interface StateNodeData {
   scaleFactor?: number;
   semanticScale?: number;
   screenWidth?: number;  // Current rendered width in pixels
+  minWidth?: number;     // Minimum width to contain children (screen pixels)
+  minHeight?: number;    // Minimum height to contain children (screen pixels)
 }
 
 interface StateNodeProps {
@@ -58,7 +60,11 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
 
   return (
     <div className="state-node" style={nodeStyle}>
-      <NodeResizer isVisible={selected} />
+      <NodeResizer
+        isVisible={selected}
+        minWidth={data.minWidth}
+        minHeight={data.minHeight}
+      />
 
       {/* Invisible ReactFlow Handles for connection logic */}
       <Handle type="source" position={Position.Top} id="top-source" className="invisible-handle" />
