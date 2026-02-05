@@ -428,7 +428,7 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   const guardText = data?.guard;
 
   // Fixed visual sizes in screen pixels
-  const strokeWidth = selected ? 2 : 1.5;
+  const strokeWidth = selected ? 2.5 : 1.5;
   const hitAreaWidth = 20;
   const controlPointRadius = 8;
   const controlPointStrokeWidth = 2;
@@ -480,8 +480,6 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
         fill="none"
         stroke={selected ? '#1976d2' : '#b1b1b7'}
         strokeWidth={strokeWidth}
-        style={style}
-        className="react-flow__edge-path"
       />
 
       {/* Custom arrowhead */}

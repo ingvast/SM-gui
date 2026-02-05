@@ -899,24 +899,32 @@ const App = () => {
 
   const onConnect = useCallback(
     (params) => {
-      // Normalize handles: ReactFlow needs source handles to end with '-source' and target with '-target'
-      // When using ConnectionMode.Loose, user might connect target-to-target, so we fix it here
+      // When drag starts from a target-type handle, ReactFlow reports that node as "source",
+      // but semantically it's the target (arrows arrive at target handles). Swap in that case.
+      let source = params.source;
+      let target = params.target;
       let sourceHandle = params.sourceHandle;
       let targetHandle = params.targetHandle;
 
-      // Convert source handle to source type if it's a target type
+      if (sourceHandle && sourceHandle.endsWith('-target')) {
+        source = params.target;
+        target = params.source;
+        sourceHandle = params.targetHandle;
+        targetHandle = params.sourceHandle;
+      }
+
+      // Normalize handle types: ensure sourceHandle ends with '-source', targetHandle with '-target'
       if (sourceHandle && sourceHandle.endsWith('-target')) {
         sourceHandle = sourceHandle.replace('-target', '-source');
       }
-      // Convert target handle to target type if it's a source type
       if (targetHandle && targetHandle.endsWith('-source')) {
         targetHandle = targetHandle.replace('-source', '-target');
       }
 
       setEdges((eds) => {
         const newEdge = {
-          source: params.source,
-          target: params.target,
+          source,
+          target,
           sourceHandle,
           targetHandle,
           id: `e${params.source}-${params.target}-${Date.now()}`,
