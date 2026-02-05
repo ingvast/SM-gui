@@ -14,4 +14,18 @@
   background: transparent !important;
   border: none !important;
   opacity: 0 !important;
+  pointer-events: auto !important;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+/* Show handles subtly on hover over the state node */
+.state-node:hover .invisible-handle {
+  opacity: 0.15 !important;
+  background: #666 !important;
+}
+
+.state-node .invisible-handle:hover {
+  opacity: 0.4 !important;
+  background: #1976d2 !important;
+  cursor: crosshair;
 }

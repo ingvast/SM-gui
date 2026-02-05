@@ -8,6 +8,7 @@ import ReactFlow, {
   ReactFlowProvider,
   MarkerType,
   Node,
+  ConnectionMode,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
@@ -488,7 +489,9 @@ const App = () => {
   // Filter edges: show if at least one endpoint is visible
   const transformedEdges = useMemo(() => {
     const regularEdges = edges
-      .filter(edge => visibleNodeIds.has(edge.source) || visibleNodeIds.has(edge.target))
+      .filter(edge => {
+        return visibleNodeIds.has(edge.source) || visibleNodeIds.has(edge.target);
+      })
       .map(edge => {
         // Check if this is an ancestor-descendant relationship (any level)
         // sourceIsAncestor: source is an ancestor of target (source is parent/grandparent/etc of target)
@@ -498,6 +501,8 @@ const App = () => {
 
         return {
           ...edge,
+          // Only allow reconnecting selected edges (avoids ambiguity when multiple edges share a handle)
+          reconnectable: edge.selected ? true : undefined,
           data: {
             ...edge.data,
             effectiveScale,
@@ -632,7 +637,8 @@ const App = () => {
       }
     }
 
-    return [...regularEdges, ...initialEdges];
+    const result = [...regularEdges, ...initialEdges];
+    return result;
   }, [edges, visibleNodeIds, effectiveScale, isAncestorOf, nodes, transformedNodes, machineProperties]);
 
   // Custom wheel handler for semantic zoom (added manually to avoid passive listener)
@@ -656,6 +662,11 @@ const App = () => {
   const lastPanPos = useRef({ x: 0, y: 0 });
 
   const handlePaneMouseDown = useCallback((event: React.MouseEvent) => {
+    // Don't start panning if clicking on a handle or edge reconnection anchor
+    const target = event.target as HTMLElement;
+    if (target.closest('.react-flow__handle') || target.closest('.react-flow__edgeupdater')) {
+      return;
+    }
     // Left mouse button on pane starts panning
     if (event.button === 0) {
       isPanning.current = true;
@@ -887,14 +898,38 @@ const App = () => {
   }, [nodes, setNodes]);
 
   const onConnect = useCallback(
-    (params) => setEdges((eds) => addEdge({
-      ...params,
-      type: 'spline',
-      data: { controlPoints: [], label: '' },
-      markerEnd: { type: MarkerType.ArrowClosed },
-    }, eds)),
+    (params) => {
+      // Normalize handles: ReactFlow needs source handles to end with '-source' and target with '-target'
+      // When using ConnectionMode.Loose, user might connect target-to-target, so we fix it here
+      let sourceHandle = params.sourceHandle;
+      let targetHandle = params.targetHandle;
+
+      // Convert source handle to source type if it's a target type
+      if (sourceHandle && sourceHandle.endsWith('-target')) {
+        sourceHandle = sourceHandle.replace('-target', '-source');
+      }
+      // Convert target handle to target type if it's a source type
+      if (targetHandle && targetHandle.endsWith('-source')) {
+        targetHandle = targetHandle.replace('-source', '-target');
+      }
+
+      setEdges((eds) => {
+        const newEdge = {
+          source: params.source,
+          target: params.target,
+          sourceHandle,
+          targetHandle,
+          id: `e${params.source}-${params.target}-${Date.now()}`,
+          type: 'spline',
+          data: { controlPoints: [], label: '' },
+          markerEnd: { type: MarkerType.ArrowClosed },
+        };
+        return [...eds, newEdge];
+      });
+    },
     [setEdges]
   );
+
 
   // Calculate best handles for connecting two nodes based on their positions
   const calculateBestHandles = useCallback((sourceId: string, targetId: string) => {
@@ -998,6 +1033,16 @@ const App = () => {
   // Handle edge reconnection (dragging edge endpoints to new handles/nodes)
   const onReconnect = useCallback(
     (oldEdge, newConnection) => {
+      // Normalize handles (same as onConnect) - ConnectionMode.Loose can produce mismatched types
+      let sourceHandle = newConnection.sourceHandle;
+      let targetHandle = newConnection.targetHandle;
+      if (sourceHandle && sourceHandle.endsWith('-target')) {
+        sourceHandle = sourceHandle.replace('-target', '-source');
+      }
+      if (targetHandle && targetHandle.endsWith('-source')) {
+        targetHandle = targetHandle.replace('-source', '-target');
+      }
+
       setEdges((eds) =>
         eds.map((edge) => {
           if (edge.id === oldEdge.id) {
@@ -1005,8 +1050,8 @@ const App = () => {
               ...edge,
               source: newConnection.source,
               target: newConnection.target,
-              sourceHandle: newConnection.sourceHandle,
-              targetHandle: newConnection.targetHandle,
+              sourceHandle,
+              targetHandle,
             };
           }
           return edge;
@@ -2212,6 +2257,9 @@ const App = () => {
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             isValidConnection={isValidConnection}
+            connectionRadius={40}
+            connectionMode={ConnectionMode.Loose}
+            edgesUpdatable={false}
             reconnectRadius={10}
             minZoom={1}
             maxZoom={1}
