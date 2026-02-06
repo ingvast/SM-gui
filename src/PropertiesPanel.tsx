@@ -188,12 +188,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     }
   };
 
-  const handleHistoryChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (selectedNode) {
-      onPropertyChange(selectedNode.id, 'history', event.target.checked);
-    }
-  };
-
   const handleOrthogonalChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (selectedNode) {
       onPropertyChange(selectedNode.id, 'orthogonal', event.target.checked);
@@ -492,17 +486,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       {/* State Tab */}
       {activeTab === 0 && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
-
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={(selectedNode.data.history as boolean) || false}
-                onChange={handleHistoryChange}
-                size="small"
-              />
-            }
-            label="History"
-          />
 
           <FormControlLabel
             control={

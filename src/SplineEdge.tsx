@@ -87,16 +87,32 @@ interface PathResult {
   lastSegment: { p0: Point; p1: Point; p2: Point; p3: Point };
 }
 
-// De Casteljau split: returns the first sub-curve [Q0, Q1, Q2, Q3] when splitting at parameter t
+// De Casteljau split: returns both sub-curves when splitting at parameter t
+// First sub-curve: q0,q1,q2,q3 (start → split point)
+// Second sub-curve: r0,r1,r2,r3 (split point → end)
 function splitBezierAt(p0: Point, p1: Point, p2: Point, p3: Point, t: number) {
-  const q0 = p0;
-  const q1 = { x: p0.x + (p1.x - p0.x) * t, y: p0.y + (p1.y - p0.y) * t };
-  const mid = { x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t };
-  const q2 = { x: q1.x + (mid.x - q1.x) * t, y: q1.y + (mid.y - q1.y) * t };
-  const s = { x: p2.x + (p3.x - p2.x) * t, y: p2.y + (p3.y - p2.y) * t };
-  const tt = { x: mid.x + (s.x - mid.x) * t, y: mid.y + (s.y - mid.y) * t };
-  const q3 = { x: q2.x + (tt.x - q2.x) * t, y: q2.y + (tt.y - q2.y) * t };
-  return { q0, q1, q2, q3 };
+  const a = { x: p0.x + (p1.x - p0.x) * t, y: p0.y + (p1.y - p0.y) * t };
+  const b = { x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t };
+  const c = { x: p2.x + (p3.x - p2.x) * t, y: p2.y + (p3.y - p2.y) * t };
+  const d = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+  const e = { x: b.x + (c.x - b.x) * t, y: b.y + (c.y - b.y) * t };
+  const f = { x: d.x + (e.x - d.x) * t, y: d.y + (e.y - d.y) * t };
+  return {
+    q0: p0, q1: a, q2: d, q3: f,   // first sub-curve
+    r0: f, r1: e, r2: c, r3: p3,    // second sub-curve
+  };
+}
+
+// Rotate a point around a center by angle (radians)
+function rotatePoint(pt: Point, center: Point, angle: number): Point {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const dx = pt.x - center.x;
+  const dy = pt.y - center.y;
+  return {
+    x: center.x + dx * cos - dy * sin,
+    y: center.y + dx * sin + dy * cos,
+  };
 }
 
 // Generate a self-loop path from source handle to target handle on the same node
@@ -487,37 +503,44 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   const controlPointRadius = 8;
   const controlPointStrokeWidth = 2;
   const labelFontSize = 12;
-  const arrowSize = 10;
-  const arrowGap = 6; // Distance from node edge where visible path ends and arrowhead sits
+  const arrowLength = 15; // Length of the MetaPost-style curved arrowhead
+  const arrowGap = 6; // Gap between arrow tip and node edge
+  const arrowAngleRad = 15 * Math.PI / 180; // 15 degrees rotation for arrowhead curves
 
-  // Split the last bezier segment to truncate the visible path arrowGap pixels before the endpoint.
-  // This preserves the exact curve shape (de Casteljau subdivision).
+  // Two-step de Casteljau: first truncate the gap, then extract the arrow portion.
   const { p0, p1, p2, p3 } = pathResult.lastSegment;
   const speed = 3 * Math.hypot(p3.x - p2.x, p3.y - p2.y); // |B'(1)|
-  const tSplit = Math.max(0, 1 - arrowGap / (speed || 1));
-  const { q1, q2, q3 } = splitBezierAt(p0, p1, p2, p3, tSplit);
 
-  // The arrowhead sits at the split point, oriented along the tangent there
-  const arrowTipX = q3.x;
-  const arrowTipY = q3.y;
-  const arrowDirX = q3.x - q2.x;
-  const arrowDirY = q3.y - q2.y;
-  const arrowDirLen = Math.hypot(arrowDirX, arrowDirY) || 1;
-  const normDirX = arrowDirX / arrowDirLen;
-  const normDirY = arrowDirY / arrowDirLen;
+  // Step 1: Truncate the last segment to end arrowGap px before the node edge
+  const tGap = Math.max(0, 1 - arrowGap / (speed || 1));
+  const gapSplit = splitBezierAt(p0, p1, p2, p3, tGap);
+  // gapSplit.q0..q3 is the truncated curve (ends at arrow tip)
 
-  // Replace the last C segment in the path with the truncated sub-curve
+  // Step 2: From the truncated curve, extract the last arrowLength px for the arrowhead
+  const gapSpeed = 3 * Math.hypot(gapSplit.q3.x - gapSplit.q2.x, gapSplit.q3.y - gapSplit.q2.y);
+  const tArrow = Math.max(0, 1 - arrowLength / (gapSpeed || 1));
+  const arrowSplit = splitBezierAt(gapSplit.q0, gapSplit.q1, gapSplit.q2, gapSplit.q3, tArrow);
+
+  // Visible path ends where the arrowhead starts
   const lastCIdx = pathD.lastIndexOf('C');
   const visiblePathD = pathD.substring(0, lastCIdx)
-    + `C ${q1.x} ${q1.y}, ${q2.x} ${q2.y}, ${q3.x} ${q3.y}`;
+    + `C ${arrowSplit.q1.x} ${arrowSplit.q1.y}, ${arrowSplit.q2.x} ${arrowSplit.q2.y}, ${arrowSplit.q3.x} ${arrowSplit.q3.y}`;
 
-  // Arrowhead points
-  const arrowAngle = Math.PI / 6; // 30 degrees
-  const ax1 = arrowTipX - arrowSize * (normDirX * Math.cos(arrowAngle) - normDirY * Math.sin(arrowAngle));
-  const ay1 = arrowTipY - arrowSize * (normDirY * Math.cos(arrowAngle) + normDirX * Math.sin(arrowAngle));
-  const ax2 = arrowTipX - arrowSize * (normDirX * Math.cos(arrowAngle) + normDirY * Math.sin(arrowAngle));
-  const ay2 = arrowTipY - arrowSize * (normDirY * Math.cos(arrowAngle) - normDirX * Math.sin(arrowAngle));
-  const arrowPath = `M ${arrowTipX} ${arrowTipY} L ${ax1} ${ay1} L ${ax2} ${ay2} Z`;
+  // MetaPost-style arrowhead: take the arrow sub-curve (r0→r3), rotate ±15° around the tip (r3)
+  const { r0, r1, r2, r3 } = arrowSplit;
+  const tip = r3; // The arrow tip (offset from node edge by arrowGap)
+
+  // Rotate the arrow sub-curve clockwise and counter-clockwise around the tip
+  const cwR0 = rotatePoint(r0, tip, arrowAngleRad);
+  const cwR1 = rotatePoint(r1, tip, arrowAngleRad);
+  const cwR2 = rotatePoint(r2, tip, arrowAngleRad);
+  const ccwR0 = rotatePoint(r0, tip, -arrowAngleRad);
+  const ccwR1 = rotatePoint(r1, tip, -arrowAngleRad);
+  const ccwR2 = rotatePoint(r2, tip, -arrowAngleRad);
+
+  // Build arrowhead: CW curve from back to tip, then CCW curve from tip to back, close
+  const arrowPath = `M ${cwR0.x} ${cwR0.y} C ${cwR1.x} ${cwR1.y}, ${cwR2.x} ${cwR2.y}, ${tip.x} ${tip.y} `
+    + `C ${ccwR2.x} ${ccwR2.y}, ${ccwR1.x} ${ccwR1.y}, ${ccwR0.x} ${ccwR0.y} Z`;
 
   return (
     <g>

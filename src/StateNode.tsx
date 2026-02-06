@@ -12,6 +12,8 @@ interface StateNodeData {
   entry?: string;
   exit?: string;
   do?: string;
+  historyMarkerPos?: { x: number; y: number };
+  historyMarkerSize?: number;
   depth?: number;
   scaleFactor?: number;
   semanticScale?: number;

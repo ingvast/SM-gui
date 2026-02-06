@@ -11,6 +11,8 @@ interface StateData {
   initial?: string;
   initialMarkerPos?: { x: number; y: number };
   initialMarkerSize?: number;
+  historyMarkerPos?: { x: number; y: number };
+  historyMarkerSize?: number;
 }
 
 export interface MachineProperties {
@@ -30,6 +32,8 @@ export interface MachineProperties {
   initial?: string;  // ID of initial top-level state
   initialMarkerPos?: { x: number; y: number };
   initialMarkerSize?: number;
+  historyMarkerPos?: { x: number; y: number };
+  historyMarkerSize?: number;
 }
 
 export const defaultMachineProperties: MachineProperties = {
@@ -64,6 +68,8 @@ interface YamlState {
     height: number;
     initialMarkerPos?: { x: number; y: number };
     initialMarkerSize?: number;
+    historyMarkerPos?: { x: number; y: number };
+    historyMarkerSize?: number;
   };
 }
 
@@ -97,6 +103,8 @@ interface YamlDocument {
   graphics?: {
     initialMarkerPos?: { x: number; y: number };
     initialMarkerSize?: number;
+    historyMarkerPos?: { x: number; y: number };
+    historyMarkerSize?: number;
   };
 }
 
@@ -182,6 +190,12 @@ export function convertToYaml(
         width: (node.style?.width as number) || 150,
         height: (node.style?.height as number) || 50,
       };
+
+      // Store history marker geometry
+      if (node.data.history && node.data.historyMarkerPos) {
+        stateObj.graphics.historyMarkerPos = node.data.historyMarkerPos;
+        stateObj.graphics.historyMarkerSize = node.data.historyMarkerSize;
+      }
     }
 
     // Add child states
@@ -294,6 +308,11 @@ export function convertToYaml(
   // 7. Root history
   if (rootHistory) {
     doc.history = true;
+    if (includeGraphics && machineProperties?.historyMarkerPos) {
+      if (!doc.graphics) doc.graphics = {};
+      doc.graphics.historyMarkerPos = machineProperties.historyMarkerPos;
+      doc.graphics.historyMarkerSize = machineProperties.historyMarkerSize;
+    }
   }
 
   // 8. Root initial state
@@ -387,9 +406,17 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
         // initial will be resolved after children are created
         initialMarkerPos: safeStateData.graphics?.initialMarkerPos,
         initialMarkerSize: safeStateData.graphics?.initialMarkerSize,
+        historyMarkerPos: safeStateData.graphics?.historyMarkerPos,
+        historyMarkerSize: safeStateData.graphics?.historyMarkerSize,
       },
       style: { width, height },
     };
+
+    // Default history marker position if history=true but no geometry
+    if (node.data.history && !node.data.historyMarkerPos) {
+      node.data.historyMarkerPos = { x: width * 0.05, y: height * 0.05 };
+      node.data.historyMarkerSize = Math.min(width, height) * 0.15;
+    }
 
     if (parentId) {
       node.parentId = parentId;
@@ -596,7 +623,15 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     initial: rootInitialId,
     initialMarkerPos: doc.graphics?.initialMarkerPos,
     initialMarkerSize: doc.graphics?.initialMarkerSize,
+    historyMarkerPos: doc.graphics?.historyMarkerPos,
+    historyMarkerSize: doc.graphics?.historyMarkerSize,
   };
+
+  // Default root history marker position if history=true but no geometry
+  if ((doc.history || false) && !machineProperties.historyMarkerPos) {
+    machineProperties.historyMarkerPos = { x: 20, y: 20 };
+    machineProperties.historyMarkerSize = 20;
+  }
 
   return {
     nodes,

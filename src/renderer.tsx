@@ -36,6 +36,7 @@ import {
 import './index.css';
 import StateNode from './StateNode';
 import InitialMarker from './InitialMarker';
+import HistoryMarker from './HistoryMarker';
 import StateTree from './StateTree';
 import PropertiesPanel from './PropertiesPanel';
 import SplineEdge from './SplineEdge';
@@ -94,7 +95,7 @@ declare global {
   }
 }
 
-const nodeTypes = { stateNode: StateNode, initialMarker: InitialMarker };
+const nodeTypes = { stateNode: StateNode, initialMarker: InitialMarker, historyMarker: HistoryMarker };
 const edgeTypes = { spline: SplineEdge };
 
 const initialNodes = [
@@ -183,6 +184,7 @@ const App = () => {
   // Track dragging marker position (for smooth visual feedback)
   const [draggingMarkerId, setDraggingMarkerId] = useState<string | null>(null);
   const [draggingMarkerPos, setDraggingMarkerPos] = useState<{ x: number; y: number } | null>(null);
+  const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
 
   // Track viewport size
   useEffect(() => {
@@ -478,8 +480,88 @@ const App = () => {
       }
     }
 
-    return [...result, ...initialMarkers];
-  }, [nodes, edges, effectiveScale, effectivePan, viewportSize, machineProperties, draggingMarkerId, draggingMarkerPos]);
+    // Add history marker nodes for states that have history=true
+    const historyMarkers: typeof nodes = [];
+    for (const node of nodes) {
+      if (node.data.history && node.data.historyMarkerPos) {
+        const stateBounds = getAbsoluteNodeBounds(node.id, nodes);
+        if (!stateBounds) continue;
+
+        // Check if this state is visible
+        const stateVisible = intrinsicallyVisible.has(node.id) || connectedToVisible.has(node.id);
+        if (!stateVisible) continue;
+
+        const markerWorldX = stateBounds.x + (node.data.historyMarkerPos as { x: number; y: number }).x;
+        const markerWorldY = stateBounds.y + (node.data.historyMarkerPos as { x: number; y: number }).y;
+        const markerScreenX = markerWorldX * effectiveScale + effectivePan.x;
+        const markerScreenY = markerWorldY * effectiveScale + effectivePan.y;
+
+        const baseSize = (node.data.historyMarkerSize as number) || Math.min(stateBounds.width, stateBounds.height) * 0.15;
+        const screenSize = baseSize * effectiveScale;
+
+        // Hide if too small (same rule as states)
+        if (screenSize < SEMANTIC_ZOOM_CONFIG.MIN_VISIBLE_SIZE) continue;
+
+        const depth = calculateNodeDepth(node.id, nodes);
+        const markerId = `history-marker-${node.id}`;
+        const markerPosition = (draggingMarkerId === markerId && draggingMarkerPos)
+          ? draggingMarkerPos
+          : { x: markerScreenX - screenSize / 2, y: markerScreenY - screenSize / 2 };
+        historyMarkers.push({
+          id: markerId,
+          type: 'historyMarker',
+          position: markerPosition,
+          zIndex: 2000 + depth * 10,
+          style: { width: screenSize, height: screenSize },
+          data: {
+            size: screenSize,
+          },
+          selected: selectedMarkerId === markerId,
+          selectable: true,
+          draggable: true,
+          hidden: false,
+          width: screenSize,
+          height: screenSize,
+        } as typeof nodes[0]);
+      }
+    }
+
+    // Add root history marker (check machineProperties only - rootHistory state is declared later)
+    if (machineProperties.historyMarkerPos) {
+      const baseSize = (machineProperties.historyMarkerSize as number) || 20;
+      const screenSize = baseSize * effectiveScale;
+
+      if (screenSize >= SEMANTIC_ZOOM_CONFIG.MIN_VISIBLE_SIZE) {
+      const markerWorldX = machineProperties.historyMarkerPos.x;
+      const markerWorldY = machineProperties.historyMarkerPos.y;
+      const markerScreenX = markerWorldX * effectiveScale + effectivePan.x;
+      const markerScreenY = markerWorldY * effectiveScale + effectivePan.y;
+
+      const markerId = 'history-marker-root';
+      const markerPosition = (draggingMarkerId === markerId && draggingMarkerPos)
+        ? draggingMarkerPos
+        : { x: markerScreenX - screenSize / 2, y: markerScreenY - screenSize / 2 };
+      historyMarkers.push({
+        id: markerId,
+        type: 'historyMarker',
+        position: markerPosition,
+        zIndex: 2000,
+        style: { width: screenSize, height: screenSize },
+        data: {
+          size: screenSize,
+        },
+        selected: selectedMarkerId === markerId,
+        selectable: true,
+        draggable: true,
+        hidden: false,
+        width: screenSize,
+        height: screenSize,
+      } as typeof nodes[0]);
+      }
+    }
+
+    return [...result, ...initialMarkers, ...historyMarkers];
+  }, [nodes, edges, effectiveScale, effectivePan, viewportSize, machineProperties, draggingMarkerId, draggingMarkerPos, selectedMarkerId]);
 
   // Build a set of visible node IDs for edge filtering
   const visibleNodeIds = useMemo(() => {
@@ -672,9 +754,9 @@ const App = () => {
   const lastPanPos = useRef({ x: 0, y: 0 });
 
   const handlePaneMouseDown = useCallback((event: React.MouseEvent) => {
-    // Don't start panning if clicking on a handle or edge reconnection anchor
+    // Don't start panning if clicking on a node, edge, handle, or edge reconnection anchor
     const target = event.target as HTMLElement;
-    if (target.closest('.react-flow__handle') || target.closest('.react-flow__edgeupdater')) {
+    if (target.closest('.react-flow__node') || target.closest('.react-flow__edge') || target.closest('.react-flow__handle') || target.closest('.react-flow__edgeupdater')) {
       return;
     }
     // Left mouse button on pane starts panning
@@ -1117,6 +1199,7 @@ const App = () => {
   const [isUngroupingMode, setIsUngroupingMode] = useState(false);
   const [isSettingInitial, setIsSettingInitial] = useState(false);
   const [initialTargetId, setInitialTargetId] = useState<string | null>(null);
+  const [isSettingHistory, setIsSettingHistory] = useState(false);
   const [selectedTreeItem, setSelectedTreeItem] = useState(null);
   const [rootHistory, setRootHistory] = useState(false);
   const [machinePropertiesDialogOpen, setMachinePropertiesDialogOpen] = useState(false);
@@ -1550,13 +1633,60 @@ const App = () => {
         if (change.type === 'dimensions' && change.updateStyle && change.dimensions) hasDimensionsChange.add(change.id);
       }
 
+      // Intercept remove and resize changes for history markers
+      const historyRemoves: string[] = [];
+      const filteredChanges = changes.filter(change => {
+        if (change.type === 'remove' && change.id?.startsWith('history-marker-')) {
+          historyRemoves.push(change.id);
+          return false; // Don't let ReactFlow remove the synthetic node
+        }
+        // Intercept dimension changes from history marker resize
+        if (change.type === 'dimensions' && change.id?.startsWith('history-marker-') && change.updateStyle && change.dimensions) {
+          const newSize = Math.max(change.dimensions.width, change.dimensions.height) / effectiveScale;
+          if (change.id === 'history-marker-root') {
+            setMachineProperties(prev => ({ ...prev, historyMarkerSize: newSize }));
+          } else {
+            const stateId = change.id.replace('history-marker-', '');
+            setNodes(nds => nds.map(n => {
+              if (n.id === stateId) {
+                return { ...n, data: { ...n.data, historyMarkerSize: newSize } };
+              }
+              return n;
+            }));
+          }
+          return true; // Let it through so ReactFlow updates the visual
+        }
+        return true;
+      });
+      if (historyRemoves.length > 0) {
+        for (const markerId of historyRemoves) {
+          if (markerId === 'history-marker-root') {
+            setRootHistory(false);
+            setMachineProperties(prev => {
+              const { historyMarkerPos, historyMarkerSize, ...rest } = prev as typeof prev & { historyMarkerPos?: unknown; historyMarkerSize?: unknown };
+              return rest;
+            });
+          } else {
+            const stateId = markerId.replace('history-marker-', '');
+            setNodes(nds => nds.map(n => {
+              if (n.id === stateId) {
+                const { historyMarkerPos, historyMarkerSize, ...restData } = n.data as typeof n.data & { historyMarkerPos?: unknown; historyMarkerSize?: unknown };
+                return { ...n, data: { ...restData, history: false } };
+              }
+              return n;
+            }));
+          }
+        }
+        if (filteredChanges.length === 0) return;
+      }
+
       // Track world-space position deltas for nodes being resized from left/top
       const resizeDeltas = new Map<string, { dx: number; dy: number }>();
 
       // Convert position and dimension changes from screen coordinates to world coordinates
-      const convertedChanges = changes.map(change => {
-        // Skip initial markers - they are virtual nodes
-        if (change.id?.startsWith('initial-marker')) {
+      const convertedChanges = filteredChanges.map(change => {
+        // Skip initial/history markers - they are virtual nodes
+        if (change.id?.startsWith('initial-marker') || change.id?.startsWith('history-marker')) {
           return change;
         }
 
@@ -1586,10 +1716,11 @@ const App = () => {
                   const nodeWidth = (node.style?.width as number) || node.width || 150;
                   const nodeHeight = (node.style?.height as number) || node.height || 50;
 
-                  // Constrain to parent bounds (with small padding)
-                  const padding = 5;
-                  relX = Math.max(padding, Math.min(relX, parentBounds.width - nodeWidth - padding));
-                  relY = Math.max(padding, Math.min(relY, parentBounds.height - nodeHeight - padding));
+                  // Constrain to parent bounds (padding as 5% of parent, capped so node fits)
+                  const paddingX = Math.max(0, Math.min(parentBounds.width * 0.05, (parentBounds.width - nodeWidth) / 2));
+                  const paddingY = Math.max(0, Math.min(parentBounds.height * 0.05, (parentBounds.height - nodeHeight) / 2));
+                  relX = Math.max(paddingX, Math.min(relX, parentBounds.width - nodeWidth - paddingX));
+                  relY = Math.max(paddingY, Math.min(relY, parentBounds.height - nodeHeight - paddingY));
 
                   // Track delta if this is a resize-from-left/top
                   if (hasDimensionsChange.has(change.id)) {
@@ -1657,7 +1788,7 @@ const App = () => {
       }
 
       onNodesChange([...convertedChanges, ...childCompensation]);
-      changes.forEach(change => {
+      filteredChanges.forEach(change => {
         if (change.type === 'select' && change.selected) {
           setSelectedTreeItem(change.id);
         } else if (change.type === 'select' && !change.selected && selectedTreeItem === change.id) {
@@ -1665,7 +1796,7 @@ const App = () => {
         }
       });
     },
-    [onNodesChange, selectedTreeItem, nodes, effectiveScale, effectivePan]
+    [onNodesChange, selectedTreeItem, nodes, effectiveScale, effectivePan, setRootHistory, setMachineProperties]
   );
 
   const onEdgesChangeWithSelection = useCallback(
@@ -1815,7 +1946,31 @@ const App = () => {
         return;
       }
 
-      if (event.key === 'n' && !isModifierPressed) {
+      // Delete selected history marker
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedMarkerId?.startsWith('history-marker-')) {
+        event.preventDefault();
+        if (selectedMarkerId === 'history-marker-root') {
+          setRootHistory(false);
+          setMachineProperties(prev => {
+            const updated = { ...prev };
+            delete (updated as Record<string, unknown>).historyMarkerPos;
+            delete (updated as Record<string, unknown>).historyMarkerSize;
+            return updated;
+          });
+        } else {
+          const stateId = selectedMarkerId.replace('history-marker-', '');
+          setNodes(nds => nds.map(n => {
+            if (n.id === stateId) {
+              const newData = { ...n.data, history: false };
+              delete (newData as Record<string, unknown>).historyMarkerPos;
+              delete (newData as Record<string, unknown>).historyMarkerSize;
+              return { ...n, data: newData };
+            }
+            return n;
+          }));
+        }
+        setSelectedMarkerId(null);
+      } else if (event.key === 'n' && !isModifierPressed) {
         event.preventDefault();
         setIsAddingNode(true);
       } else if (event.key === 't' && !isModifierPressed) {
@@ -1877,6 +2032,13 @@ const App = () => {
             console.log('Click on canvas to place root initial marker for:', selectedNode.data.label);
           }
         }
+      } else if (event.key === 'h' && !isModifierPressed) {
+        event.preventDefault();
+        setIsSettingHistory(true);
+        console.log('Click on a state to place history marker');
+      } else if (event.key === 'Escape' && isSettingHistory) {
+        event.preventDefault();
+        setIsSettingHistory(false);
       } else if (event.key === 'Escape' && isSettingInitial) {
         event.preventDefault();
         setIsSettingInitial(false);
@@ -1919,7 +2081,7 @@ const App = () => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState, setIsAddingNode, nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, calculateBestHandles, setEdges]);
+  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState, setIsAddingNode, nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, selectedMarkerId, calculateBestHandles, setEdges, setRootHistory, setMachineProperties]);
 
   const onPaneClick = useCallback(
     (event) => {
@@ -1960,6 +2122,31 @@ const App = () => {
         }
       }
 
+      // Handle setting root history marker (click on canvas)
+      if (isSettingHistory) {
+        const rect = reactFlowWrapper.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        const screenX = event.clientX - rect.left;
+        const screenY = event.clientY - rect.top;
+        const worldX = (screenX - effectivePan.x) / effectiveScale;
+        const worldY = (screenY - effectivePan.y) / effectiveScale;
+
+        const markerSize = (viewportSize.width * 0.03) / effectiveScale;
+
+        setRootHistory(true);
+        setMachineProperties(prev => ({
+          ...prev,
+          historyMarkerPos: { x: worldX, y: worldY },
+          historyMarkerSize: markerSize,
+        }));
+
+        console.log('Set root history marker');
+        setIsSettingHistory(false);
+        event.stopPropagation();
+        return;
+      }
+
       if (isAddingNode) {
         // Convert screen click position to world coordinates
         const rect = reactFlowWrapper.current?.getBoundingClientRect();
@@ -1986,6 +2173,7 @@ const App = () => {
         setIsAddingNode(false);
       } else {
         setSelectedTreeItem(null);
+        setSelectedMarkerId(null);
         setNodes((nds) =>
           nds.map((node) => ({ ...node, selected: false }))
         );
@@ -1994,13 +2182,13 @@ const App = () => {
         );
       }
     },
-    [isAddingNode, isSettingInitial, initialTargetId, setNodes, setEdges, setMachineProperties, generateUniqueNodeLabel, nodes, effectiveScale, effectivePan, viewportSize]
+    [isAddingNode, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setMachineProperties, setRootHistory, generateUniqueNodeLabel, nodes, effectiveScale, effectivePan, viewportSize]
   );
 
-  // Handle initial marker drag
+  // Handle marker drag (initial and history markers)
   const onNodeDrag = useCallback(
     (event, node) => {
-      if (node.id.startsWith('initial-marker')) {
+      if (node.id.startsWith('initial-marker') || node.id.startsWith('history-marker')) {
         setDraggingMarkerId(node.id);
         setDraggingMarkerPos(node.position);
       }
@@ -2041,6 +2229,46 @@ const App = () => {
                 data: {
                   ...n.data,
                   initialMarkerPos: { x: relX, y: relY },
+                },
+              };
+            }
+            return n;
+          }));
+        }
+        setDraggingMarkerId(null);
+        setDraggingMarkerPos(null);
+      } else if (node.id === 'history-marker-root') {
+        // Root history marker - update machineProperties
+        const screenSize = node.style?.width as number || 20;
+        const screenX = node.position.x + screenSize / 2;
+        const screenY = node.position.y + screenSize / 2;
+        const worldX = (screenX - effectivePan.x) / effectiveScale;
+        const worldY = (screenY - effectivePan.y) / effectiveScale;
+        setMachineProperties(prev => ({
+          ...prev,
+          historyMarkerPos: { x: worldX, y: worldY },
+        }));
+        setDraggingMarkerId(null);
+        setDraggingMarkerPos(null);
+      } else if (node.id.startsWith('history-marker-')) {
+        // State history marker - update state node
+        const stateId = node.id.replace('history-marker-', '');
+        const stateBounds = getAbsoluteNodeBounds(stateId, nodes);
+        if (stateBounds) {
+          const screenSize = node.style?.width as number || 20;
+          const screenX = node.position.x + screenSize / 2;
+          const screenY = node.position.y + screenSize / 2;
+          const worldX = (screenX - effectivePan.x) / effectiveScale;
+          const worldY = (screenY - effectivePan.y) / effectiveScale;
+          const relX = worldX - stateBounds.x;
+          const relY = worldY - stateBounds.y;
+          setNodes(nds => nds.map(n => {
+            if (n.id === stateId) {
+              return {
+                ...n,
+                data: {
+                  ...n.data,
+                  historyMarkerPos: { x: relX, y: relY },
                 },
               };
             }
@@ -2116,6 +2344,47 @@ const App = () => {
         }
       }
 
+      // Handle setting history marker mode
+      if (isSettingHistory && node.type === 'stateNode') {
+        const rect = reactFlowWrapper.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        const screenX = event.clientX - rect.left;
+        const screenY = event.clientY - rect.top;
+        const worldX = (screenX - effectivePan.x) / effectiveScale;
+        const worldY = (screenY - effectivePan.y) / effectiveScale;
+
+        const stateBounds = getAbsoluteNodeBounds(node.id, nodes);
+        if (stateBounds) {
+          const relativeX = worldX - stateBounds.x;
+          const relativeY = worldY - stateBounds.y;
+          const markerSize = Math.min(stateBounds.width, stateBounds.height) * 0.15;
+
+          setNodes((nds) =>
+            nds.map((n) => {
+              if (n.id === node.id) {
+                return {
+                  ...n,
+                  data: {
+                    ...n.data,
+                    history: true,
+                    historyMarkerPos: { x: relativeX, y: relativeY },
+                    historyMarkerSize: markerSize,
+                  },
+                };
+              }
+              return n;
+            })
+          );
+
+          console.log(`Set history marker on ${node.data.label}`);
+        }
+
+        setIsSettingHistory(false);
+        event.stopPropagation();
+        return;
+      }
+
       // Handle ungroup mode - move clicked node out of its parent
       if (isUngroupingMode) {
         // Find the original node (not the transformed one)
@@ -2127,6 +2396,17 @@ const App = () => {
         return;
       }
 
+      // For marker nodes (initial/history), track selection ourselves
+      if (node.id.startsWith('initial-marker') || node.id.startsWith('history-marker')) {
+        setSelectedMarkerId(node.id);
+        setSelectedTreeItem(null);
+        // Deselect all real nodes
+        setNodes((nds) => nds.map((n) => ({ ...n, selected: false })));
+        setEdges((eds) => eds.map((e) => ({ ...e, selected: false })));
+        return;
+      }
+
+      setSelectedMarkerId(null);
       setNodes((nds) =>
         nds.map((n) => ({
           ...n,
@@ -2178,14 +2458,26 @@ const App = () => {
           y: worldClickY - parentBounds.y,
         };
 
-        const safePadding = 10 * scale;
+        // Padding as 5% of parent dimension, capped so child always fits
+        const safePaddingX = Math.min(parentBounds.width * 0.05, (parentBounds.width - scaledNodeWidth) / 2);
+        const safePaddingY = Math.min(parentBounds.height * 0.05, (parentBounds.height - scaledNodeHeight) / 2);
 
         // Clamp to parent bounds (using world coordinate dimensions)
-        newRelativePosition.x = Math.max(safePadding, newRelativePosition.x);
-        newRelativePosition.x = Math.min(parentBounds.width - scaledNodeWidth - safePadding, newRelativePosition.x);
+        if (safePaddingX > 0) {
+          newRelativePosition.x = Math.max(safePaddingX, Math.min(newRelativePosition.x, parentBounds.width - scaledNodeWidth - safePaddingX));
+        } else {
+          // Child is larger than parent — center it
+          newRelativePosition.x = (parentBounds.width - scaledNodeWidth) / 2;
+        }
 
-        newRelativePosition.y = Math.max(safePadding, newRelativePosition.y);
-        newRelativePosition.y = Math.min(parentBounds.height - scaledNodeHeight - safePadding, newRelativePosition.y);
+        if (safePaddingY > 0) {
+          newRelativePosition.y = Math.max(safePaddingY, Math.min(newRelativePosition.y, parentBounds.height - scaledNodeHeight - safePaddingY));
+        } else {
+          // Child is larger than parent — center it
+          newRelativePosition.y = (parentBounds.height - scaledNodeHeight) / 2;
+        }
+
+
 
         const newNode = {
           id: getNextId(),
@@ -2201,7 +2493,7 @@ const App = () => {
         event.stopPropagation();
       }
     },
-    [isAddingNode, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, setNodes, setEdges, setSelectedTreeItem, nodes, generateUniqueNodeLabel, effectiveScale, effectivePan]
+    [isAddingNode, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setSelectedTreeItem, nodes, generateUniqueNodeLabel, effectiveScale, effectivePan]
   );
 
   return (
@@ -2304,13 +2596,13 @@ const App = () => {
 
         <Box
           ref={reactFlowWrapper}
-          className={isAddingNode || isAddingTransition || isSettingInitial ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
+          className={isAddingNode || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
           sx={{
             flexGrow: 1,
             position: 'relative',
-            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingTransition || isSettingInitial ? 'crosshair' : 'default'),
+            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair' : 'default'),
             '& *': {
-              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingTransition || isSettingInitial ? 'crosshair !important' : undefined),
+              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair !important' : undefined),
             },
           }}
           onMouseDown={handlePaneMouseDown}
