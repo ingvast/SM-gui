@@ -79,6 +79,26 @@ function getPositionDirection(position: Position): { x: number; y: number } {
   }
 }
 
+interface Point { x: number; y: number }
+
+interface PathResult {
+  path: string;
+  // Full control points of the last cubic bezier segment (for exact truncation)
+  lastSegment: { p0: Point; p1: Point; p2: Point; p3: Point };
+}
+
+// De Casteljau split: returns the first sub-curve [Q0, Q1, Q2, Q3] when splitting at parameter t
+function splitBezierAt(p0: Point, p1: Point, p2: Point, p3: Point, t: number) {
+  const q0 = p0;
+  const q1 = { x: p0.x + (p1.x - p0.x) * t, y: p0.y + (p1.y - p0.y) * t };
+  const mid = { x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t };
+  const q2 = { x: q1.x + (mid.x - q1.x) * t, y: q1.y + (mid.y - q1.y) * t };
+  const s = { x: p2.x + (p3.x - p2.x) * t, y: p2.y + (p3.y - p2.y) * t };
+  const tt = { x: mid.x + (s.x - mid.x) * t, y: mid.y + (s.y - mid.y) * t };
+  const q3 = { x: q2.x + (tt.x - q2.x) * t, y: q2.y + (tt.y - q2.y) * t };
+  return { q0, q1, q2, q3 };
+}
+
 // Generate a self-loop path from source handle to target handle on the same node
 function generateSelfLoopPath(
   sourceX: number,
@@ -88,19 +108,32 @@ function generateSelfLoopPath(
   sourcePosition: Position,
   targetPosition: Position,
   loopSize = 50
-): string {
+): PathResult {
   const sourceDir = getPositionDirection(sourcePosition);
   const targetDir = getPositionDirection(targetPosition);
 
-  // Calculate control points that bow outward from both handles
-  // The bow goes in the direction of the handles
-  const cp1x = sourceX + sourceDir.x * loopSize;
-  const cp1y = sourceY + sourceDir.y * loopSize;
-  const cp2x = targetX + targetDir.x * loopSize;
-  const cp2y = targetY + targetDir.y * loopSize;
+  // Perpendicular vector to spread control points for a visible bow
+  const sourcePerpX = -sourceDir.y;
+  const sourcePerpY = sourceDir.x;
+  const targetPerpX = -targetDir.y;
+  const targetPerpY = targetDir.x;
 
-  // Use a cubic bezier from source to target with control points bowing outward
-  return `M ${sourceX} ${sourceY} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${targetX} ${targetY}`;
+  // Control points extend outward AND spread perpendicular to form a loop
+  const spread = loopSize * 0.6;
+  const cp1x = sourceX + sourceDir.x * loopSize + sourcePerpX * spread;
+  const cp1y = sourceY + sourceDir.y * loopSize + sourcePerpY * spread;
+  const cp2x = targetX + targetDir.x * loopSize - targetPerpX * spread;
+  const cp2y = targetY + targetDir.y * loopSize - targetPerpY * spread;
+
+  return {
+    path: `M ${sourceX} ${sourceY} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${targetX} ${targetY}`,
+    lastSegment: {
+      p0: { x: sourceX, y: sourceY },
+      p1: { x: cp1x, y: cp1y },
+      p2: { x: cp2x, y: cp2y },
+      p3: { x: targetX, y: targetY },
+    },
+  };
 }
 
 // Generate a Catmull-Rom spline path that passes THROUGH all control points
@@ -115,7 +148,7 @@ function generateSplinePath(
   targetPosition: Position,
   sourceIsAncestor = false,
   targetIsAncestor = false
-): string {
+): PathResult {
   const absPoints = controlPoints.map(cp =>
     localToAbsolute(cp, sourceX, sourceY, targetX, targetY)
   );
@@ -160,11 +193,23 @@ function generateSplinePath(
     const cp1y = sourceY + cp1Dir.y * tangentOffset;
     const cp2x = targetX + cp2Dir.x * tangentOffset;
     const cp2y = targetY + cp2Dir.y * tangentOffset;
-    return `M ${sourceX} ${sourceY} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${targetX} ${targetY}`;
+    return {
+      path: `M ${sourceX} ${sourceY} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${targetX} ${targetY}`,
+      lastSegment: {
+        p0: { x: sourceX, y: sourceY },
+        p1: { x: cp1x, y: cp1y },
+        p2: { x: cp2x, y: cp2y },
+        p3: { x: targetX, y: targetY },
+      },
+    };
   }
 
   // Catmull-Rom spline with phantom points for tangents
   let path = `M ${allPoints[0].x} ${allPoints[0].y}`;
+  let lastSegP0 = allPoints[0];
+  let lastSegCP1 = { x: 0, y: 0 };
+  let lastSegCP2 = { x: 0, y: 0 };
+  let lastSegEnd = allPoints[0];
 
   for (let i = 0; i < allPoints.length - 1; i++) {
     let p0, p3;
@@ -190,10 +235,18 @@ function generateSplinePath(
     const cp2x = p2.x - (p3.x - p1.x) * tension;
     const cp2y = p2.y - (p3.y - p1.y) * tension;
 
+    lastSegP0 = p1;
+    lastSegCP1 = { x: cp1x, y: cp1y };
+    lastSegCP2 = { x: cp2x, y: cp2y };
+    lastSegEnd = p2;
+
     path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
   }
 
-  return path;
+  return {
+    path,
+    lastSegment: { p0: lastSegP0, p1: lastSegCP1, p2: lastSegCP2, p3: lastSegEnd },
+  };
 }
 
 // Helper to get flow coordinates from screen coordinates
@@ -247,8 +300,8 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   const targetIsAncestor = data?.targetIsAncestor ?? false;
   const isAncestorDescendant = sourceIsAncestor || targetIsAncestor;
 
-  // Offset for edge endpoints (pixels from border)
-  const edgeOffset = 5;
+  // Offset for edge endpoints (0 = at the node border)
+  const edgeOffset = 0;
 
   // Calculate adjusted positions based on ancestor relationship
   // Rule: Ancestor endpoint is INSIDE, descendant/other endpoint is OUTSIDE
@@ -294,16 +347,17 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   }, [adjustedSourceX, adjustedSourceY, adjustedTargetX, adjustedTargetY, id]);
 
   // Generate appropriate path based on edge type
-  let pathD: string;
+  let pathResult: PathResult;
   if (isSelfLoop) {
-    pathD = generateSelfLoopPath(sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition);
+    pathResult = generateSelfLoopPath(sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition);
   } else {
-    pathD = generateSplinePath(
+    pathResult = generateSplinePath(
       adjustedSourceX, adjustedSourceY, adjustedTargetX, adjustedTargetY,
       controlPoints, sourcePosition, targetPosition,
       sourceIsAncestor, targetIsAncestor
     );
   }
+  const pathD = pathResult.path;
 
   const absoluteControlPoints = isSelfLoop ? [] : controlPoints.map(cp =>
     localToAbsolute(cp, adjustedSourceX, adjustedSourceY, adjustedTargetX, adjustedTargetY)
@@ -434,37 +488,40 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   const controlPointStrokeWidth = 2;
   const labelFontSize = 12;
   const arrowSize = 10;
+  const arrowGap = 6; // Distance from node edge where visible path ends and arrowhead sits
 
-  // Calculate arrowhead at target position
-  // The arrow should point along the tangent of the bezier at the target
-  let arrowDirX: number;
-  let arrowDirY: number;
+  // Split the last bezier segment to truncate the visible path arrowGap pixels before the endpoint.
+  // This preserves the exact curve shape (de Casteljau subdivision).
+  const { p0, p1, p2, p3 } = pathResult.lastSegment;
+  const speed = 3 * Math.hypot(p3.x - p2.x, p3.y - p2.y); // |B'(1)|
+  const tSplit = Math.max(0, 1 - arrowGap / (speed || 1));
+  const { q1, q2, q3 } = splitBezierAt(p0, p1, p2, p3, tSplit);
 
-  if (targetIsAncestor) {
-    // Target is ancestor: arrow is inside, pointing TOWARD the border (outward direction)
-    arrowDirX = targetDir.x;
-    arrowDirY = targetDir.y;
-  } else {
-    // Normal case: arrow points INTO the target (opposite to handle's outward direction)
-    arrowDirX = -targetDir.x;
-    arrowDirY = -targetDir.y;
-  }
+  // The arrowhead sits at the split point, oriented along the tangent there
+  const arrowTipX = q3.x;
+  const arrowTipY = q3.y;
+  const arrowDirX = q3.x - q2.x;
+  const arrowDirY = q3.y - q2.y;
+  const arrowDirLen = Math.hypot(arrowDirX, arrowDirY) || 1;
+  const normDirX = arrowDirX / arrowDirLen;
+  const normDirY = arrowDirY / arrowDirLen;
 
-  // Arrow tip is at the adjusted target position
-  const arrowTipX = adjustedTargetX;
-  const arrowTipY = adjustedTargetY;
+  // Replace the last C segment in the path with the truncated sub-curve
+  const lastCIdx = pathD.lastIndexOf('C');
+  const visiblePathD = pathD.substring(0, lastCIdx)
+    + `C ${q1.x} ${q1.y}, ${q2.x} ${q2.y}, ${q3.x} ${q3.y}`;
 
   // Arrowhead points
   const arrowAngle = Math.PI / 6; // 30 degrees
-  const ax1 = arrowTipX - arrowSize * (arrowDirX * Math.cos(arrowAngle) - arrowDirY * Math.sin(arrowAngle));
-  const ay1 = arrowTipY - arrowSize * (arrowDirY * Math.cos(arrowAngle) + arrowDirX * Math.sin(arrowAngle));
-  const ax2 = arrowTipX - arrowSize * (arrowDirX * Math.cos(arrowAngle) + arrowDirY * Math.sin(arrowAngle));
-  const ay2 = arrowTipY - arrowSize * (arrowDirY * Math.cos(arrowAngle) - arrowDirX * Math.sin(arrowAngle));
+  const ax1 = arrowTipX - arrowSize * (normDirX * Math.cos(arrowAngle) - normDirY * Math.sin(arrowAngle));
+  const ay1 = arrowTipY - arrowSize * (normDirY * Math.cos(arrowAngle) + normDirX * Math.sin(arrowAngle));
+  const ax2 = arrowTipX - arrowSize * (normDirX * Math.cos(arrowAngle) + normDirY * Math.sin(arrowAngle));
+  const ay2 = arrowTipY - arrowSize * (normDirY * Math.cos(arrowAngle) - normDirX * Math.sin(arrowAngle));
   const arrowPath = `M ${arrowTipX} ${arrowTipY} L ${ax1} ${ay1} L ${ax2} ${ay2} Z`;
 
   return (
     <g>
-      {/* Invisible wider path for easier clicking/double-clicking */}
+      {/* Invisible wider path for easier clicking (uses full path to node edge) */}
       <path
         d={pathD}
         fill="none"
@@ -474,9 +531,9 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
         style={{ cursor: 'pointer' }}
       />
 
-      {/* Visible edge path */}
+      {/* Visible edge path (truncated before the arrowhead) */}
       <path
-        d={pathD}
+        d={visiblePathD}
         fill="none"
         stroke={selected ? '#1976d2' : '#b1b1b7'}
         strokeWidth={strokeWidth}
