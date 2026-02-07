@@ -13,6 +13,8 @@ import {
   Tab,
 } from '@mui/material';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
+import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import { CodeEditorDialog } from './CodeEditorDialog';
 
 const codeFieldStyle = {
@@ -90,6 +92,7 @@ interface PropertiesPanelProps {
   edges: Edge[];
   onPropertyChange: (nodeId: string, property: string, value: unknown) => void;
   onEdgePropertyChange: (edgeId: string, property: string, value: unknown) => void;
+  onReorderEdge: (edgeId: string, direction: 'up' | 'down') => void;
   settings: Settings;
   language: string;
 }
@@ -101,6 +104,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   edges,
   onPropertyChange,
   onEdgePropertyChange,
+  onReorderEdge,
   settings,
   language,
 }) => {
@@ -597,30 +601,75 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       {/* Transitions Tab */}
       {activeTab === 1 && selectedNode.id !== '/' && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
-          {outgoingTransitions.length > 0 && (
-            <>
-              <Typography variant="caption" color="text.secondary">
-                Outgoing (to):
-              </Typography>
-              <List dense disablePadding sx={{ bgcolor: 'background.paper', borderRadius: 1, border: '1px solid #ddd' }}>
-                {outgoingTransitions.map((edge) => (
-                  <ListItemButton
-                    key={edge.id}
-                    selected={selectedEdgeId === edge.id}
-                    onClick={() => setSelectedEdgeId(edge.id)}
-                    sx={{ py: 0.5 }}
-                  >
-                    <ListItemText
-                      primary={getNodeLabel(edge.target)}
-                      secondary={edge.data?.guard ? `[${edge.data.guard}]` : undefined}
-                      primaryTypographyProps={{ variant: 'body2' }}
-                      secondaryTypographyProps={{ variant: 'caption', sx: { fontFamily: 'monospace' } }}
-                    />
-                  </ListItemButton>
-                ))}
-              </List>
-            </>
-          )}
+          {outgoingTransitions.length > 0 && (() => {
+            // Compute warning flags: transitions after a guardless one are unreachable
+            const warningFlags: boolean[] = [];
+            let seenGuardless = false;
+            for (const edge of outgoingTransitions) {
+              if (seenGuardless) {
+                warningFlags.push(true);
+              } else {
+                warningFlags.push(false);
+                if (!edge.data?.guard) {
+                  seenGuardless = true;
+                }
+              }
+            }
+            return (
+              <>
+                <Typography variant="caption" color="text.secondary">
+                  Outgoing (to):
+                </Typography>
+                <List dense disablePadding sx={{ bgcolor: 'background.paper', borderRadius: 1, border: '1px solid #ddd' }}>
+                  {outgoingTransitions.map((edge, index) => (
+                    <ListItemButton
+                      key={edge.id}
+                      selected={selectedEdgeId === edge.id}
+                      onClick={() => setSelectedEdgeId(edge.id)}
+                      sx={{
+                        py: 0.5,
+                        ...(warningFlags[index] ? { bgcolor: '#fff3e0' } : {}),
+                      }}
+                    >
+                      <ListItemText
+                        primary={getNodeLabel(edge.target)}
+                        secondary={edge.data?.guard ? `[${edge.data.guard}]` : undefined}
+                        primaryTypographyProps={{
+                          variant: 'body2',
+                          ...(warningFlags[index] ? { sx: { color: '#e65100' } } : {}),
+                        }}
+                        secondaryTypographyProps={{
+                          variant: 'caption',
+                          sx: {
+                            fontFamily: 'monospace',
+                            ...(warningFlags[index] ? { color: '#e65100' } : {}),
+                          },
+                        }}
+                      />
+                      <IconButton
+                        size="small"
+                        disabled={index === 0}
+                        onClick={(e) => { e.stopPropagation(); onReorderEdge(edge.id, 'up'); }}
+                        sx={{ p: 0.25 }}
+                        title="Move up"
+                      >
+                        <ArrowUpwardIcon sx={{ fontSize: 16 }} />
+                      </IconButton>
+                      <IconButton
+                        size="small"
+                        disabled={index === outgoingTransitions.length - 1}
+                        onClick={(e) => { e.stopPropagation(); onReorderEdge(edge.id, 'down'); }}
+                        sx={{ p: 0.25 }}
+                        title="Move down"
+                      >
+                        <ArrowDownwardIcon sx={{ fontSize: 16 }} />
+                      </IconButton>
+                    </ListItemButton>
+                  ))}
+                </List>
+              </>
+            );
+          })()}
 
           {incomingTransitions.length > 0 && (
             <>

@@ -19,6 +19,7 @@ interface SplineEdgeData {
   effectiveScale?: number;
   sourceIsAncestor?: boolean;  // true if source is ancestor of target
   targetIsAncestor?: boolean;  // true if target is ancestor of source
+  warning?: boolean;           // true if this transition is unreachable (after a guardless transition)
 }
 
 // Transform from local (normalized) coordinates to absolute canvas coordinates
@@ -683,14 +684,14 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
       <path
         d={visiblePathD}
         fill="none"
-        stroke={selected ? '#1976d2' : '#b1b1b7'}
+        stroke={selected ? '#1976d2' : (data?.warning ? '#e65100' : '#b1b1b7')}
         strokeWidth={strokeWidth}
       />
 
       {/* Custom arrowhead */}
       <path
         d={arrowPath}
-        fill={selected ? '#1976d2' : '#b1b1b7'}
+        fill={selected ? '#1976d2' : (data?.warning ? '#e65100' : '#b1b1b7')}
         stroke="none"
       />
 
@@ -738,7 +739,7 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
               textAnchor="middle"
               style={{
                 fontSize: labelFontSize,
-                fill: '#666',
+                fill: data?.warning && !selected ? '#e65100' : '#666',
                 fontFamily: '"Consolas", "Monaco", "Courier New", monospace',
               }}
             >
@@ -752,7 +753,7 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
               textAnchor="middle"
               style={{
                 fontSize: labelFontSize,
-                fill: '#333',
+                fill: data?.warning && !selected ? '#e65100' : '#333',
               }}
             >
               {data.label}

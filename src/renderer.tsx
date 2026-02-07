@@ -604,6 +604,34 @@ const App = () => {
         };
       });
 
+    // Compute warning flags: transitions after a guardless one from the same source are unreachable
+    const warningEdgeIds = new Set<string>();
+    const edgesBySource = new Map<string, typeof regularEdges>();
+    for (const edge of regularEdges) {
+      const list = edgesBySource.get(edge.source) || [];
+      list.push(edge);
+      edgesBySource.set(edge.source, list);
+    }
+    for (const siblings of edgesBySource.values()) {
+      let seenGuardless = false;
+      for (const edge of siblings) {
+        if (seenGuardless) {
+          warningEdgeIds.add(edge.id);
+        } else if (!edge.data?.guard) {
+          seenGuardless = true;
+        }
+      }
+    }
+    // Apply warning flags
+    for (let i = 0; i < regularEdges.length; i++) {
+      if (warningEdgeIds.has(regularEdges[i].id)) {
+        regularEdges[i] = {
+          ...regularEdges[i],
+          data: { ...regularEdges[i].data, warning: true },
+        };
+      }
+    }
+
     // Add initial transition edges (from marker to initial child)
     const initialEdges: typeof edges = [];
     for (const node of nodes) {
@@ -1911,8 +1939,9 @@ const App = () => {
   }, [nodes, setNodes, setRootHistory, setMachineProperties]);
 
   const handleEdgePropertyChange = useCallback((edgeId: string, propertyName: string, newValue: unknown) => {
-    setEdges((eds) =>
-      eds.map((edge) => {
+    setEdges((eds) => {
+      // First, apply the property change
+      const result = eds.map((edge) => {
         if (edge.id === edgeId) {
           return {
             ...edge,
@@ -1923,8 +1952,70 @@ const App = () => {
           };
         }
         return edge;
-      })
-    );
+      });
+
+      // When a guard is added to a previously guardless transition,
+      // move it up before the first guardless sibling
+      if (propertyName === 'guard') {
+        const edge = eds.find(e => e.id === edgeId);
+        const hadGuard = !!(edge?.data?.guard);
+        const hasGuard = !!(newValue as string);
+        if (!hadGuard && hasGuard) {
+          const sourceId = edge!.source;
+          // Find sibling indices (same source) in array order
+          const siblingIndices: number[] = [];
+          for (let i = 0; i < result.length; i++) {
+            if (result[i].source === sourceId) siblingIndices.push(i);
+          }
+          const myArrayIndex = result.findIndex(e => e.id === edgeId);
+          // Find the first guardless sibling that comes before this edge
+          let insertBeforeArrayIndex = -1;
+          for (const idx of siblingIndices) {
+            if (idx === myArrayIndex) break;
+            if (!result[idx].data?.guard) {
+              insertBeforeArrayIndex = idx;
+              break;
+            }
+          }
+          if (insertBeforeArrayIndex !== -1 && insertBeforeArrayIndex < myArrayIndex) {
+            // Remove the edge from its current position and insert before the first guardless sibling
+            const moved = result.splice(myArrayIndex, 1)[0];
+            result.splice(insertBeforeArrayIndex, 0, moved);
+          }
+        }
+      }
+
+      return result;
+    });
+  }, [setEdges]);
+
+  // Reorder an edge among its siblings (edges with the same source)
+  const handleReorderEdge = useCallback((edgeId: string, direction: 'up' | 'down') => {
+    setEdges((eds) => {
+      const edgeIndex = eds.findIndex(e => e.id === edgeId);
+      if (edgeIndex === -1) return eds;
+      const edge = eds[edgeIndex];
+      const sourceId = edge.source;
+
+      // Collect indices of sibling edges (same source) in array order
+      const siblingIndices: number[] = [];
+      for (let i = 0; i < eds.length; i++) {
+        if (eds[i].source === sourceId) siblingIndices.push(i);
+      }
+
+      const posInSiblings = siblingIndices.indexOf(edgeIndex);
+      if (posInSiblings === -1) return eds;
+      if (direction === 'up' && posInSiblings === 0) return eds;
+      if (direction === 'down' && posInSiblings === siblingIndices.length - 1) return eds;
+
+      const swapPos = direction === 'up' ? posInSiblings - 1 : posInSiblings + 1;
+      const swapIndex = siblingIndices[swapPos];
+
+      // Swap the two edges in the array
+      const newEdges = [...eds];
+      [newEdges[edgeIndex], newEdges[swapIndex]] = [newEdges[swapIndex], newEdges[edgeIndex]];
+      return newEdges;
+    });
   }, [setEdges]);
 
   useEffect(() => {
@@ -2588,6 +2679,7 @@ const App = () => {
               edges={edges}
               onPropertyChange={handlePropertyChange}
               onEdgePropertyChange={handleEdgePropertyChange}
+              onReorderEdge={handleReorderEdge}
               settings={settings}
               language={machineProperties.language}
             />
