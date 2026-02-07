@@ -621,7 +621,7 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   }
 
   // Get guard text to display
-  const guardText = data?.guard;
+  const guardText = data?.guard?.trim() || undefined;
 
   // Fixed visual sizes in screen pixels
   const strokeWidth = selected ? 2.5 : 1.5;
