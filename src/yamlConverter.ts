@@ -80,6 +80,8 @@ interface YamlTransition {
   geometry?: {
     sourceHandle?: string;
     targetHandle?: string;
+    controlPoints?: { x: number; y: number }[];
+    labelPosition?: number;
   };
 }
 
@@ -142,6 +144,52 @@ function buildNodePathMap(nodes: Node<StateData>[]): Map<string, string> {
 
   nodes.forEach(node => getPath(node));
   return pathMap;
+}
+
+// Compute a relative path from sourcePath to targetPath
+// Rules:
+//   Sibling (same parent): just the target name, e.g. "B"
+//   Self: "."
+//   Child: "./Child" or "./Child/Grandchild"
+//   Parent: ".."
+//   General: "../../Uncle/Cousin"
+function computeRelativePath(sourcePath: string, targetPath: string): string {
+  if (sourcePath === targetPath) return '.';
+
+  const sourceParts = sourcePath.split('/');
+  const targetParts = targetPath.split('/');
+
+  // Target is a descendant of source
+  if (targetPath.startsWith(sourcePath + '/')) {
+    return './' + targetPath.substring(sourcePath.length + 1);
+  }
+
+  // Sibling check (same parent)
+  const sourceParent = sourceParts.slice(0, -1).join('/');
+  const targetParent = targetParts.slice(0, -1).join('/');
+  if (sourceParent === targetParent) {
+    return targetParts[targetParts.length - 1];
+  }
+
+  // General case: find longest common prefix, then go up and down
+  let commonLen = 0;
+  const minLen = Math.min(sourceParts.length, targetParts.length);
+  for (let i = 0; i < minLen; i++) {
+    if (sourceParts[i] === targetParts[i]) {
+      commonLen = i + 1;
+    } else {
+      break;
+    }
+  }
+
+  const ups = sourceParts.length - commonLen;
+  const downs = targetParts.slice(commonLen);
+
+  const upPath = Array(ups).fill('..').join('/');
+  if (downs.length === 0) {
+    return upPath; // target is an ancestor
+  }
+  return upPath + '/' + downs.join('/');
 }
 
 export function convertToYaml(
@@ -232,10 +280,11 @@ export function convertToYaml(
     // Add transitions
     const nodeEdges = edgesBySource.get(node.id) || [];
     if (nodeEdges.length > 0) {
+      const sourcePath = pathMap.get(node.id) || '';
       stateObj.transitions = nodeEdges.map(edge => {
         const targetPath = pathMap.get(edge.target);
         const transition: YamlTransition = {
-          to: targetPath || edge.target,
+          to: targetPath && sourcePath ? computeRelativePath(sourcePath, targetPath) : (targetPath || edge.target),
         };
         // Include edge data if present (for future guard/action support)
         if ((edge.data as { guard?: string })?.guard) {
@@ -244,12 +293,20 @@ export function convertToYaml(
         if ((edge.data as { action?: string })?.action) {
           transition.action = (edge.data as { action: string }).action;
         }
-        // Save handle geometry if present (only when includeGraphics is true)
-        if (includeGraphics && (edge.sourceHandle || edge.targetHandle)) {
-          transition.geometry = {
-            sourceHandle: edge.sourceHandle || undefined,
-            targetHandle: edge.targetHandle || undefined,
-          };
+        // Save edge geometry if present (only when includeGraphics is true)
+        if (includeGraphics) {
+          const edgeData = edge.data as { controlPoints?: { x: number; y: number }[]; labelPosition?: number } | undefined;
+          const hasHandles = edge.sourceHandle || edge.targetHandle;
+          const hasControlPoints = edgeData?.controlPoints && edgeData.controlPoints.length > 0;
+          const hasLabelPosition = edgeData?.labelPosition != null;
+          if (hasHandles || hasControlPoints || hasLabelPosition) {
+            transition.geometry = {
+              sourceHandle: edge.sourceHandle || undefined,
+              targetHandle: edge.targetHandle || undefined,
+              controlPoints: hasControlPoints ? edgeData!.controlPoints : undefined,
+              labelPosition: hasLabelPosition ? edgeData!.labelPosition : undefined,
+            };
+          }
         }
         return transition;
       });
@@ -470,6 +527,50 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     });
   }
 
+  // Resolve a target path (possibly relative) to an absolute path
+  function resolveTargetPath(target: string, sourcePath: string): string {
+    // Absolute path (leading /)
+    if (target.startsWith('/')) {
+      return target.substring(1);
+    }
+
+    // Self-reference
+    if (target === '.') {
+      return sourcePath;
+    }
+
+    // Starts with "./" — descendant of source
+    if (target.startsWith('./')) {
+      return sourcePath + '/' + target.substring(2);
+    }
+
+    // Starts with ".." — go up from source
+    if (target.startsWith('..')) {
+      const sourceParts = sourcePath.split('/');
+      const targetSegments = target.split('/');
+      let depth = sourceParts.length; // current position = source state
+      let i = 0;
+      while (i < targetSegments.length && targetSegments[i] === '..') {
+        depth--;
+        i++;
+      }
+      if (depth < 0) depth = 0;
+      const baseParts = sourceParts.slice(0, depth);
+      const rest = targetSegments.slice(i);
+      return [...baseParts, ...rest].join('/');
+    }
+
+    // No prefix — treat as relative to parent (sibling scope)
+    // "B" = sibling B, "A/B" = sibling A's child B
+    const lastSlashIdx = sourcePath.lastIndexOf('/');
+    if (lastSlashIdx >= 0) {
+      const parentPath = sourcePath.substring(0, lastSlashIdx);
+      return parentPath + '/' + target;
+    }
+    // Source is top-level, so sibling scope is also top-level
+    return target;
+  }
+
   // Process transitions after all nodes are created
   function processTransitions(
     stateData: YamlState | null | undefined,
@@ -481,30 +582,13 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
 
     if (stateData.transitions && sourceId) {
       stateData.transitions.forEach(transition => {
-        let targetPath = transition.to;
+        const rawTarget = transition.to;
 
         // Skip transitions with null/undefined target (e.g., to: null)
-        if (!targetPath) return;
+        if (!rawTarget) return;
 
-        // Handle relative paths (state name only) vs absolute paths
-        if (!targetPath.includes('/')) {
-          // It might be a sibling or absolute top-level state
-          // First try to find as absolute path
-          let resolvedId = pathToIdMap.get(targetPath);
-
-          // If not found, try as sibling (same parent)
-          if (!resolvedId) {
-            const lastSlashIdx = sourcePath.lastIndexOf('/');
-            if (lastSlashIdx >= 0) {
-              const parentPath = sourcePath.substring(0, lastSlashIdx);
-              const siblingPath = `${parentPath}/${targetPath}`;
-              resolvedId = pathToIdMap.get(siblingPath);
-              if (resolvedId) {
-                targetPath = siblingPath;
-              }
-            }
-          }
-        }
+        // Resolve the target path to an absolute path
+        let targetPath = resolveTargetPath(rawTarget, sourcePath);
 
         const targetId = pathToIdMap.get(targetPath);
 
@@ -515,7 +599,8 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
             target: targetId,
             type: 'spline',
             data: {
-              controlPoints: [],
+              controlPoints: transition.geometry?.controlPoints || [],
+              labelPosition: transition.geometry?.labelPosition,
               label: '',
               guard: transition.guard || '',
               action: transition.action || '',
