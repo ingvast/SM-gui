@@ -31,9 +31,12 @@ import {
   Save as SaveIcon,
   Settings as SettingsIcon,
   Tune as TuneIcon,
+  Undo as UndoIcon,
+  Redo as RedoIcon,
 } from '@mui/icons-material';
 
 import './index.css';
+import { useUndoRedo } from './useUndoRedo';
 import StateNode from './StateNode';
 import InitialMarker from './InitialMarker';
 import HistoryMarker from './HistoryMarker';
@@ -180,6 +183,34 @@ const App = () => {
   // Machine properties (needs to be before transformedNodes useMemo)
   const [machineProperties, setMachineProperties] = useState<MachineProperties>(defaultMachineProperties);
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
+  const [rootHistory, setRootHistory] = useState(false);
+
+  // Undo/Redo
+  const { pushSnapshot, undo, redo, canUndo, canRedo, clear: clearUndoRedo } = useUndoRedo();
+  const saveSnapshot = useCallback(() => {
+    pushSnapshot({ nodes, edges, machineProperties, rootHistory });
+  }, [nodes, edges, machineProperties, rootHistory, pushSnapshot]);
+  const dragStartSnapshot = useRef<{ nodes: typeof nodes; edges: typeof edges; machineProperties: typeof machineProperties; rootHistory: boolean } | null>(null);
+
+  const handleUndo = useCallback(() => {
+    const snapshot = undo({ nodes, edges, machineProperties, rootHistory });
+    if (snapshot) {
+      setNodes(snapshot.nodes);
+      setEdges(snapshot.edges);
+      setMachineProperties(snapshot.machineProperties);
+      setRootHistory(snapshot.rootHistory);
+    }
+  }, [nodes, edges, machineProperties, rootHistory, undo, setNodes, setEdges, setMachineProperties, setRootHistory]);
+
+  const handleRedo = useCallback(() => {
+    const snapshot = redo({ nodes, edges, machineProperties, rootHistory });
+    if (snapshot) {
+      setNodes(snapshot.nodes);
+      setEdges(snapshot.edges);
+      setMachineProperties(snapshot.machineProperties);
+      setRootHistory(snapshot.rootHistory);
+    }
+  }, [nodes, edges, machineProperties, rootHistory, redo, setNodes, setEdges, setMachineProperties, setRootHistory]);
 
   // Track dragging marker position (for smooth visual feedback)
   const [draggingMarkerId, setDraggingMarkerId] = useState<string | null>(null);
@@ -964,6 +995,7 @@ const App = () => {
     }
 
     // Update nodes: change parentId and convert position to relative
+    saveSnapshot();
     setNodes((nds) =>
       nds.map((node) => {
         if (nodesToGroup.includes(node.id)) {
@@ -986,7 +1018,7 @@ const App = () => {
     );
 
     console.log(`Grouped ${nodesToGroup.length} state(s) into ${selectedNode.data.label}.`);
-  }, [nodes, setNodes, isAncestorOf]);
+  }, [nodes, setNodes, isAncestorOf, saveSnapshot]);
 
   // Ungroup state: move a node out of its parent (Shift+G key)
   const handleUngroupState = useCallback((nodeId: string) => {
@@ -1031,6 +1063,7 @@ const App = () => {
       newPosition = { x: nodeBounds.x, y: nodeBounds.y };
     }
 
+    saveSnapshot();
     setNodes((nds) =>
       nds.map((n) => {
         if (n.id === nodeId) {
@@ -1047,7 +1080,7 @@ const App = () => {
 
     console.log(`Ungrouped ${node.data.label} from ${parentNode.data.label}.`);
     return true;
-  }, [nodes, setNodes]);
+  }, [nodes, setNodes, saveSnapshot]);
 
   const onConnect = useCallback(
     (params) => {
@@ -1073,6 +1106,7 @@ const App = () => {
         targetHandle = targetHandle.replace('-source', '-target');
       }
 
+      saveSnapshot();
       setEdges((eds) => {
         const newEdge = {
           source,
@@ -1087,7 +1121,7 @@ const App = () => {
         return [...eds, newEdge];
       });
     },
-    [setEdges]
+    [setEdges, saveSnapshot]
   );
 
 
@@ -1182,8 +1216,9 @@ const App = () => {
       markerEnd: { type: MarkerType.ArrowClosed },
     };
 
+    saveSnapshot();
     setEdges((eds) => eds.concat(newEdge));
-  }, [calculateBestHandles, setEdges]);
+  }, [calculateBestHandles, setEdges, saveSnapshot]);
 
   const isValidConnection = useCallback(
     () => true, // Allow all connections including self-loops
@@ -1203,6 +1238,7 @@ const App = () => {
         targetHandle = targetHandle.replace('-source', '-target');
       }
 
+      saveSnapshot();
       setEdges((eds) =>
         eds.map((edge) => {
           if (edge.id === oldEdge.id) {
@@ -1218,7 +1254,7 @@ const App = () => {
         })
       );
     },
-    [setEdges]
+    [setEdges, saveSnapshot]
   );
 
   const [isAddingNode, setIsAddingNode] = useState(false);
@@ -1229,7 +1265,6 @@ const App = () => {
   const [initialTargetId, setInitialTargetId] = useState<string | null>(null);
   const [isSettingHistory, setIsSettingHistory] = useState(false);
   const [selectedTreeItem, setSelectedTreeItem] = useState(null);
-  const [rootHistory, setRootHistory] = useState(false);
   const [machinePropertiesDialogOpen, setMachinePropertiesDialogOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>({
     editorPreference: 'builtin',
@@ -1414,6 +1449,7 @@ const App = () => {
         } : { controlPoints: [], label: '' },
       }));
 
+      saveSnapshot();
       setNodes((nds) => {
         const deselectedExistingNodes = nds.map(node => ({ ...node, selected: false }));
         return deselectedExistingNodes.concat(newNodes.map(node => ({...node, selected: true})));
@@ -1424,7 +1460,7 @@ const App = () => {
       // Removed setCopiedNodes([]); to allow multiple pastes
       console.log('Nodes pasted.');
       console.log('Edges pasted:', pastedEdges.map(e => e.id));
-    }, [copiedNodes, copiedEdges, nodes, setNodes, setEdges, generateUniqueNodeLabel, setSelectedTreeItem]);
+    }, [copiedNodes, copiedEdges, nodes, setNodes, setEdges, generateUniqueNodeLabel, setSelectedTreeItem, saveSnapshot]);
   const handleDuplicate = useCallback(() => {
     const selectedNodes = nodes.filter(node => node.selected);
     if (selectedNodes.length === 0) {
@@ -1525,6 +1561,7 @@ const App = () => {
         } : { controlPoints: [], label: '' },
       }));
 
+    saveSnapshot();
     setNodes((nds) => {
       const deselectedExistingNodes = nds.map(node => ({ ...node, selected: false }));
       return deselectedExistingNodes.concat(duplicatedNodes.map(node => ({...node, selected: true})));
@@ -1533,7 +1570,7 @@ const App = () => {
     setSelectedTreeItem(duplicatedNodes.length > 0 ? duplicatedNodes[0].id : null);
 
     console.log('Nodes duplicated.');
-  }, [nodes, edges, getAllDescendants, getNextId, generateUniqueNodeLabel, setNodes, setEdges, setSelectedTreeItem]);
+  }, [nodes, edges, getAllDescendants, getNextId, generateUniqueNodeLabel, setNodes, setEdges, setSelectedTreeItem, saveSnapshot]);
 
   const handleSave = useCallback(async () => {
     const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, true, machineProperties);
@@ -1579,13 +1616,14 @@ const App = () => {
         }, 0);
         stateNameCounter = maxStateNum + 1;
         setCurrentFilePath(result.filePath || null);
+        clearUndoRedo();
       } catch (error) {
         alert('Error parsing YAML file: ' + (error as Error).message);
       }
     } else if (result.error) {
       alert('Error opening file: ' + result.error);
     }
-  }, [setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem]);
+  }, [setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, clearUndoRedo]);
 
   const handleNew = useCallback(() => {
     if (nodes.length > 0) {
@@ -1602,7 +1640,8 @@ const App = () => {
     setCurrentFilePath(null);
     idCounter = 1;
     stateNameCounter = 1;
-  }, [nodes, setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem]);
+    clearUndoRedo();
+  }, [nodes, setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, clearUndoRedo]);
 
 
   const buildTreeData = useCallback(() => {
@@ -1653,6 +1692,11 @@ const App = () => {
 
   const onNodesChangeWithSelection = useCallback(
     (changes) => {
+      // Snapshot before node removal
+      const hasRemove = changes.some(c => c.type === 'remove' && !c.id?.startsWith('initial-marker') && !c.id?.startsWith('history-marker'));
+      if (hasRemove) {
+        saveSnapshot();
+      }
       // Detect resize-from-left/top: nodes that have both position and dimensions changes
       const hasPositionChange = new Set<string>();
       const hasDimensionsChange = new Set<string>();
@@ -1687,6 +1731,7 @@ const App = () => {
         return true;
       });
       if (historyRemoves.length > 0) {
+        saveSnapshot();
         for (const markerId of historyRemoves) {
           if (markerId === 'history-marker-root') {
             setRootHistory(false);
@@ -1824,11 +1869,15 @@ const App = () => {
         }
       });
     },
-    [onNodesChange, selectedTreeItem, nodes, effectiveScale, effectivePan, setRootHistory, setMachineProperties]
+    [onNodesChange, selectedTreeItem, nodes, effectiveScale, effectivePan, setRootHistory, setMachineProperties, saveSnapshot]
   );
 
   const onEdgesChangeWithSelection = useCallback(
     (changes) => {
+      const hasRemove = changes.some(c => c.type === 'remove');
+      if (hasRemove) {
+        saveSnapshot();
+      }
       onEdgesChange(changes);
       changes.forEach(change => {
         if (change.type === 'select' && change.selected) {
@@ -1838,7 +1887,7 @@ const App = () => {
         }
       });
     },
-    [onEdgesChange, selectedTreeItem]
+    [onEdgesChange, selectedTreeItem, saveSnapshot]
   );
 
   const handleTreeSelect = useCallback((itemId, itemType) => {
@@ -1887,6 +1936,7 @@ const App = () => {
   }, [setNodes, setEdges]);
 
   const handlePropertyChange = useCallback((nodeId, propertyName, newValue) => {
+    saveSnapshot();
     if (nodeId === '/') {
       if (propertyName === 'history') {
         setRootHistory(newValue);
@@ -1936,9 +1986,10 @@ const App = () => {
         return node;
       })
     );
-  }, [nodes, setNodes, setRootHistory, setMachineProperties]);
+  }, [nodes, setNodes, setRootHistory, setMachineProperties, saveSnapshot]);
 
   const handleEdgePropertyChange = useCallback((edgeId: string, propertyName: string, newValue: unknown) => {
+    saveSnapshot();
     setEdges((eds) => {
       // First, apply the property change
       const result = eds.map((edge) => {
@@ -1987,10 +2038,11 @@ const App = () => {
 
       return result;
     });
-  }, [setEdges]);
+  }, [setEdges, saveSnapshot]);
 
   // Reorder an edge among its siblings (edges with the same source)
   const handleReorderEdge = useCallback((edgeId: string, direction: 'up' | 'down') => {
+    saveSnapshot();
     setEdges((eds) => {
       const edgeIndex = eds.findIndex(e => e.id === edgeId);
       if (edgeIndex === -1) return eds;
@@ -2016,7 +2068,7 @@ const App = () => {
       [newEdges[edgeIndex], newEdges[swapIndex]] = [newEdges[swapIndex], newEdges[edgeIndex]];
       return newEdges;
     });
-  }, [setEdges]);
+  }, [setEdges, saveSnapshot]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -2040,6 +2092,7 @@ const App = () => {
       // Delete selected history marker
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedMarkerId?.startsWith('history-marker-')) {
         event.preventDefault();
+        saveSnapshot();
         if (selectedMarkerId === 'history-marker-root') {
           setRootHistory(false);
           setMachineProperties(prev => {
@@ -2069,6 +2122,7 @@ const App = () => {
         // Check if a transition (edge) is selected - if so, recompute its handles
         const selectedEdge = edges.find(e => e.selected);
         if (selectedEdge) {
+          saveSnapshot();
           const { sourceHandle, targetHandle } = calculateBestHandles(selectedEdge.source, selectedEdge.target);
           setEdges((eds) =>
             eds.map((edge) => {
@@ -2141,29 +2195,38 @@ const App = () => {
         event.preventDefault();
         handleNavigateUp();
       } else if (isModifierPressed) {
-        switch (event.key) {
-          case 'c':
-            event.preventDefault();
-            handleCopy();
-            break;
-          case 'v':
-            event.preventDefault();
-            handlePaste();
-            break;
-          case 'd':
-            event.preventDefault();
-            handleDuplicate();
-            break;
-          case 's':
-            event.preventDefault();
-            handleSave();
-            break;
-          case 'o':
-            event.preventDefault();
-            handleOpen();
-            break;
-          default:
-            break;
+        if (event.key === 'z' || event.key === 'Z') {
+          event.preventDefault();
+          if (event.shiftKey) {
+            handleRedo();
+          } else {
+            handleUndo();
+          }
+        } else {
+          switch (event.key) {
+            case 'c':
+              event.preventDefault();
+              handleCopy();
+              break;
+            case 'v':
+              event.preventDefault();
+              handlePaste();
+              break;
+            case 'd':
+              event.preventDefault();
+              handleDuplicate();
+              break;
+            case 's':
+              event.preventDefault();
+              handleSave();
+              break;
+            case 'o':
+              event.preventDefault();
+              handleOpen();
+              break;
+            default:
+              break;
+          }
         }
       }
     };
@@ -2172,7 +2235,7 @@ const App = () => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState, setIsAddingNode, nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, selectedMarkerId, calculateBestHandles, setEdges, setRootHistory, setMachineProperties]);
+  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState, handleUndo, handleRedo, saveSnapshot, setIsAddingNode, nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, selectedMarkerId, calculateBestHandles, setEdges, setRootHistory, setMachineProperties]);
 
   const onPaneClick = useCallback(
     (event) => {
@@ -2193,6 +2256,7 @@ const App = () => {
           const markerSize = (viewportSize.width * 0.03) / effectiveScale;
 
           // Store in machineProperties
+          saveSnapshot();
           setMachineProperties(prev => ({
             ...prev,
             initial: initialTargetId,
@@ -2225,6 +2289,7 @@ const App = () => {
 
         const markerSize = (viewportSize.width * 0.03) / effectiveScale;
 
+        saveSnapshot();
         setRootHistory(true);
         setMachineProperties(prev => ({
           ...prev,
@@ -2260,6 +2325,7 @@ const App = () => {
           data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '' },
           style: { width: stateWidth, height: stateHeight },
         };
+        saveSnapshot();
         setNodes((nds) => nds.concat(newNode));
         setIsAddingNode(false);
       } else {
@@ -2273,7 +2339,15 @@ const App = () => {
         );
       }
     },
-    [isAddingNode, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setMachineProperties, setRootHistory, generateUniqueNodeLabel, nodes, effectiveScale, effectivePan, viewportSize]
+    [isAddingNode, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setMachineProperties, setRootHistory, generateUniqueNodeLabel, nodes, effectiveScale, effectivePan, viewportSize, saveSnapshot]
+  );
+
+  // Capture snapshot before drag begins
+  const onNodeDragStart = useCallback(
+    () => {
+      dragStartSnapshot.current = { nodes, edges, machineProperties, rootHistory };
+    },
+    [nodes, edges, machineProperties, rootHistory]
   );
 
   // Handle marker drag (initial and history markers)
@@ -2287,9 +2361,14 @@ const App = () => {
     []
   );
 
-  // Handle initial marker drag stop
+  // Handle drag stop - push pre-drag snapshot for undo
   const onNodeDragStop = useCallback(
     (event, node) => {
+      // Push the pre-drag snapshot for undo
+      if (dragStartSnapshot.current) {
+        pushSnapshot(dragStartSnapshot.current);
+        dragStartSnapshot.current = null;
+      }
       if (node.id === 'initial-marker-root') {
         // Root initial marker - update machineProperties
         const screenX = node.position.x + 7.5; // Center of 15px marker
@@ -2370,7 +2449,7 @@ const App = () => {
         setDraggingMarkerPos(null);
       }
     },
-    [effectivePan, effectiveScale, nodes, setMachineProperties, setNodes]
+    [effectivePan, effectiveScale, nodes, setMachineProperties, setNodes, pushSnapshot]
   );
 
   const onNodeClick = useCallback(
@@ -2408,6 +2487,7 @@ const App = () => {
             const markerSize = parentBounds.width * 0.03;
 
             // Update parent node with initial info
+            saveSnapshot();
             setNodes((nds) =>
               nds.map((n) => {
                 if (n.id === node.id) {
@@ -2451,6 +2531,7 @@ const App = () => {
           const relativeY = worldY - stateBounds.y;
           const markerSize = Math.min(stateBounds.width, stateBounds.height) * 0.15;
 
+          saveSnapshot();
           setNodes((nds) =>
             nds.map((n) => {
               if (n.id === node.id) {
@@ -2579,12 +2660,13 @@ const App = () => {
           data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '' },
           style: { width: scaledNodeWidth, height: scaledNodeHeight },
         };
+        saveSnapshot();
         setNodes((nds) => nds.concat(newNode));
         setIsAddingNode(false);
         event.stopPropagation();
       }
     },
-    [isAddingNode, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setSelectedTreeItem, nodes, generateUniqueNodeLabel, effectiveScale, effectivePan]
+    [isAddingNode, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setSelectedTreeItem, nodes, generateUniqueNodeLabel, effectiveScale, effectivePan, saveSnapshot]
   );
 
   return (
@@ -2620,6 +2702,33 @@ const App = () => {
             >
               Save
             </Button>
+          </Tooltip>
+          <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
+          <Tooltip title="Undo (Ctrl+Z)">
+            <span>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<UndoIcon />}
+                onClick={handleUndo}
+                disabled={!canUndo}
+              >
+                Undo
+              </Button>
+            </span>
+          </Tooltip>
+          <Tooltip title="Redo (Ctrl+Shift+Z)">
+            <span>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<RedoIcon />}
+                onClick={handleRedo}
+                disabled={!canRedo}
+              >
+                Redo
+              </Button>
+            </span>
           </Tooltip>
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
           <Tooltip title="Machine Properties">
@@ -2711,6 +2820,7 @@ const App = () => {
             onReconnect={onReconnect}
             onPaneClick={onPaneClick}
             onNodeClick={onNodeClick}
+            onNodeDragStart={onNodeDragStart}
             onNodeDrag={onNodeDrag}
             onNodeDragStop={onNodeDragStop}
             nodeTypes={nodeTypes}
@@ -2738,7 +2848,7 @@ const App = () => {
         open={machinePropertiesDialogOpen}
         onClose={() => setMachinePropertiesDialogOpen(false)}
         machineProperties={machineProperties}
-        onSave={setMachineProperties}
+        onSave={(props) => { saveSnapshot(); setMachineProperties(props); }}
         tabWidth={settings.tabWidth}
       />
 
