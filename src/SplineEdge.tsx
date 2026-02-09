@@ -133,6 +133,38 @@ function findTForDistanceFromEnd(p0: Point, p1: Point, p2: Point, p3: Point, dis
   return (lo + hi) / 2;
 }
 
+// Split a multi-segment bezier path at a given distance from the end.
+// Returns the portion before the split and after the split as separate segment arrays.
+function splitMultiSegFromEnd(segments: BezierSegment[], distance: number): {
+  before: BezierSegment[];
+  after: BezierSegment[];
+} {
+  if (segments.length === 0) return { before: [], after: [] };
+
+  let remaining = distance;
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i];
+    const segLen = approxBezierLength(seg.p0, seg.p1, seg.p2, seg.p3);
+    if (remaining <= segLen) {
+      const t = findTForDistanceFromEnd(seg.p0, seg.p1, seg.p2, seg.p3, remaining);
+      const split = splitBezierAt(seg.p0, seg.p1, seg.p2, seg.p3, t);
+      return {
+        before: [
+          ...segments.slice(0, i),
+          { p0: split.q0, p1: split.q1, p2: split.q2, p3: split.q3 },
+        ],
+        after: [
+          { p0: split.r0, p1: split.r1, p2: split.r2, p3: split.r3 },
+          ...segments.slice(i + 1),
+        ],
+      };
+    }
+    remaining -= segLen;
+  }
+  // Distance exceeds total path length
+  return { before: [], after: [...segments] };
+}
+
 // Rotate a point around a center by angle (radians)
 function rotatePoint(pt: Point, center: Point, angle: number): Point {
   const cos = Math.cos(angle);
@@ -655,49 +687,74 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   const arrowGap = 6; // Gap between arrow tip and node edge
   const arrowAngleRad = 15 * Math.PI / 180; // 15 degrees rotation for arrowhead curves
 
-  // Two-step de Casteljau: first truncate the gap, then extract the arrow portion.
-  // Uses arc-length binary search for consistent arrowhead size regardless of edge length.
-  const { p0, p1, p2, p3 } = pathResult.lastSegment;
-  const lastSegLength = approxBezierLength(p0, p1, p2, p3);
+  // Two-step de Casteljau across ALL segments: first truncate the gap, then extract the arrow.
+  // Uses arc-length binary search and works across multi-segment splines (control points).
+  const allSegments = pathResult.segments;
+  const segLengths = allSegments.map(s => approxBezierLength(s.p0, s.p1, s.p2, s.p3));
+  const totalPathLength = segLengths.reduce((a, b) => a + b, 0);
 
-  // Scale down arrow dimensions when the edge is too short
+  // Scale down arrow dimensions when the TOTAL path is too short
   const totalArrowSpace = arrowGap + arrowLength;
   let effectiveGap = arrowGap;
   let effectiveArrowLen = arrowLength;
-  if (lastSegLength < totalArrowSpace * 1.5) {
-    const scale = Math.max(0, lastSegLength / (totalArrowSpace * 1.5));
+  if (totalPathLength < totalArrowSpace * 1.5) {
+    const scale = Math.max(0, totalPathLength / (totalArrowSpace * 1.5));
     effectiveGap = arrowGap * scale;
     effectiveArrowLen = arrowLength * scale;
   }
 
-  // Step 1: Truncate the last segment to end effectiveGap px before the node edge
-  const tGap = findTForDistanceFromEnd(p0, p1, p2, p3, effectiveGap);
-  const gapSplit = splitBezierAt(p0, p1, p2, p3, tGap);
+  // Step 1: Split full path at effectiveGap from end (removes the gap near target node)
+  const gapSplitResult = splitMultiSegFromEnd(allSegments, effectiveGap);
 
-  // Step 2: From the truncated curve, extract the last effectiveArrowLen px for the arrowhead
-  const tArrow = findTForDistanceFromEnd(gapSplit.q0, gapSplit.q1, gapSplit.q2, gapSplit.q3, effectiveArrowLen);
-  const arrowSplit = splitBezierAt(gapSplit.q0, gapSplit.q1, gapSplit.q2, gapSplit.q3, tArrow);
+  // Step 2: From the path-before-gap, extract the arrow portion from its end
+  const arrowSplitResult = splitMultiSegFromEnd(gapSplitResult.before, effectiveArrowLen);
+  const visibleSegments = arrowSplitResult.before;  // path up to arrowhead base
+  const arrowSegments = arrowSplitResult.after;      // arrowhead sub-curve(s)
 
-  // Visible path ends where the arrowhead starts
-  const lastCIdx = pathD.lastIndexOf('C');
-  const visiblePathD = pathD.substring(0, lastCIdx)
-    + `C ${arrowSplit.q1.x} ${arrowSplit.q1.y}, ${arrowSplit.q2.x} ${arrowSplit.q2.y}, ${arrowSplit.q3.x} ${arrowSplit.q3.y}`;
+  // Build visible path SVG string from segments
+  let visiblePathD: string;
+  if (visibleSegments.length > 0) {
+    visiblePathD = `M ${visibleSegments[0].p0.x} ${visibleSegments[0].p0.y}`;
+    for (const seg of visibleSegments) {
+      visiblePathD += ` C ${seg.p1.x} ${seg.p1.y}, ${seg.p2.x} ${seg.p2.y}, ${seg.p3.x} ${seg.p3.y}`;
+    }
+  } else {
+    // Arrow consumes entire path; visible path is just the start point
+    const startPt = arrowSegments.length > 0 ? arrowSegments[0].p0 : allSegments[0].p0;
+    visiblePathD = `M ${startPt.x} ${startPt.y}`;
+  }
 
-  // MetaPost-style arrowhead: take the arrow sub-curve (r0→r3), rotate ±15° around the tip (r3)
-  const { r0, r1, r2, r3 } = arrowSplit;
-  const tip = r3; // The arrow tip (offset from node edge by arrowGap)
+  // Arrow tip is the last point of the arrow segments (= start of the gap)
+  const tip = arrowSegments.length > 0
+    ? arrowSegments[arrowSegments.length - 1].p3
+    : (gapSplitResult.before.length > 0
+      ? gapSplitResult.before[gapSplitResult.before.length - 1].p3
+      : allSegments[allSegments.length - 1].p3);
 
-  // Rotate the arrow sub-curve clockwise and counter-clockwise around the tip
-  const cwR0 = rotatePoint(r0, tip, arrowAngleRad);
-  const cwR1 = rotatePoint(r1, tip, arrowAngleRad);
-  const cwR2 = rotatePoint(r2, tip, arrowAngleRad);
-  const ccwR0 = rotatePoint(r0, tip, -arrowAngleRad);
-  const ccwR1 = rotatePoint(r1, tip, -arrowAngleRad);
-  const ccwR2 = rotatePoint(r2, tip, -arrowAngleRad);
-
-  // Build arrowhead: CW curve from back to tip, then CCW curve from tip to back, close
-  const arrowPath = `M ${cwR0.x} ${cwR0.y} C ${cwR1.x} ${cwR1.y}, ${cwR2.x} ${cwR2.y}, ${tip.x} ${tip.y} `
-    + `C ${ccwR2.x} ${ccwR2.y}, ${ccwR1.x} ${ccwR1.y}, ${ccwR0.x} ${ccwR0.y} Z`;
+  // MetaPost-style arrowhead: rotate all arrow segments ±15° around the tip.
+  // CW path goes forward (base → tip), CCW path goes backward (tip → base), then close.
+  let arrowPath = '';
+  if (arrowSegments.length > 0) {
+    // CW forward: base → tip
+    const cwFirst = rotatePoint(arrowSegments[0].p0, tip, arrowAngleRad);
+    arrowPath = `M ${cwFirst.x} ${cwFirst.y}`;
+    for (const seg of arrowSegments) {
+      const cp1 = rotatePoint(seg.p1, tip, arrowAngleRad);
+      const cp2 = rotatePoint(seg.p2, tip, arrowAngleRad);
+      const end = rotatePoint(seg.p3, tip, arrowAngleRad);
+      arrowPath += ` C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${end.x} ${end.y}`;
+    }
+    // CCW reverse: tip → base (traverse segments backwards, reversing each curve)
+    for (let i = arrowSegments.length - 1; i >= 0; i--) {
+      const seg = arrowSegments[i];
+      // Reversed bezier (p3→p0): control points swap to p2, p1
+      const rcp1 = rotatePoint(seg.p2, tip, -arrowAngleRad);
+      const rcp2 = rotatePoint(seg.p1, tip, -arrowAngleRad);
+      const rend = rotatePoint(seg.p0, tip, -arrowAngleRad);
+      arrowPath += ` C ${rcp1.x} ${rcp1.y}, ${rcp2.x} ${rcp2.y}, ${rend.x} ${rend.y}`;
+    }
+    arrowPath += ' Z';
+  }
 
   return (
     <g>
