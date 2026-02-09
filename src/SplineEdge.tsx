@@ -375,10 +375,20 @@ function generateSplinePath(
 
     const tension = 1 / 6;
 
-    const cp1x = p1.x + (p2.x - p0.x) * tension;
-    const cp1y = p1.y + (p2.y - p0.y) * tension;
-    const cp2x = p2.x - (p3.x - p1.x) * tension;
-    const cp2y = p2.y - (p3.y - p1.y) * tension;
+    let cp1x = p1.x + (p2.x - p0.x) * tension;
+    let cp1y = p1.y + (p2.y - p0.y) * tension;
+    let cp2x = p2.x - (p3.x - p1.x) * tension;
+    let cp2y = p2.y - (p3.y - p1.y) * tension;
+
+    // Force endpoint tangents to be normal to node surface (same as no-control-point case)
+    if (i === 0) {
+      cp1x = sourceX + cp1Dir.x * tangentOffset;
+      cp1y = sourceY + cp1Dir.y * tangentOffset;
+    }
+    if (i === allPoints.length - 2) {
+      cp2x = targetX + cp2Dir.x * tangentOffset;
+      cp2y = targetY + cp2Dir.y * tangentOffset;
+    }
 
     lastSegP0 = p1;
     lastSegCP1 = { x: cp1x, y: cp1y };
