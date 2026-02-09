@@ -107,6 +107,8 @@ Cases when the connection is between an ancestor and descendant.
 - `Ctrl/Cmd + s` - Save
 - `Ctrl/Cmd + Shift + s` - Export
 - `Ctrl/Cmd + o` - Open
+- `Ctrl/Cmd + z` - undo latest command
+- `Ctrl/Cmd + Shift+z` - redo latest undone command
 
 ## Build Configuration
 
