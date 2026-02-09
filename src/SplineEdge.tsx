@@ -111,6 +111,28 @@ function splitBezierAt(p0: Point, p1: Point, p2: Point, p3: Point, t: number) {
   };
 }
 
+// Find t parameter such that the arc length from t to 1 equals the given distance.
+// Uses binary search on arc length for robustness (unlike speed-based linear approximation).
+function findTForDistanceFromEnd(p0: Point, p1: Point, p2: Point, p3: Point, distance: number): number {
+  const totalLength = approxBezierLength(p0, p1, p2, p3);
+  if (distance >= totalLength) return 0;
+  if (distance <= 0) return 1;
+
+  const targetFromStart = totalLength - distance;
+  let lo = 0, hi = 1;
+  for (let iter = 0; iter < 20; iter++) {
+    const mid = (lo + hi) / 2;
+    const split = splitBezierAt(p0, p1, p2, p3, mid);
+    const lengthToMid = approxBezierLength(split.q0, split.q1, split.q2, split.q3);
+    if (lengthToMid < targetFromStart) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return (lo + hi) / 2;
+}
+
 // Rotate a point around a center by angle (radians)
 function rotatePoint(pt: Point, center: Point, angle: number): Point {
   const cos = Math.cos(angle);
@@ -634,17 +656,26 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   const arrowAngleRad = 15 * Math.PI / 180; // 15 degrees rotation for arrowhead curves
 
   // Two-step de Casteljau: first truncate the gap, then extract the arrow portion.
+  // Uses arc-length binary search for consistent arrowhead size regardless of edge length.
   const { p0, p1, p2, p3 } = pathResult.lastSegment;
-  const speed = 3 * Math.hypot(p3.x - p2.x, p3.y - p2.y); // |B'(1)|
+  const lastSegLength = approxBezierLength(p0, p1, p2, p3);
 
-  // Step 1: Truncate the last segment to end arrowGap px before the node edge
-  const tGap = Math.max(0, 1 - arrowGap / (speed || 1));
+  // Scale down arrow dimensions when the edge is too short
+  const totalArrowSpace = arrowGap + arrowLength;
+  let effectiveGap = arrowGap;
+  let effectiveArrowLen = arrowLength;
+  if (lastSegLength < totalArrowSpace * 1.5) {
+    const scale = Math.max(0, lastSegLength / (totalArrowSpace * 1.5));
+    effectiveGap = arrowGap * scale;
+    effectiveArrowLen = arrowLength * scale;
+  }
+
+  // Step 1: Truncate the last segment to end effectiveGap px before the node edge
+  const tGap = findTForDistanceFromEnd(p0, p1, p2, p3, effectiveGap);
   const gapSplit = splitBezierAt(p0, p1, p2, p3, tGap);
-  // gapSplit.q0..q3 is the truncated curve (ends at arrow tip)
 
-  // Step 2: From the truncated curve, extract the last arrowLength px for the arrowhead
-  const gapSpeed = 3 * Math.hypot(gapSplit.q3.x - gapSplit.q2.x, gapSplit.q3.y - gapSplit.q2.y);
-  const tArrow = Math.max(0, 1 - arrowLength / (gapSpeed || 1));
+  // Step 2: From the truncated curve, extract the last effectiveArrowLen px for the arrowhead
+  const tArrow = findTForDistanceFromEnd(gapSplit.q0, gapSplit.q1, gapSplit.q2, gapSplit.q3, effectiveArrowLen);
   const arrowSplit = splitBezierAt(gapSplit.q0, gapSplit.q1, gapSplit.q2, gapSplit.q3, tArrow);
 
   // Visible path ends where the arrowhead starts
