@@ -46,6 +46,7 @@ Renderer Process (src/renderer.tsx)
 
 - `src/renderer.tsx` - Main React app component, contains all state management and event handlers
 - `src/StateNode.tsx` - Custom ReactFlow node component for state boxes
+- `src/DecisionNode.tsx` - Custom ReactFlow node component for decision circles
 - `src/StateTree.tsx` - Recursive tree view of hierarchical states
 - `src/PropertiesPanel.tsx` - Form for editing node properties
 - `docs/sm-builder-manual.pdf` - Authoritative spec for state machine format
@@ -73,6 +74,22 @@ Nodes represent states:
 }
 ```
 
+Decision nodes are junction points for routing transitions based on guards:
+```typescript
+{
+  id: string,
+  type: 'decisionNode',
+  position: { x, y },
+  parentId?: string,           // Belongs to a parent state (or root)
+  extent?: 'parent',
+  data: {
+    label: string,             // Internal name (D1, D2, etc.), not displayed to user
+  },
+  style: { width, height },   // Square dimensions (rendered as circle via CSS)
+}
+```
+Decisions cannot have children, no entry/exit/do, no self-loops. They are referenced in YAML by `@name` (e.g., `to: @D1`). They do not appear in the State Tree sidebar.
+
 #### Edges
 Edges represent transitions with source/target node IDs and arrow markers.
 Edges connect states.
@@ -95,6 +112,7 @@ Cases when the connection is between an ancestor and descendant.
 ### Keyboard Shortcuts
 
 - `n` - Enter "add node" mode (click to place new state)
+- `d` - Enter "add decision" mode (click to place decision circle; click inside a state to add as child)
 - `t` - Start transition from selected node (click target to complete), or recompute handles if a transition is selected
 - `i` - Set initial state: select a child state, press I, then click in the parent to place the initial marker (small filled circle with arrow to the initial state)
 - `z` - Zoom to fit selected state, or fit all states if nothing selected

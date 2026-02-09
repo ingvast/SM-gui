@@ -73,6 +73,7 @@ interface Edge {
 
 interface Node {
   id: string;
+  type?: string;
   data: {
     label: string;
     [key: string]: unknown;
@@ -460,35 +461,41 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     );
   }
 
+  const isDecision = selectedNode.type === 'decisionNode';
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-        Properties
+        {isDecision ? 'Decision' : 'Properties'}
       </Typography>
 
-      <TextField
-        label="Name"
-        size="small"
-        fullWidth
-        value={tempName}
-        onChange={handleNameChangeLocal}
-        onBlur={handleNameBlur}
-        onKeyDown={handleNameKeyDown}
-        disabled={selectedNode.id === '/'}
-        sx={{ mb: 1 }}
-      />
+      {!isDecision && (
+        <TextField
+          label="Name"
+          size="small"
+          fullWidth
+          value={tempName}
+          onChange={handleNameChangeLocal}
+          onBlur={handleNameBlur}
+          onKeyDown={handleNameKeyDown}
+          disabled={selectedNode.id === '/'}
+          sx={{ mb: 1 }}
+        />
+      )}
 
-      <Tabs
-        value={activeTab}
-        onChange={(_, newValue) => setActiveTab(newValue)}
-        sx={{ borderBottom: 1, borderColor: 'divider', minHeight: 36 }}
-      >
-        <Tab label="State" sx={{ minHeight: 36, py: 0 }} />
-        <Tab label="Transitions" sx={{ minHeight: 36, py: 0 }} disabled={selectedNode.id === '/'} />
-      </Tabs>
+      {!isDecision && (
+        <Tabs
+          value={activeTab}
+          onChange={(_, newValue) => setActiveTab(newValue)}
+          sx={{ borderBottom: 1, borderColor: 'divider', minHeight: 36 }}
+        >
+          <Tab label="State" sx={{ minHeight: 36, py: 0 }} />
+          <Tab label="Transitions" sx={{ minHeight: 36, py: 0 }} disabled={selectedNode.id === '/'} />
+        </Tabs>
+      )}
 
       {/* State Tab */}
-      {activeTab === 0 && (
+      {!isDecision && activeTab === 0 && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
 
           <FormControlLabel
@@ -599,7 +606,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       )}
 
       {/* Transitions Tab */}
-      {activeTab === 1 && selectedNode.id !== '/' && (
+      {(isDecision || (activeTab === 1 && selectedNode.id !== '/')) && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
           {outgoingTransitions.length > 0 && (() => {
             // Compute warning flags: transitions after a guardless one are unreachable

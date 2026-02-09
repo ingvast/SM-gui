@@ -1,0 +1,8 @@
+.decision-node {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 1.5px solid #1a192b;
+  background-color: rgba(255, 255, 255, 0.9);
+  box-sizing: border-box;
+}

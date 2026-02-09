@@ -52,6 +52,27 @@ export const defaultMachineProperties: MachineProperties = {
   },
 };
 
+interface YamlDecisionTransition {
+  to: string;
+  guard?: string;
+  action?: string;
+  geometry?: {
+    sourceHandle?: string;
+    targetHandle?: string;
+    controlPoints?: { x: number; y: number }[];
+    labelPosition?: number;
+  };
+}
+
+interface YamlDecision {
+  transitions: YamlDecisionTransition[];
+  graphics?: {
+    x: number;
+    y: number;
+    size: number;
+  };
+}
+
 interface YamlState {
   entry?: string;
   exit?: string;
@@ -60,6 +81,7 @@ interface YamlState {
   orthogonal?: boolean;
   initial?: string;
   states?: Record<string, YamlState>;
+  decisions?: Record<string, YamlDecisionTransition[] | YamlDecision>;
   transitions?: YamlTransition[];
   graphics?: {
     x: number;
@@ -102,6 +124,7 @@ interface YamlDocument {
   history?: boolean;
   initial?: string;
   states?: Record<string, YamlState>;
+  decisions?: Record<string, YamlDecisionTransition[] | YamlDecision>;
   graphics?: {
     initialMarkerPos?: { x: number; y: number };
     initialMarkerSize?: number;
@@ -199,7 +222,15 @@ export function convertToYaml(
   includeGraphics: boolean,
   machineProperties?: MachineProperties
 ): string {
-  const pathMap = buildNodePathMap(nodes);
+  // Separate state nodes and decision nodes
+  const stateNodes = nodes.filter(n => n.type !== 'decisionNode');
+  const decisionNodes = nodes.filter(n => n.type === 'decisionNode');
+
+  const pathMap = buildNodePathMap(stateNodes);
+
+  // Build decision name map: decision node ID -> label
+  const decisionIdToName = new Map<string, string>();
+  decisionNodes.forEach(n => decisionIdToName.set(n.id, n.data.label));
 
   // Group edges by source node
   const edgesBySource = new Map<string, Edge[]>();
@@ -208,6 +239,33 @@ export function convertToYaml(
     list.push(edge);
     edgesBySource.set(edge.source, list);
   });
+
+  // Resolve an edge target to a YAML path string
+  // If target is a decision, use @name; if target is a state, use relative path from source
+  function resolveEdgeTarget(edge: Edge): string {
+    const decisionName = decisionIdToName.get(edge.target);
+    if (decisionName) {
+      return `@${decisionName}`;
+    }
+    // For state targets, compute relative path from source
+    // Source might be a decision — find its parent state for path context
+    const sourceNode = nodes.find(n => n.id === edge.source);
+    let sourcePath: string | undefined;
+    if (sourceNode?.type === 'decisionNode') {
+      // Decision's context is its parent state
+      if (sourceNode.parentId) {
+        sourcePath = pathMap.get(sourceNode.parentId);
+      }
+      // If no parent (root-level decision), sourcePath stays undefined (top-level context)
+    } else {
+      sourcePath = pathMap.get(edge.source);
+    }
+    const targetPath = pathMap.get(edge.target);
+    if (targetPath && sourcePath) {
+      return computeRelativePath(sourcePath, targetPath);
+    }
+    return targetPath || edge.target;
+  }
 
   // Build nested state structure recursively
   function buildStateObj(node: Node<StateData>): YamlState {
@@ -246,18 +304,18 @@ export function convertToYaml(
       }
     }
 
-    // Add child states
-    const children = nodes.filter(n => n.parentId === node.id);
-    if (children.length > 0) {
+    // Add child states (exclude decision nodes)
+    const stateChildren = nodes.filter(n => n.parentId === node.id && n.type !== 'decisionNode');
+    if (stateChildren.length > 0) {
       const states: Record<string, YamlState> = {};
-      children.forEach(child => {
+      stateChildren.forEach(child => {
         states[child.data.label] = buildStateObj(child);
       });
       stateObj.states = states;
 
       // Add initial state if set
       if (node.data.initial) {
-        const initialChild = children.find(c => c.id === node.data.initial);
+        const initialChild = stateChildren.find(c => c.id === node.data.initial);
         if (initialChild) {
           stateObj.initial = initialChild.data.label;
           // Store initial marker position in graphics
@@ -277,16 +335,62 @@ export function convertToYaml(
       }
     }
 
-    // Add transitions
+    // Add decision children
+    const decisionChildren = decisionNodes.filter(n => n.parentId === node.id);
+    if (decisionChildren.length > 0) {
+      const decisions: Record<string, YamlDecisionTransition[] | YamlDecision> = {};
+      decisionChildren.forEach(decision => {
+        const decisionEdges = edgesBySource.get(decision.id) || [];
+        const transitions: YamlDecisionTransition[] = decisionEdges.map(edge => {
+          const t: YamlDecisionTransition = { to: resolveEdgeTarget(edge) };
+          if ((edge.data as { guard?: string })?.guard) {
+            t.guard = (edge.data as { guard: string }).guard;
+          }
+          if ((edge.data as { action?: string })?.action) {
+            t.action = (edge.data as { action: string }).action;
+          }
+          if (includeGraphics) {
+            const edgeData = edge.data as { controlPoints?: { x: number; y: number }[]; labelPosition?: number } | undefined;
+            const hasHandles = edge.sourceHandle || edge.targetHandle;
+            const hasControlPoints = edgeData?.controlPoints && edgeData.controlPoints.length > 0;
+            const hasLabelPosition = edgeData?.labelPosition != null;
+            if (hasHandles || hasControlPoints || hasLabelPosition) {
+              t.geometry = {
+                sourceHandle: edge.sourceHandle || undefined,
+                targetHandle: edge.targetHandle || undefined,
+                controlPoints: hasControlPoints ? edgeData!.controlPoints : undefined,
+                labelPosition: hasLabelPosition ? edgeData!.labelPosition : undefined,
+              };
+            }
+          }
+          return t;
+        });
+
+        if (includeGraphics) {
+          const size = (decision.style?.width as number) || 15;
+          decisions[decision.data.label] = {
+            transitions,
+            graphics: {
+              x: decision.position.x,
+              y: decision.position.y,
+              size,
+            },
+          };
+        } else {
+          decisions[decision.data.label] = transitions;
+        }
+      });
+      stateObj.decisions = decisions;
+    }
+
+    // Add transitions for state nodes
     const nodeEdges = edgesBySource.get(node.id) || [];
     if (nodeEdges.length > 0) {
-      const sourcePath = pathMap.get(node.id) || '';
       stateObj.transitions = nodeEdges.map(edge => {
-        const targetPath = pathMap.get(edge.target);
         const transition: YamlTransition = {
-          to: targetPath && sourcePath ? computeRelativePath(sourcePath, targetPath) : (targetPath || edge.target),
+          to: resolveEdgeTarget(edge),
         };
-        // Include edge data if present (for future guard/action support)
+        // Include edge data if present
         if ((edge.data as { guard?: string })?.guard) {
           transition.guard = (edge.data as { guard: string }).guard;
         }
@@ -386,14 +490,62 @@ export function convertToYaml(
     }
   }
 
-  // 9. Get top-level states (no parent)
-  const topLevelNodes = nodes.filter(n => !n.parentId);
-  if (topLevelNodes.length > 0) {
+  // 9. Get top-level states (no parent, exclude decisions)
+  const topLevelStateNodes = stateNodes.filter(n => !n.parentId);
+  if (topLevelStateNodes.length > 0) {
     const states: Record<string, YamlState> = {};
-    topLevelNodes.forEach(node => {
+    topLevelStateNodes.forEach(node => {
       states[node.data.label] = buildStateObj(node);
     });
     doc.states = states;
+  }
+
+  // 10. Root-level decisions
+  const rootDecisions = decisionNodes.filter(n => !n.parentId);
+  if (rootDecisions.length > 0) {
+    const decisions: Record<string, YamlDecisionTransition[] | YamlDecision> = {};
+    rootDecisions.forEach(decision => {
+      const decisionEdges = edgesBySource.get(decision.id) || [];
+      const transitions: YamlDecisionTransition[] = decisionEdges.map(edge => {
+        const t: YamlDecisionTransition = { to: resolveEdgeTarget(edge) };
+        if ((edge.data as { guard?: string })?.guard) {
+          t.guard = (edge.data as { guard: string }).guard;
+        }
+        if ((edge.data as { action?: string })?.action) {
+          t.action = (edge.data as { action: string }).action;
+        }
+        if (includeGraphics) {
+          const edgeData = edge.data as { controlPoints?: { x: number; y: number }[]; labelPosition?: number } | undefined;
+          const hasHandles = edge.sourceHandle || edge.targetHandle;
+          const hasControlPoints = edgeData?.controlPoints && edgeData.controlPoints.length > 0;
+          const hasLabelPosition = edgeData?.labelPosition != null;
+          if (hasHandles || hasControlPoints || hasLabelPosition) {
+            t.geometry = {
+              sourceHandle: edge.sourceHandle || undefined,
+              targetHandle: edge.targetHandle || undefined,
+              controlPoints: hasControlPoints ? edgeData!.controlPoints : undefined,
+              labelPosition: hasLabelPosition ? edgeData!.labelPosition : undefined,
+            };
+          }
+        }
+        return t;
+      });
+
+      if (includeGraphics) {
+        const size = (decision.style?.width as number) || 15;
+        decisions[decision.data.label] = {
+          transitions,
+          graphics: {
+            x: decision.position.x,
+            y: decision.position.y,
+            size,
+          },
+        };
+      } else {
+        decisions[decision.data.label] = transitions;
+      }
+    });
+    doc.decisions = decisions;
   }
 
   return yaml.dump(doc, { lineWidth: -1, noRefs: true });
@@ -416,9 +568,13 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
   // Map from path to node ID for resolving transitions
   const pathToIdMap = new Map<string, string>();
 
+  // Map from decision name to node ID for resolving @name references
+  const decisionNameToIdMap = new Map<string, string>();
+
   // Auto-layout settings
   const defaultWidth = 150;
   const defaultHeight = 50;
+  const defaultDecisionSize = 15;
   const horizontalGap = 50;
 
   function processState(
@@ -501,6 +657,11 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
       });
     }
 
+    // Process decision children
+    if (safeStateData.decisions) {
+      processDecisions(safeStateData.decisions, nodeId, childX, childY);
+    }
+
     // If no graphics, expand node to fit children
     if (!safeStateData.graphics && safeStateData.states) {
       const neededWidth = Math.max(defaultWidth, totalChildrenWidth + 40);
@@ -511,6 +672,58 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     }
 
     return { width, height };
+  }
+
+  // Process decisions dictionary and create decision nodes
+  function processDecisions(
+    decisions: Record<string, YamlDecisionTransition[] | YamlDecision>,
+    parentId: string | undefined,
+    autoLayoutX: number,
+    autoLayoutY: number
+  ) {
+    let dx = autoLayoutX;
+    Object.keys(decisions).forEach(decisionName => {
+      const decisionData = decisions[decisionName];
+      const nodeId = `node_${nodeIdCounter++}`;
+      decisionNameToIdMap.set(decisionName, nodeId);
+
+      let x = dx;
+      let y = autoLayoutY;
+      let size = defaultDecisionSize;
+
+      // Check if it has graphics (object form with transitions + graphics)
+      if (decisionData && !Array.isArray(decisionData) && 'transitions' in decisionData) {
+        const d = decisionData as YamlDecision;
+        if (d.graphics) {
+          x = d.graphics.x;
+          y = d.graphics.y;
+          size = d.graphics.size || defaultDecisionSize;
+        }
+      }
+
+      const node: Node<StateData> = {
+        id: nodeId,
+        type: 'decisionNode',
+        position: { x, y },
+        data: {
+          label: decisionName,
+          history: false,
+          orthogonal: false,
+          entry: '',
+          exit: '',
+          do: '',
+        },
+        style: { width: size, height: size },
+      };
+
+      if (parentId) {
+        node.parentId = parentId;
+        node.extent = 'parent';
+      }
+
+      nodes.push(node);
+      dx += size + horizontalGap;
+    });
   }
 
   // Process top-level states
@@ -525,6 +738,11 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
       const result = processState(stateName, stateData, undefined, '', topLevelX, topLevelY);
       topLevelX += result.width + horizontalGap;
     });
+  }
+
+  // Process root-level decisions
+  if (doc.decisions) {
+    processDecisions(doc.decisions, undefined, topLevelX, topLevelY);
   }
 
   // Resolve a target path (possibly relative) to an absolute path
@@ -571,6 +789,52 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     return target;
   }
 
+  // Resolve a transition target, handling @decision references
+  function resolveTransitionTarget(rawTarget: string, sourcePath: string): string | undefined {
+    if (!rawTarget) return undefined;
+
+    // Decision reference: @decisionName
+    if (rawTarget.startsWith('@')) {
+      const decisionName = rawTarget.substring(1);
+      return decisionNameToIdMap.get(decisionName);
+    }
+
+    // State path reference
+    const targetPath = resolveTargetPath(rawTarget, sourcePath);
+    return pathToIdMap.get(targetPath);
+  }
+
+  // Create an edge from a transition definition
+  function createEdgeFromTransition(
+    sourceId: string,
+    targetId: string,
+    transition: { to: string; guard?: string; action?: string; geometry?: { sourceHandle?: string; targetHandle?: string; controlPoints?: { x: number; y: number }[]; labelPosition?: number } }
+  ) {
+    const edge: Edge = {
+      id: `e${sourceId}-${targetId}-${edges.length}`,
+      source: sourceId,
+      target: targetId,
+      type: 'spline',
+      data: {
+        controlPoints: transition.geometry?.controlPoints || [],
+        labelPosition: transition.geometry?.labelPosition,
+        label: '',
+        guard: transition.guard || '',
+        action: transition.action || '',
+      },
+      markerEnd: { type: MarkerType.ArrowClosed },
+    };
+
+    if (transition.geometry?.sourceHandle) {
+      edge.sourceHandle = transition.geometry.sourceHandle;
+    }
+    if (transition.geometry?.targetHandle) {
+      edge.targetHandle = transition.geometry.targetHandle;
+    }
+
+    edges.push(edge);
+  }
+
   // Process transitions after all nodes are created
   function processTransitions(
     stateData: YamlState | null | undefined,
@@ -582,42 +846,33 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
 
     if (stateData.transitions && sourceId) {
       stateData.transitions.forEach(transition => {
-        const rawTarget = transition.to;
-
-        // Skip transitions with null/undefined target (e.g., to: null)
-        if (!rawTarget) return;
-
-        // Resolve the target path to an absolute path
-        let targetPath = resolveTargetPath(rawTarget, sourcePath);
-
-        const targetId = pathToIdMap.get(targetPath);
-
+        if (!transition.to) return;
+        const targetId = resolveTransitionTarget(transition.to, sourcePath);
         if (sourceId && targetId) {
-          const edge: Edge = {
-            id: `e${sourceId}-${targetId}`,
-            source: sourceId,
-            target: targetId,
-            type: 'spline',
-            data: {
-              controlPoints: transition.geometry?.controlPoints || [],
-              labelPosition: transition.geometry?.labelPosition,
-              label: '',
-              guard: transition.guard || '',
-              action: transition.action || '',
-            },
-            markerEnd: { type: MarkerType.ArrowClosed },
-          };
-
-          // Restore handle geometry if present
-          if (transition.geometry?.sourceHandle) {
-            edge.sourceHandle = transition.geometry.sourceHandle;
-          }
-          if (transition.geometry?.targetHandle) {
-            edge.targetHandle = transition.geometry.targetHandle;
-          }
-
-          edges.push(edge);
+          createEdgeFromTransition(sourceId, targetId, transition);
         }
+      });
+    }
+
+    // Process decision transitions
+    if (stateData.decisions) {
+      Object.keys(stateData.decisions).forEach(decisionName => {
+        const decisionId = decisionNameToIdMap.get(decisionName);
+        if (!decisionId) return;
+
+        const decisionData = stateData.decisions![decisionName];
+        const transitions: YamlDecisionTransition[] = Array.isArray(decisionData)
+          ? decisionData
+          : (decisionData as YamlDecision).transitions || [];
+
+        transitions.forEach(transition => {
+          if (!transition.to) return;
+          // For decisions, use the parent state's path context for resolving relative paths
+          const targetId = resolveTransitionTarget(transition.to, sourcePath);
+          if (targetId) {
+            createEdgeFromTransition(decisionId, targetId, transition);
+          }
+        });
       });
     }
 
@@ -640,6 +895,28 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
       if (stateData) {
         processTransitions(stateData, stateName);
       }
+    });
+  }
+
+  // Process root-level decision transitions
+  if (doc.decisions) {
+    Object.keys(doc.decisions).forEach(decisionName => {
+      const decisionId = decisionNameToIdMap.get(decisionName);
+      if (!decisionId) return;
+
+      const decisionData = doc.decisions![decisionName];
+      const transitions: YamlDecisionTransition[] = Array.isArray(decisionData)
+        ? decisionData
+        : (decisionData as YamlDecision).transitions || [];
+
+      transitions.forEach(transition => {
+        if (!transition.to) return;
+        // Root-level decisions use empty string as source path context
+        const targetId = resolveTransitionTarget(transition.to, '');
+        if (targetId) {
+          createEdgeFromTransition(decisionId, targetId, transition);
+        }
+      });
     });
   }
 

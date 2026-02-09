@@ -38,6 +38,7 @@ import {
 import './index.css';
 import { useUndoRedo } from './useUndoRedo';
 import StateNode from './StateNode';
+import DecisionNode from './DecisionNode';
 import InitialMarker from './InitialMarker';
 import HistoryMarker from './HistoryMarker';
 import StateTree from './StateTree';
@@ -98,7 +99,7 @@ declare global {
   }
 }
 
-const nodeTypes = { stateNode: StateNode, initialMarker: InitialMarker, historyMarker: HistoryMarker };
+const nodeTypes = { stateNode: StateNode, decisionNode: DecisionNode, initialMarker: InitialMarker, historyMarker: HistoryMarker };
 const edgeTypes = { spline: SplineEdge };
 
 const initialNodes = [
@@ -134,6 +135,9 @@ const getNextId = () => `node_${idCounter++}`;
 
 let stateNameCounter = 3; // Counter for S# naming (starts at 3 since initial states are S1, S2)
 const getNextStateName = () => `S${stateNameCounter++}`;
+
+let decisionNameCounter = 1;
+const getNextDecisionName = () => `D${decisionNameCounter++}`;
 
 // Scale factor for nested states (will be configurable later)
 const NESTING_SCALE_FACTOR = 0.85;
@@ -1106,6 +1110,12 @@ const App = () => {
         targetHandle = targetHandle.replace('-source', '-target');
       }
 
+      // Prevent self-loops on decision nodes
+      if (source === target) {
+        const node = nodes.find(n => n.id === source);
+        if (node?.type === 'decisionNode') return;
+      }
+
       saveSnapshot();
       setEdges((eds) => {
         const newEdge = {
@@ -1121,7 +1131,7 @@ const App = () => {
         return [...eds, newEdge];
       });
     },
-    [setEdges, saveSnapshot]
+    [nodes, setEdges, saveSnapshot]
   );
 
 
@@ -1203,6 +1213,11 @@ const App = () => {
 
   // Create a transition between two nodes
   const createTransition = useCallback((sourceId: string, targetId: string) => {
+    // Prevent self-loops on decision nodes
+    if (sourceId === targetId) {
+      const node = nodes.find(n => n.id === sourceId);
+      if (node?.type === 'decisionNode') return;
+    }
     const { sourceHandle, targetHandle } = calculateBestHandles(sourceId, targetId);
 
     const newEdge = {
@@ -1218,11 +1233,18 @@ const App = () => {
 
     saveSnapshot();
     setEdges((eds) => eds.concat(newEdge));
-  }, [calculateBestHandles, setEdges, saveSnapshot]);
+  }, [nodes, calculateBestHandles, setEdges, saveSnapshot]);
 
   const isValidConnection = useCallback(
-    () => true, // Allow all connections including self-loops
-    []
+    (connection) => {
+      // Prevent self-loops on decision nodes
+      if (connection.source === connection.target) {
+        const node = nodes.find(n => n.id === connection.source);
+        if (node?.type === 'decisionNode') return false;
+      }
+      return true;
+    },
+    [nodes]
   );
 
   // Handle edge reconnection (dragging edge endpoints to new handles/nodes)
@@ -1258,6 +1280,7 @@ const App = () => {
   );
 
   const [isAddingNode, setIsAddingNode] = useState(false);
+  const [isAddingDecision, setIsAddingDecision] = useState(false);
   const [isAddingTransition, setIsAddingTransition] = useState(false);
   const [transitionSourceId, setTransitionSourceId] = useState<string | null>(null);
   const [isUngroupingMode, setIsUngroupingMode] = useState(false);
@@ -1645,9 +1668,11 @@ const App = () => {
 
 
   const buildTreeData = useCallback(() => {
-    const nodesMap = new Map(nodes.map(node => [node.id, { ...node, children: [] }]));
-    
-    nodes.forEach(node => {
+    // Exclude decision nodes from the tree
+    const stateNodes = nodes.filter(n => n.type !== 'decisionNode');
+    const nodesMap = new Map(stateNodes.map(node => [node.id, { ...node, children: [] }]));
+
+    stateNodes.forEach(node => {
       if (node.parentId) {
         const parent = nodesMap.get(node.parentId);
         if (parent) {
@@ -2117,6 +2142,9 @@ const App = () => {
       } else if (event.key === 'n' && !isModifierPressed) {
         event.preventDefault();
         setIsAddingNode(true);
+      } else if (event.key === 'd' && !isModifierPressed) {
+        event.preventDefault();
+        setIsAddingDecision(true);
       } else if (event.key === 't' && !isModifierPressed) {
         event.preventDefault();
         // Check if a transition (edge) is selected - if so, recompute its handles
@@ -2144,6 +2172,9 @@ const App = () => {
             setTransitionSourceId(selectedNode.id);
           }
         }
+      } else if (event.key === 'Escape' && isAddingDecision) {
+        event.preventDefault();
+        setIsAddingDecision(false);
       } else if (event.key === 'Escape' && isAddingTransition) {
         event.preventDefault();
         setIsAddingTransition(false);
@@ -2235,7 +2266,7 @@ const App = () => {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState, handleUndo, handleRedo, saveSnapshot, setIsAddingNode, nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, selectedMarkerId, calculateBestHandles, setEdges, setRootHistory, setMachineProperties]);
+  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState, handleUndo, handleRedo, saveSnapshot, setIsAddingNode, setIsAddingDecision, isAddingDecision, nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, selectedMarkerId, calculateBestHandles, setEdges, setRootHistory, setMachineProperties]);
 
   const onPaneClick = useCallback(
     (event) => {
@@ -2303,7 +2334,30 @@ const App = () => {
         return;
       }
 
-      if (isAddingNode) {
+      if (isAddingDecision) {
+        // Convert screen click position to world coordinates
+        const rect = reactFlowWrapper.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        const screenX = event.clientX - rect.left;
+        const screenY = event.clientY - rect.top;
+        const worldX = (screenX - effectivePan.x) / effectiveScale;
+        const worldY = (screenY - effectivePan.y) / effectiveScale;
+
+        // Decision size: small circle (~1.5% of viewport width)
+        const decisionSize = (viewportSize.width * 0.015) / effectiveScale;
+
+        const newNode = {
+          id: getNextId(),
+          type: 'decisionNode',
+          position: { x: worldX, y: worldY },
+          data: { label: getNextDecisionName() },
+          style: { width: decisionSize, height: decisionSize },
+        };
+        saveSnapshot();
+        setNodes((nds) => nds.concat(newNode));
+        setIsAddingDecision(false);
+      } else if (isAddingNode) {
         // Convert screen click position to world coordinates
         const rect = reactFlowWrapper.current?.getBoundingClientRect();
         if (!rect) return;
@@ -2339,7 +2393,7 @@ const App = () => {
         );
       }
     },
-    [isAddingNode, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setMachineProperties, setRootHistory, generateUniqueNodeLabel, nodes, effectiveScale, effectivePan, viewportSize, saveSnapshot]
+    [isAddingNode, isAddingDecision, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setMachineProperties, setRootHistory, generateUniqueNodeLabel, nodes, effectiveScale, effectivePan, viewportSize, saveSnapshot]
   );
 
   // Capture snapshot before drag begins
@@ -2665,8 +2719,60 @@ const App = () => {
         setIsAddingNode(false);
         event.stopPropagation();
       }
+
+      if (isAddingDecision && node.selected && node.type === 'stateNode') {
+        const rect = reactFlowWrapper.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        const screenX = event.clientX - rect.left;
+        const screenY = event.clientY - rect.top;
+        const worldClickX = (screenX - effectivePan.x) / effectiveScale;
+        const worldClickY = (screenY - effectivePan.y) / effectiveScale;
+
+        const parentBounds = getAbsoluteNodeBounds(node.id, nodes);
+        if (!parentBounds) return;
+
+        // Decision size: small circle (~1.5% of viewport width, scaled for depth)
+        const parentDepth = calculateNodeDepth(node.id, nodes);
+        const childDepth = parentDepth + 1;
+        const scale = Math.pow(NESTING_SCALE_FACTOR, childDepth);
+        const decisionSize = (viewportSize.width * 0.015) / effectiveScale * scale;
+
+        const newRelativePosition = {
+          x: worldClickX - parentBounds.x,
+          y: worldClickY - parentBounds.y,
+        };
+
+        // Clamp to parent bounds
+        const safePaddingX = Math.min(parentBounds.width * 0.05, (parentBounds.width - decisionSize) / 2);
+        const safePaddingY = Math.min(parentBounds.height * 0.05, (parentBounds.height - decisionSize) / 2);
+        if (safePaddingX > 0) {
+          newRelativePosition.x = Math.max(safePaddingX, Math.min(newRelativePosition.x, parentBounds.width - decisionSize - safePaddingX));
+        } else {
+          newRelativePosition.x = (parentBounds.width - decisionSize) / 2;
+        }
+        if (safePaddingY > 0) {
+          newRelativePosition.y = Math.max(safePaddingY, Math.min(newRelativePosition.y, parentBounds.height - decisionSize - safePaddingY));
+        } else {
+          newRelativePosition.y = (parentBounds.height - decisionSize) / 2;
+        }
+
+        const newNode = {
+          id: getNextId(),
+          type: 'decisionNode',
+          position: newRelativePosition,
+          parentId: node.id,
+          extent: 'parent',
+          data: { label: getNextDecisionName() },
+          style: { width: decisionSize, height: decisionSize },
+        };
+        saveSnapshot();
+        setNodes((nds) => nds.concat(newNode));
+        setIsAddingDecision(false);
+        event.stopPropagation();
+      }
     },
-    [isAddingNode, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setSelectedTreeItem, nodes, generateUniqueNodeLabel, effectiveScale, effectivePan, saveSnapshot]
+    [isAddingNode, isAddingDecision, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setSelectedTreeItem, nodes, generateUniqueNodeLabel, effectiveScale, effectivePan, viewportSize, saveSnapshot]
   );
 
   return (
@@ -2797,13 +2903,13 @@ const App = () => {
 
         <Box
           ref={reactFlowWrapper}
-          className={isAddingNode || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
+          className={isAddingNode || isAddingDecision || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
           sx={{
             flexGrow: 1,
             position: 'relative',
-            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair' : 'default'),
+            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingDecision || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair' : 'default'),
             '& *': {
-              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair !important' : undefined),
+              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingDecision || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair !important' : undefined),
             },
           }}
           onMouseDown={handlePaneMouseDown}
