@@ -551,6 +551,180 @@ export function convertToYaml(
   return yaml.dump(doc, { lineWidth: -1, noRefs: true });
 }
 
+export function convertToPhoenixYaml(
+  nodes: Node<StateData>[],
+  edges: Edge[],
+): { yaml: string; warnings: string[] } {
+  const warnings: string[] = [];
+
+  // Build maps
+  const nodeMap = new Map<string, Node<StateData>>();
+  nodes.forEach(n => nodeMap.set(n.id, n));
+
+  // Identify top-level states and second-level states
+  const topLevelStates = nodes.filter(n => !n.parentId && n.type === 'stateNode');
+  const topLevelIds = new Set(topLevelStates.map(n => n.id));
+
+  const secondLevelStates = nodes.filter(n => n.parentId && topLevelIds.has(n.parentId) && n.type === 'stateNode');
+  const secondLevelIds = new Set(secondLevelStates.map(n => n.id));
+
+  // Warn about decision nodes
+  const decisionNodes = nodes.filter(n => n.type === 'decisionNode');
+  decisionNodes.forEach(d => {
+    warnings.push(`Decision node "${d.data.label}" was skipped`);
+  });
+
+  // Warn about states deeper than 2 levels
+  nodes.forEach(n => {
+    if (n.type !== 'stateNode') return;
+    if (!n.parentId) return; // top-level
+    if (topLevelIds.has(n.parentId)) return; // second-level
+    const path = buildPathForNode(n, nodeMap);
+    warnings.push(`State "${path}" is deeper than 2 levels and was skipped`);
+  });
+
+  // Warn about top-level states with entry/exit/do
+  topLevelStates.forEach(n => {
+    if (n.data.entry?.trim()) warnings.push(`Top-level state "${n.data.label}" has entry code that was ignored`);
+    if (n.data.exit?.trim()) warnings.push(`Top-level state "${n.data.label}" has exit code that was ignored`);
+    if (n.data.do?.trim()) warnings.push(`Top-level state "${n.data.label}" has 'do' code that was ignored`);
+  });
+
+  // Warn about second-level states with do code
+  secondLevelStates.forEach(n => {
+    const parentLabel = nodeMap.get(n.parentId!)?.data.label || '?';
+    if (n.data.do?.trim()) warnings.push(`State "${parentLabel}/${n.data.label}" has 'do' code that was ignored`);
+  });
+
+  // Warn about transitions on top-level states
+  const edgesBySource = new Map<string, Edge[]>();
+  edges.forEach(edge => {
+    const list = edgesBySource.get(edge.source) || [];
+    list.push(edge);
+    edgesBySource.set(edge.source, list);
+  });
+
+  topLevelStates.forEach(n => {
+    const topEdges = edgesBySource.get(n.id) || [];
+    if (topEdges.length > 0) {
+      warnings.push(`Top-level state "${n.data.label}" has transitions that were ignored`);
+    }
+  });
+
+  // Helper: resolve target to "TopLevel secondLevel" format
+  function resolvePhoenixTarget(targetId: string): string | null {
+    const targetNode = nodeMap.get(targetId);
+    if (!targetNode || targetNode.type !== 'stateNode') return null;
+
+    if (topLevelIds.has(targetId)) {
+      // Target is a top-level state - just the name
+      return targetNode.data.label;
+    }
+    if (secondLevelIds.has(targetId)) {
+      const parent = nodeMap.get(targetNode.parentId!);
+      if (parent) {
+        return `${parent.data.label} ${targetNode.data.label}`;
+      }
+    }
+    // Deeper than 2 levels
+    return null;
+  }
+
+  // Build output structure
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const doc: Record<string, any> = {};
+
+  topLevelStates.forEach(topState => {
+    const children = secondLevelStates.filter(n => n.parentId === topState.id);
+    if (children.length === 0) {
+      doc[topState.data.label] = null;
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const childMap: Record<string, any> = {};
+    children.forEach(child => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const childObj: Record<string, any> = {};
+
+      // in (entry)
+      if (child.data.entry?.trim()) {
+        const lines = child.data.entry.trim().split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+        if (lines.length > 0) {
+          childObj['in'] = lines;
+        }
+      }
+
+      // out (exit)
+      if (child.data.exit?.trim()) {
+        const lines = child.data.exit.trim().split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+        if (lines.length > 0) {
+          childObj['out'] = lines;
+        }
+      }
+
+      // next (transitions)
+      const childEdges = (edgesBySource.get(child.id) || []).filter(e => {
+        // Skip edges to decision nodes or deep states
+        const target = resolvePhoenixTarget(e.target);
+        if (!target) {
+          const targetNode = nodeMap.get(e.target);
+          if (targetNode) {
+            const path = buildPathForNode(targetNode, nodeMap);
+            warnings.push(`Transition from "${topState.data.label}/${child.data.label}" to "${path}" was skipped (target not in top 2 levels)`);
+          }
+          return false;
+        }
+        return true;
+      });
+
+      if (childEdges.length === 1) {
+        const edge = childEdges[0];
+        const guard = (edge.data as { guard?: string })?.guard?.trim();
+        const target = resolvePhoenixTarget(edge.target)!;
+        if (guard) {
+          childObj['next'] = { [guard]: target };
+        } else {
+          childObj['next'] = target;
+        }
+      } else if (childEdges.length > 1) {
+        const nextMap: Record<string, string> = {};
+        childEdges.forEach(edge => {
+          const guard = (edge.data as { guard?: string })?.guard?.trim() || 'else';
+          const target = resolvePhoenixTarget(edge.target)!;
+          nextMap[guard] = target;
+        });
+        childObj['next'] = nextMap;
+      }
+
+      if (Object.keys(childObj).length === 0) {
+        childMap[child.data.label] = null;
+      } else {
+        childMap[child.data.label] = childObj;
+      }
+    });
+
+    doc[topState.data.label] = childMap;
+  });
+
+  return {
+    yaml: yaml.dump(doc, { lineWidth: -1, noRefs: true }),
+    warnings,
+  };
+}
+
+function buildPathForNode(node: Node<StateData>, nodeMap: Map<string, Node<StateData>>): string {
+  const parts: string[] = [node.data.label];
+  let current = node;
+  while (current.parentId) {
+    const parent = nodeMap.get(current.parentId);
+    if (!parent) break;
+    parts.unshift(parent.data.label);
+    current = parent;
+  }
+  return parts.join('/');
+}
+
 interface ConvertFromYamlResult {
   nodes: Node<StateData>[];
   edges: Edge[];

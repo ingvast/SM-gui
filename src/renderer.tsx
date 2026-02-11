@@ -46,7 +46,7 @@ import PropertiesPanel from './PropertiesPanel';
 import SplineEdge from './SplineEdge';
 import MachinePropertiesDialog from './MachinePropertiesDialog';
 import SettingsDialog, { Settings } from './SettingsDialog';
-import { convertToYaml, convertFromYaml, MachineProperties, defaultMachineProperties } from './yamlConverter';
+import { convertToYaml, convertFromYaml, convertToPhoenixYaml, MachineProperties, defaultMachineProperties } from './yamlConverter';
 import {
   useSemanticZoomStore,
   getAbsoluteNodeBounds,
@@ -1666,6 +1666,33 @@ const App = () => {
     clearUndoRedo();
   }, [nodes, setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, clearUndoRedo]);
 
+
+  const handleExportPhoenix = useCallback(async () => {
+    const { yaml: phoenixYaml, warnings } = convertToPhoenixYaml(
+      nodes as Node<{ label: string; history: boolean; orthogonal: boolean; entry: string; exit: string; do: string }>[],
+      edges,
+    );
+
+    let defaultName = 'statemachine-phoenix.yaml';
+    if (currentFilePath) {
+      const baseName = currentFilePath.replace(/\.(yaml|yml)$/i, '');
+      defaultName = baseName + '-phoenix.yaml';
+    }
+
+    const result = await window.fileAPI.saveFile(phoenixYaml, defaultName);
+    if (result.success) {
+      if (warnings.length > 0) {
+        alert('Export to Phoenix completed with warnings:\n\n' + warnings.join('\n'));
+      }
+    } else if (result.error) {
+      alert('Error exporting file: ' + result.error);
+    }
+  }, [nodes, edges, currentFilePath]);
+
+  useEffect(() => {
+    const cleanup = window.fileAPI.onExportPhoenix(handleExportPhoenix);
+    return cleanup;
+  }, [handleExportPhoenix]);
 
   const buildTreeData = useCallback(() => {
     // Exclude decision nodes from the tree
