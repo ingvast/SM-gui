@@ -202,7 +202,10 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
               break;
             case 's':
               event.preventDefault();
-              handleSave();
+              if (!event.shiftKey) {
+                handleSave();
+              }
+              // Ctrl+Shift+S (Save As) handled by Electron menu accelerator
               break;
             case 'o':
               event.preventDefault();

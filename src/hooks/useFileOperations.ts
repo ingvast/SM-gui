@@ -88,6 +88,19 @@ export function useFileOperations(
     clearUndoRedo();
   }, [nodes, setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo]);
 
+  const handleSaveAs = useCallback(async () => {
+    const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, true, machineProperties);
+    const defaultName = currentFilePath
+      ? currentFilePath.replace(/^.*[\\/]/, '')
+      : 'statemachine.yaml';
+    const result = await window.fileAPI.saveFile(yamlContent, defaultName);
+    if (result.success && result.filePath) {
+      setCurrentFilePath(result.filePath);
+    } else if (result.error) {
+      alert('Error saving file: ' + result.error);
+    }
+  }, [nodes, edges, rootHistory, machineProperties, currentFilePath, setCurrentFilePath]);
+
   const handleExportPhoenix = useCallback(async () => {
     const { yaml: phoenixYaml, warnings } = convertToPhoenixYaml(
       nodes as Node<{ label: string; history: boolean; orthogonal: boolean; entry: string; exit: string; do: string }>[],
@@ -115,5 +128,10 @@ export function useFileOperations(
     return cleanup;
   }, [handleExportPhoenix]);
 
-  return { handleSave, handleOpen, handleNew, handleExportPhoenix };
+  useEffect(() => {
+    const cleanup = window.fileAPI.onSaveAs(handleSaveAs);
+    return cleanup;
+  }, [handleSaveAs]);
+
+  return { handleSave, handleOpen, handleNew, handleExportPhoenix, handleSaveAs };
 }

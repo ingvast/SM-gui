@@ -8,6 +8,7 @@ export interface FileAPI {
   saveFileDirect: (content: string, filePath: string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
   openFile: () => Promise<{ success: boolean; content?: string; filePath?: string; canceled?: boolean; error?: string }>;
   onExportPhoenix: (callback: () => void) => () => void;
+  onSaveAs: (callback: () => void) => () => void;
 }
 
 export interface Settings {
@@ -40,6 +41,11 @@ contextBridge.exposeInMainWorld('fileAPI', {
     const handler = () => callback();
     ipcRenderer.on('export-phoenix', handler);
     return () => { ipcRenderer.removeListener('export-phoenix', handler); };
+  },
+  onSaveAs: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('save-as', handler);
+    return () => { ipcRenderer.removeListener('save-as', handler); };
   },
 } as FileAPI);
 

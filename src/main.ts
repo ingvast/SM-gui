@@ -85,7 +85,19 @@ app.on('ready', () => {
       label: 'File',
       submenu: [
         {
+          label: 'Save as...',
+          accelerator: 'CmdOrCtrl+Shift+S',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+            if (win) {
+              win.webContents.send('save-as');
+            }
+          },
+        },
+        { type: 'separator' },
+        {
           label: 'Export to Phoenix',
+          accelerator: 'CmdOrCtrl+E',
           click: () => {
             const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
             if (win) {
