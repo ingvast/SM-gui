@@ -11,6 +11,35 @@ export type Snapshot = {
 
 const MAX_STACK_SIZE = 50;
 
+// ReactFlow requires parent nodes to appear before their children in the array.
+// Without this, restoring a snapshot can silently break parent-child relationships.
+function sortParentsFirst(nodes: Node[]): Node[] {
+  const idSet = new Set(nodes.map(n => n.id));
+  const roots: Node[] = [];
+  const childrenOf = new Map<string, Node[]>();
+
+  for (const n of nodes) {
+    if (n.parentId && idSet.has(n.parentId)) {
+      const siblings = childrenOf.get(n.parentId) || [];
+      siblings.push(n);
+      childrenOf.set(n.parentId, siblings);
+    } else {
+      roots.push(n);
+    }
+  }
+
+  const result: Node[] = [];
+  const visit = (node: Node) => {
+    result.push(node);
+    const children = childrenOf.get(node.id);
+    if (children) {
+      for (const child of children) visit(child);
+    }
+  };
+  for (const root of roots) visit(root);
+  return result;
+}
+
 function deepCopySnapshot(snapshot: Snapshot): Snapshot {
   return {
     nodes: snapshot.nodes.map(n => ({
@@ -65,6 +94,7 @@ export function useUndoRedo() {
     const previous = undoStack.current.pop()!;
     redoStack.current.push(deepCopySnapshot(currentState));
     updateFlags();
+    previous.nodes = sortParentsFirst(previous.nodes);
     return previous;
   }, [updateFlags]);
 
@@ -73,6 +103,7 @@ export function useUndoRedo() {
     const next = redoStack.current.pop()!;
     undoStack.current.push(deepCopySnapshot(currentState));
     updateFlags();
+    next.nodes = sortParentsFirst(next.nodes);
     return next;
   }, [updateFlags]);
 
