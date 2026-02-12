@@ -132,7 +132,7 @@ export function useClipboard(
     console.log('Edges pasted:', pastedEdges.map(e => e.id));
   }, [copiedNodes, copiedEdges, nodes, setNodes, setEdges, setSelectedTreeItem, saveSnapshot]);
 
-  const handleDuplicate = useCallback(() => {
+  const duplicateNodes = useCallback((includeExternalEdges: boolean) => {
     const selectedNodes = nodes.filter(node => node.selected);
     if (selectedNodes.length === 0) {
       console.log('No nodes selected to duplicate.');
@@ -200,30 +200,60 @@ export function useClipboard(
     });
 
     const duplicatedNodeIds = new Set(nodesToDuplicate.map(n => n.id));
-    const duplicatedEdges = edges
+
+    // Internal edges: both endpoints inside the duplicated set
+    const cloneEdge = (edge: Edge, newSource: string, newTarget: string) => ({
+      ...edge,
+      id: `e${newSource}-${newTarget}`,
+      source: newSource,
+      target: newTarget,
+      selected: false,
+      data: edge.data ? {
+        ...edge.data,
+        controlPoints: edge.data.controlPoints ? [...edge.data.controlPoints] : [],
+      } : { controlPoints: [], label: '' },
+    });
+
+    const internalEdges = edges
       .filter(edge => duplicatedNodeIds.has(edge.source) && duplicatedNodeIds.has(edge.target))
-      .map(edge => ({
-        ...edge,
-        id: `e${newIdMap.get(edge.source)}-${newIdMap.get(edge.target)}`,
-        source: newIdMap.get(edge.source)!,
-        target: newIdMap.get(edge.target)!,
-        selected: false,
-        data: edge.data ? {
-          ...edge.data,
-          controlPoints: edge.data.controlPoints ? [...edge.data.controlPoints] : [],
-        } : { controlPoints: [], label: '' },
-      }));
+      .map(edge => cloneEdge(edge, newIdMap.get(edge.source)!, newIdMap.get(edge.target)!));
+
+    // External edges: one endpoint inside, one outside
+    let externalEdges: Edge[] = [];
+    if (includeExternalEdges) {
+      externalEdges = edges
+        .filter(edge => {
+          const srcIn = duplicatedNodeIds.has(edge.source);
+          const tgtIn = duplicatedNodeIds.has(edge.target);
+          return (srcIn && !tgtIn) || (!srcIn && tgtIn);
+        })
+        .map(edge => {
+          const newSource = duplicatedNodeIds.has(edge.source) ? newIdMap.get(edge.source)! : edge.source;
+          const newTarget = duplicatedNodeIds.has(edge.target) ? newIdMap.get(edge.target)! : edge.target;
+          return cloneEdge(edge, newSource, newTarget);
+        });
+    }
+
+    const allDuplicatedEdges = internalEdges.concat(externalEdges);
 
     saveSnapshot();
     setNodes((nds) => {
       const deselectedExistingNodes = nds.map(node => ({ ...node, selected: false }));
       return deselectedExistingNodes.concat(duplicatedNodes.map(node => ({...node, selected: true})));
     });
-    setEdges((eds) => eds.concat(duplicatedEdges));
+    setEdges((eds) => eds.concat(allDuplicatedEdges));
     setSelectedTreeItem(duplicatedNodes.length > 0 ? duplicatedNodes[0].id : null);
 
-    console.log('Nodes duplicated.');
+    console.log('Nodes duplicated', includeExternalEdges ? '(with external edges).' : '.');
   }, [nodes, edges, setNodes, setEdges, setSelectedTreeItem, saveSnapshot]);
 
-  return { handleCopy, handlePaste, handleDuplicate };
+  const handleDuplicate = useCallback(() => {
+    duplicateNodes(false);
+  }, [duplicateNodes]);
+
+  const handleDuplicateWithExternalEdges = useCallback(() => {
+    duplicateNodes(true);
+  }, [duplicateNodes]);
+
+  return { handleCopy, handlePaste, handleDuplicate, handleDuplicateWithExternalEdges };
 }

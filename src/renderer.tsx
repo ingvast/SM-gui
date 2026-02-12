@@ -50,7 +50,7 @@ import {
   getAbsoluteNodeBounds,
   SEMANTIC_ZOOM_CONFIG,
 } from './semanticZoom';
-import { calculateNodeDepth, isAncestorOf, buildTreeData } from './utils/nodeUtils';
+import { calculateNodeDepth, isAncestorOf, buildTreeData, getAllDescendants } from './utils/nodeUtils';
 import { getNextId, getNextStateName, getNextDecisionName } from './utils/idCounters';
 import { useClipboard } from './hooks/useClipboard';
 import { useFileOperations } from './hooks/useFileOperations';
@@ -946,7 +946,7 @@ const App = () => {
   });
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   // Clipboard operations
-  const { handleCopy, handlePaste, handleDuplicate } = useClipboard(nodes, edges, setNodes, setEdges, setSelectedTreeItem, saveSnapshot);
+  const { handleCopy, handlePaste, handleDuplicate, handleDuplicateWithExternalEdges } = useClipboard(nodes, edges, setNodes, setEdges, setSelectedTreeItem, saveSnapshot);
 
   const selectedNode = useMemo(() => {
     if (selectedTreeItem === '/') {
@@ -982,6 +982,18 @@ const App = () => {
       const hasRemove = changes.some(c => c.type === 'remove' && !c.id?.startsWith('initial-marker') && !c.id?.startsWith('history-marker'));
       if (hasRemove) {
         saveSnapshot();
+        // Cascade delete: also remove all descendants of removed nodes
+        const removeIds = new Set(changes.filter(c => c.type === 'remove').map(c => c.id));
+        for (const id of removeIds) {
+          if (id?.startsWith('initial-marker') || id?.startsWith('history-marker')) continue;
+          const descendants = getAllDescendants(id, nodes);
+          for (const desc of descendants) {
+            if (!removeIds.has(desc.id)) {
+              removeIds.add(desc.id);
+              changes.push({ type: 'remove', id: desc.id });
+            }
+          }
+        }
       }
       // Detect resize-from-left/top: nodes that have both position and dimensions changes
       const hasPositionChange = new Set<string>();
@@ -1276,7 +1288,7 @@ const App = () => {
 
   // Keyboard shortcuts
   useKeyboardShortcuts({
-    handleCopy, handlePaste, handleDuplicate, handleSave, handleOpen,
+    handleCopy, handlePaste, handleDuplicate, handleDuplicateWithExternalEdges, handleSave, handleOpen,
     handleUndo, handleRedo, handleSemanticZoomToSelected, handleNavigateUp,
     handleGroupStates, handleUngroupState, saveSnapshot,
     nodes, edges,
@@ -1966,6 +1978,7 @@ const App = () => {
             autoPanOnNodeDrag={false}
             autoPanOnConnect={false}
             elevateNodesOnSelect={false}
+            deleteKeyCode={['Backspace', 'Delete']}
           />
         </Box>
       </Box>

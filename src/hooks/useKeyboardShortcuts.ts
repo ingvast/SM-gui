@@ -7,6 +7,7 @@ interface KeyboardShortcutsParams {
   handleCopy: () => void;
   handlePaste: () => void;
   handleDuplicate: () => void;
+  handleDuplicateWithExternalEdges: () => void;
   handleSave: () => void;
   handleOpen: () => void;
   handleUndo: () => void;
@@ -45,7 +46,7 @@ interface KeyboardShortcutsParams {
 
 export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
   const {
-    handleCopy, handlePaste, handleDuplicate, handleSave, handleOpen,
+    handleCopy, handlePaste, handleDuplicate, handleDuplicateWithExternalEdges, handleSave, handleOpen,
     handleUndo, handleRedo, handleSemanticZoomToSelected, handleNavigateUp,
     handleGroupStates, handleUngroupState, saveSnapshot,
     nodes, edges,
@@ -197,8 +198,13 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
               handlePaste();
               break;
             case 'd':
+            case 'D':
               event.preventDefault();
-              handleDuplicate();
+              if (event.shiftKey) {
+                handleDuplicateWithExternalEdges();
+              } else {
+                handleDuplicate();
+              }
               break;
             case 's':
               event.preventDefault();
@@ -223,7 +229,7 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [
-    handleCopy, handlePaste, handleDuplicate, handleSave, handleOpen,
+    handleCopy, handlePaste, handleDuplicate, handleDuplicateWithExternalEdges, handleSave, handleOpen,
     handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState,
     handleUndo, handleRedo, saveSnapshot,
     setIsAddingNode, setIsAddingDecision, isAddingDecision,
