@@ -1,0 +1,229 @@
+import { useState, useCallback } from 'react';
+import { Node, Edge } from 'reactflow';
+import { getAllDescendants, generateUniqueNodeLabel } from '../utils/nodeUtils';
+import { getNextId } from '../utils/idCounters';
+
+export function useClipboard(
+  nodes: Node[],
+  edges: Edge[],
+  setNodes: (updater: (nds: Node[]) => Node[]) => void,
+  setEdges: (updater: (eds: Edge[]) => Edge[]) => void,
+  setSelectedTreeItem: (id: string | null) => void,
+  saveSnapshot: () => void,
+) {
+  const [copiedNodes, setCopiedNodes] = useState<Node[]>([]);
+  const [copiedEdges, setCopiedEdges] = useState<Edge[]>([]);
+
+  const handleCopy = useCallback(() => {
+    const selectedNodes = nodes.filter(node => node.selected);
+    if (selectedNodes.length === 0) {
+      console.log('No nodes selected to copy.');
+      setCopiedNodes([]);
+      setCopiedEdges([]);
+      return;
+    }
+
+    const nodesToCopySet = new Set<Node>();
+
+    selectedNodes.forEach(sNode => {
+      nodesToCopySet.add(sNode);
+      const descendants = getAllDescendants(sNode.id, nodes);
+      descendants.forEach(dNode => nodesToCopySet.add(dNode));
+    });
+
+    const finalNodesToCopy = Array.from(nodesToCopySet).map(node => ({ ...node }));
+    const copiedNodeIds = new Set(finalNodesToCopy.map(n => n.id));
+
+    const edgesToCopy = edges
+      .filter(edge => copiedNodeIds.has(edge.source) && copiedNodeIds.has(edge.target))
+      .map(edge => ({
+        ...edge,
+        data: edge.data ? {
+          ...edge.data,
+          controlPoints: edge.data.controlPoints ? [...edge.data.controlPoints] : [],
+        } : { controlPoints: [], label: '' },
+      }));
+
+    setCopiedNodes(finalNodesToCopy);
+    setCopiedEdges(edgesToCopy);
+    console.log('Nodes copied:', finalNodesToCopy.map(n => n.id));
+    console.log('Edges copied:', edgesToCopy.map(e => e.id));
+  }, [nodes, edges]);
+
+  const handlePaste = useCallback(() => {
+    if (copiedNodes.length === 0) {
+      console.log('No nodes to paste.');
+      return;
+    }
+
+    const newIdMap = new Map<string, string>();
+    const newNodes: Node[] = [];
+    const offset = { x: 50, y: 50 };
+
+    const currentlySelectedNode = nodes.find(n => n.selected);
+    let potentialParentNodeId: string | null = null;
+
+    if (currentlySelectedNode && !copiedNodes.some(n => n.id === currentlySelectedNode.id)) {
+      potentialParentNodeId = currentlySelectedNode.id;
+    }
+
+    copiedNodes.forEach(oldNode => {
+      const newId = getNextId();
+      newIdMap.set(oldNode.id, newId);
+
+      let newNodeParentId: string | undefined = oldNode.parentId;
+      let newNodeExtent = oldNode.extent;
+
+      if (potentialParentNodeId && (!oldNode.parentId || !copiedNodes.some(n => n.id === oldNode.parentId))) {
+        newNodeParentId = potentialParentNodeId;
+        newNodeExtent = 'parent';
+      } else if (oldNode.parentId && copiedNodes.some(n => n.id === oldNode.parentId)) {
+        newNodeParentId = newIdMap.get(oldNode.parentId);
+      } else {
+        newNodeParentId = undefined;
+        newNodeExtent = undefined;
+      }
+
+      let newPosition;
+      if (potentialParentNodeId && newNodeParentId === potentialParentNodeId) {
+        newPosition = { x: offset.x, y: offset.y };
+      } else if (oldNode.parentId && copiedNodes.some(n => n.id === oldNode.parentId)) {
+        newPosition = { ...oldNode.position };
+      } else {
+        newPosition = { x: oldNode.position.x + offset.x, y: oldNode.position.y + offset.y };
+      }
+
+      const newNode = {
+        ...oldNode,
+        id: newId,
+        selected: false,
+        position: newPosition,
+        parentId: newNodeParentId,
+        extent: newNodeExtent,
+        data: {
+          ...oldNode.data,
+          label: generateUniqueNodeLabel(oldNode.data.label, newNodeParentId, nodes.concat(newNodes))
+        },
+      };
+      newNodes.push(newNode);
+    });
+
+    const pastedEdges = copiedEdges.map(edge => ({
+      ...edge,
+      id: `e${newIdMap.get(edge.source)}-${newIdMap.get(edge.target)}`,
+      source: newIdMap.get(edge.source)!,
+      target: newIdMap.get(edge.target)!,
+      selected: false,
+      data: edge.data ? {
+        ...edge.data,
+        controlPoints: edge.data.controlPoints ? [...edge.data.controlPoints] : [],
+      } : { controlPoints: [], label: '' },
+    }));
+
+    saveSnapshot();
+    setNodes((nds) => {
+      const deselectedExistingNodes = nds.map(node => ({ ...node, selected: false }));
+      return deselectedExistingNodes.concat(newNodes.map(node => ({...node, selected: true})));
+    });
+    setEdges((eds) => eds.concat(pastedEdges));
+    setSelectedTreeItem(newNodes.length > 0 ? newNodes[0].id : null);
+
+    console.log('Nodes pasted.');
+    console.log('Edges pasted:', pastedEdges.map(e => e.id));
+  }, [copiedNodes, copiedEdges, nodes, setNodes, setEdges, setSelectedTreeItem, saveSnapshot]);
+
+  const handleDuplicate = useCallback(() => {
+    const selectedNodes = nodes.filter(node => node.selected);
+    if (selectedNodes.length === 0) {
+      console.log('No nodes selected to duplicate.');
+      return;
+    }
+
+    const nodesToCopySet = new Set<Node>();
+    selectedNodes.forEach(sNode => {
+      nodesToCopySet.add(sNode);
+      const descendants = getAllDescendants(sNode.id, nodes);
+      descendants.forEach(dNode => nodesToCopySet.add(dNode));
+    });
+
+    const nodesToDuplicate = Array.from(nodesToCopySet).map(node => ({ ...node }));
+
+    const newIdMap = new Map<string, string>();
+    const duplicatedNodes: Node[] = [];
+    const offset = { x: 50, y: 50 };
+
+    const externalSelectedNodes = nodes.filter(n => n.selected && !nodesToDuplicate.some(dn => dn.id === n.id));
+    let potentialParentNodeId: string | null = null;
+    if (externalSelectedNodes.length === 1) {
+      potentialParentNodeId = externalSelectedNodes[0].id;
+    }
+
+    nodesToDuplicate.forEach(oldNode => {
+      const newId = getNextId();
+      newIdMap.set(oldNode.id, newId);
+
+      let newNodeParentId: string | undefined = oldNode.parentId;
+      let newNodeExtent = oldNode.extent;
+
+      if (potentialParentNodeId && (!oldNode.parentId || !nodesToDuplicate.some(n => n.id === oldNode.parentId))) {
+        newNodeParentId = potentialParentNodeId;
+        newNodeExtent = 'parent';
+      } else if (oldNode.parentId && nodesToDuplicate.some(n => n.id === oldNode.parentId)) {
+        newNodeParentId = newIdMap.get(oldNode.parentId);
+      } else {
+        newNodeParentId = undefined;
+        newNodeExtent = undefined;
+      }
+
+      let newPosition;
+      if (potentialParentNodeId && newNodeParentId === potentialParentNodeId) {
+        newPosition = { x: offset.x, y: offset.y };
+      } else if (oldNode.parentId && nodesToDuplicate.some(n => n.id === oldNode.parentId)) {
+        newPosition = { ...oldNode.position };
+      } else {
+        newPosition = { x: oldNode.position.x + offset.x, y: oldNode.position.y + offset.y };
+      }
+
+      const newNode = {
+        ...oldNode,
+        id: newId,
+        selected: false,
+        position: newPosition,
+        parentId: newNodeParentId,
+        extent: newNodeExtent,
+        data: {
+          ...oldNode.data,
+          label: generateUniqueNodeLabel(oldNode.data.label, newNodeParentId, nodes.concat(duplicatedNodes))
+        },
+      };
+      duplicatedNodes.push(newNode);
+    });
+
+    const duplicatedNodeIds = new Set(nodesToDuplicate.map(n => n.id));
+    const duplicatedEdges = edges
+      .filter(edge => duplicatedNodeIds.has(edge.source) && duplicatedNodeIds.has(edge.target))
+      .map(edge => ({
+        ...edge,
+        id: `e${newIdMap.get(edge.source)}-${newIdMap.get(edge.target)}`,
+        source: newIdMap.get(edge.source)!,
+        target: newIdMap.get(edge.target)!,
+        selected: false,
+        data: edge.data ? {
+          ...edge.data,
+          controlPoints: edge.data.controlPoints ? [...edge.data.controlPoints] : [],
+        } : { controlPoints: [], label: '' },
+      }));
+
+    saveSnapshot();
+    setNodes((nds) => {
+      const deselectedExistingNodes = nds.map(node => ({ ...node, selected: false }));
+      return deselectedExistingNodes.concat(duplicatedNodes.map(node => ({...node, selected: true})));
+    });
+    setEdges((eds) => eds.concat(duplicatedEdges));
+    setSelectedTreeItem(duplicatedNodes.length > 0 ? duplicatedNodes[0].id : null);
+
+    console.log('Nodes duplicated.');
+  }, [nodes, edges, setNodes, setEdges, setSelectedTreeItem, saveSnapshot]);
+
+  return { handleCopy, handlePaste, handleDuplicate };
+}

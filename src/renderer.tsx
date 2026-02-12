@@ -3,11 +3,9 @@ import ReactDOM from 'react-dom/client';
 import ReactFlow, {
   useNodesState,
   useEdgesState,
-  addEdge,
   useReactFlow,
   ReactFlowProvider,
   MarkerType,
-  Node,
   ConnectionMode,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
@@ -46,12 +44,19 @@ import PropertiesPanel from './PropertiesPanel';
 import SplineEdge from './SplineEdge';
 import MachinePropertiesDialog from './MachinePropertiesDialog';
 import SettingsDialog, { Settings } from './SettingsDialog';
-import { convertToYaml, convertFromYaml, convertToPhoenixYaml, MachineProperties, defaultMachineProperties } from './yamlConverter';
+import { MachineProperties, defaultMachineProperties } from './yamlConverter';
 import {
   useSemanticZoomStore,
   getAbsoluteNodeBounds,
   SEMANTIC_ZOOM_CONFIG,
 } from './semanticZoom';
+import { calculateNodeDepth, isAncestorOf, buildTreeData } from './utils/nodeUtils';
+import { getNextId, getNextStateName, getNextDecisionName } from './utils/idCounters';
+import { useClipboard } from './hooks/useClipboard';
+import { useFileOperations } from './hooks/useFileOperations';
+import { useGrouping } from './hooks/useGrouping';
+import { useEdgeOperations } from './hooks/useEdgeOperations';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 
 const theme = createTheme({
   palette: {
@@ -130,35 +135,8 @@ const initialEdges = [
   },
 ];
 
-let idCounter = 3; // Use a distinct name for clarity
-const getNextId = () => `node_${idCounter++}`;
-
-let stateNameCounter = 3; // Counter for S# naming (starts at 3 since initial states are S1, S2)
-const getNextStateName = () => `S${stateNameCounter++}`;
-
-let decisionNameCounter = 1;
-const getNextDecisionName = () => `D${decisionNameCounter++}`;
-
 // Scale factor for nested states (will be configurable later)
 const NESTING_SCALE_FACTOR = 0.85;
-
-// Calculate the nesting depth of a node by traversing parentId chain
-function calculateNodeDepth(nodeId: string, nodesArray: Node[], cache: Map<string, number> = new Map()): number {
-  if (cache.has(nodeId)) {
-    return cache.get(nodeId)!;
-  }
-
-  const node = nodesArray.find(n => n.id === nodeId);
-  if (!node || !node.parentId) {
-    cache.set(nodeId, 0);
-    return 0;
-  }
-
-  const parentDepth = calculateNodeDepth(node.parentId, nodesArray, cache);
-  const depth = parentDepth + 1;
-  cache.set(nodeId, depth);
-  return depth;
-}
 
 const App = () => {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -603,16 +581,6 @@ const App = () => {
     return new Set(transformedNodes.map(n => n.id));
   }, [transformedNodes]);
 
-  // Check if nodeA is an ancestor of nodeB (any level)
-  const isAncestorOf = useCallback((ancestorId: string, descendantId: string): boolean => {
-    let current = nodes.find(n => n.id === descendantId);
-    while (current?.parentId) {
-      if (current.parentId === ancestorId) return true;
-      current = nodes.find(n => n.id === current!.parentId);
-    }
-    return false;
-  }, [nodes]);
-
   // Filter edges: show if at least one endpoint is visible
   const transformedEdges = useMemo(() => {
     const regularEdges = edges
@@ -623,8 +591,8 @@ const App = () => {
         // Check if this is an ancestor-descendant relationship (any level)
         // sourceIsAncestor: source is an ancestor of target (source is parent/grandparent/etc of target)
         // targetIsAncestor: target is an ancestor of source (target is parent/grandparent/etc of source)
-        const sourceIsAncestor = isAncestorOf(edge.source, edge.target);
-        const targetIsAncestor = isAncestorOf(edge.target, edge.source);
+        const sourceIsAncestor = isAncestorOf(edge.source, edge.target, nodes);
+        const targetIsAncestor = isAncestorOf(edge.target, edge.source, nodes);
 
         return {
           ...edge,
@@ -794,7 +762,7 @@ const App = () => {
 
     const result = [...regularEdges, ...initialEdges];
     return result;
-  }, [edges, visibleNodeIds, effectiveScale, isAncestorOf, nodes, transformedNodes, machineProperties]);
+  }, [edges, visibleNodeIds, effectiveScale, nodes, transformedNodes, machineProperties]);
 
   // Custom wheel handler for semantic zoom (added manually to avoid passive listener)
   useEffect(() => {
@@ -955,329 +923,11 @@ const App = () => {
     }
   }, [focusNodeId, nodes, viewportSize, setFocusNode, startAnimation]);
 
-  // Group states: make all states visually inside the selected state into children (G key)
-  const handleGroupStates = useCallback(() => {
-    const selectedNode = nodes.find(n => n.selected);
-    if (!selectedNode) {
-      console.log('No node selected for grouping.');
-      return;
-    }
+  // Grouping operations
+  const { handleGroupStates, handleUngroupState } = useGrouping(nodes, setNodes, saveSnapshot);
 
-    const parentBounds = getAbsoluteNodeBounds(selectedNode.id, nodes);
-    if (!parentBounds) return;
-
-    // Find all nodes that are visually inside the selected node but not already children
-    // A node is "inside" if its entire bounds are within the parent bounds
-    const nodesToGroup: string[] = [];
-
-    for (const node of nodes) {
-      // Skip the selected node itself
-      if (node.id === selectedNode.id) continue;
-      // Skip nodes that are already children of the selected node
-      if (node.parentId === selectedNode.id) continue;
-      // Skip nodes that are ancestors of the selected node (to avoid circular references)
-      if (isAncestorOf(node.id, selectedNode.id)) continue;
-
-      const nodeBounds = getAbsoluteNodeBounds(node.id, nodes);
-      if (!nodeBounds) continue;
-
-      // Check if the node is fully contained within the parent bounds
-      const isInside =
-        nodeBounds.x >= parentBounds.x &&
-        nodeBounds.y >= parentBounds.y &&
-        nodeBounds.x + nodeBounds.width <= parentBounds.x + parentBounds.width &&
-        nodeBounds.y + nodeBounds.height <= parentBounds.y + parentBounds.height;
-
-      if (isInside) {
-        nodesToGroup.push(node.id);
-      }
-    }
-
-    if (nodesToGroup.length === 0) {
-      console.log('No nodes found inside the selected state to group.');
-      return;
-    }
-
-    // Update nodes: change parentId and convert position to relative
-    saveSnapshot();
-    setNodes((nds) =>
-      nds.map((node) => {
-        if (nodesToGroup.includes(node.id)) {
-          const nodeBounds = getAbsoluteNodeBounds(node.id, nds);
-          if (!nodeBounds) return node;
-
-          // Calculate relative position within the new parent
-          const relativeX = nodeBounds.x - parentBounds.x;
-          const relativeY = nodeBounds.y - parentBounds.y;
-
-          return {
-            ...node,
-            parentId: selectedNode.id,
-            extent: 'parent' as const,
-            position: { x: relativeX, y: relativeY },
-          };
-        }
-        return node;
-      })
-    );
-
-    console.log(`Grouped ${nodesToGroup.length} state(s) into ${selectedNode.data.label}.`);
-  }, [nodes, setNodes, isAncestorOf, saveSnapshot]);
-
-  // Ungroup state: move a node out of its parent (Shift+G key)
-  const handleUngroupState = useCallback((nodeId: string) => {
-    const node = nodes.find(n => n.id === nodeId);
-    if (!node) {
-      console.log('Node not found for ungrouping.');
-      return false;
-    }
-
-    if (!node.parentId) {
-      console.log('Node is already at root level, cannot ungroup.');
-      return false;
-    }
-
-    const parentNode = nodes.find(n => n.id === node.parentId);
-    if (!parentNode) {
-      console.log('Parent node not found.');
-      return false;
-    }
-
-    // Get the node's current absolute position
-    const nodeBounds = getAbsoluteNodeBounds(nodeId, nodes);
-    if (!nodeBounds) return false;
-
-    // Determine the new parent (grandparent or null for root level)
-    const grandparentId = parentNode.parentId || undefined;
-
-    // Calculate new position relative to grandparent (or absolute if root level)
-    let newPosition: { x: number; y: number };
-    if (grandparentId) {
-      const grandparentBounds = getAbsoluteNodeBounds(grandparentId, nodes);
-      if (grandparentBounds) {
-        newPosition = {
-          x: nodeBounds.x - grandparentBounds.x,
-          y: nodeBounds.y - grandparentBounds.y,
-        };
-      } else {
-        newPosition = { x: nodeBounds.x, y: nodeBounds.y };
-      }
-    } else {
-      // Moving to root level - use absolute position
-      newPosition = { x: nodeBounds.x, y: nodeBounds.y };
-    }
-
-    saveSnapshot();
-    setNodes((nds) =>
-      nds.map((n) => {
-        if (n.id === nodeId) {
-          return {
-            ...n,
-            parentId: grandparentId,
-            extent: grandparentId ? 'parent' as const : undefined,
-            position: newPosition,
-          };
-        }
-        return n;
-      })
-    );
-
-    console.log(`Ungrouped ${node.data.label} from ${parentNode.data.label}.`);
-    return true;
-  }, [nodes, setNodes, saveSnapshot]);
-
-  const onConnect = useCallback(
-    (params) => {
-      // When drag starts from a target-type handle, ReactFlow reports that node as "source",
-      // but semantically it's the target (arrows arrive at target handles). Swap in that case.
-      let source = params.source;
-      let target = params.target;
-      let sourceHandle = params.sourceHandle;
-      let targetHandle = params.targetHandle;
-
-      if (sourceHandle && sourceHandle.endsWith('-target')) {
-        source = params.target;
-        target = params.source;
-        sourceHandle = params.targetHandle;
-        targetHandle = params.sourceHandle;
-      }
-
-      // Normalize handle types: ensure sourceHandle ends with '-source', targetHandle with '-target'
-      if (sourceHandle && sourceHandle.endsWith('-target')) {
-        sourceHandle = sourceHandle.replace('-target', '-source');
-      }
-      if (targetHandle && targetHandle.endsWith('-source')) {
-        targetHandle = targetHandle.replace('-source', '-target');
-      }
-
-      // Prevent self-loops on decision nodes
-      if (source === target) {
-        const node = nodes.find(n => n.id === source);
-        if (node?.type === 'decisionNode') return;
-      }
-
-      saveSnapshot();
-      setEdges((eds) => {
-        const newEdge = {
-          source,
-          target,
-          sourceHandle,
-          targetHandle,
-          id: `e${params.source}-${params.target}-${Date.now()}`,
-          type: 'spline',
-          data: { controlPoints: [], label: '' },
-          markerEnd: { type: MarkerType.ArrowClosed },
-        };
-        return [...eds, newEdge];
-      });
-    },
-    [nodes, setEdges, saveSnapshot]
-  );
-
-
-  // Calculate best handles for connecting two nodes based on their positions
-  const calculateBestHandles = useCallback((sourceId: string, targetId: string) => {
-    const sourceBounds = getAbsoluteNodeBounds(sourceId, nodes);
-    const targetBounds = getAbsoluteNodeBounds(targetId, nodes);
-
-    if (!sourceBounds || !targetBounds) {
-      return { sourceHandle: 'right-source', targetHandle: 'left-target' };
-    }
-
-    // Check for parent-child relationship
-    const sourceIsParent = isAncestorOf(sourceId, targetId);
-    const targetIsParent = isAncestorOf(targetId, sourceId);
-
-    if (sourceIsParent || targetIsParent) {
-      // For parent-child connections, find which edge of the child is closest to the parent's edge
-      const child = sourceIsParent ? targetBounds : sourceBounds;
-      const parent = sourceIsParent ? sourceBounds : targetBounds;
-
-      // Calculate distances from child center to each parent edge
-      const childCenterX = child.x + child.width / 2;
-      const childCenterY = child.y + child.height / 2;
-
-      const distToTop = childCenterY - parent.y;
-      const distToBottom = (parent.y + parent.height) - childCenterY;
-      const distToLeft = childCenterX - parent.x;
-      const distToRight = (parent.x + parent.width) - childCenterX;
-
-      const minDist = Math.min(distToTop, distToBottom, distToLeft, distToRight);
-
-      // Both handles should be on the same side (edge goes inward)
-      if (minDist === distToTop) {
-        return sourceIsParent
-          ? { sourceHandle: 'top-source', targetHandle: 'top-target' }
-          : { sourceHandle: 'top-source', targetHandle: 'top-target' };
-      } else if (minDist === distToBottom) {
-        return sourceIsParent
-          ? { sourceHandle: 'bottom-source', targetHandle: 'bottom-target' }
-          : { sourceHandle: 'bottom-source', targetHandle: 'bottom-target' };
-      } else if (minDist === distToLeft) {
-        return sourceIsParent
-          ? { sourceHandle: 'left-source', targetHandle: 'left-target' }
-          : { sourceHandle: 'left-source', targetHandle: 'left-target' };
-      } else {
-        return sourceIsParent
-          ? { sourceHandle: 'right-source', targetHandle: 'right-target' }
-          : { sourceHandle: 'right-source', targetHandle: 'right-target' };
-      }
-    }
-
-    // Normal case: nodes are not in parent-child relationship
-    const sourceCenterX = sourceBounds.x + sourceBounds.width / 2;
-    const sourceCenterY = sourceBounds.y + sourceBounds.height / 2;
-    const targetCenterX = targetBounds.x + targetBounds.width / 2;
-    const targetCenterY = targetBounds.y + targetBounds.height / 2;
-
-    const dx = targetCenterX - sourceCenterX;
-    const dy = targetCenterY - sourceCenterY;
-
-    // Determine primary direction
-    if (Math.abs(dx) > Math.abs(dy)) {
-      // Horizontal: target is to the right or left
-      if (dx > 0) {
-        return { sourceHandle: 'right-source', targetHandle: 'left-target' };
-      } else {
-        return { sourceHandle: 'left-source', targetHandle: 'right-target' };
-      }
-    } else {
-      // Vertical: target is below or above
-      if (dy > 0) {
-        return { sourceHandle: 'bottom-source', targetHandle: 'top-target' };
-      } else {
-        return { sourceHandle: 'top-source', targetHandle: 'bottom-target' };
-      }
-    }
-  }, [nodes, isAncestorOf]);
-
-  // Create a transition between two nodes
-  const createTransition = useCallback((sourceId: string, targetId: string) => {
-    // Prevent self-loops on decision nodes
-    if (sourceId === targetId) {
-      const node = nodes.find(n => n.id === sourceId);
-      if (node?.type === 'decisionNode') return;
-    }
-    const { sourceHandle, targetHandle } = calculateBestHandles(sourceId, targetId);
-
-    const newEdge = {
-      id: `e${sourceId}-${targetId}-${Date.now()}`,
-      source: sourceId,
-      target: targetId,
-      sourceHandle,
-      targetHandle,
-      type: 'spline',
-      data: { controlPoints: [], label: '' },
-      markerEnd: { type: MarkerType.ArrowClosed },
-    };
-
-    saveSnapshot();
-    setEdges((eds) => eds.concat(newEdge));
-  }, [nodes, calculateBestHandles, setEdges, saveSnapshot]);
-
-  const isValidConnection = useCallback(
-    (connection) => {
-      // Prevent self-loops on decision nodes
-      if (connection.source === connection.target) {
-        const node = nodes.find(n => n.id === connection.source);
-        if (node?.type === 'decisionNode') return false;
-      }
-      return true;
-    },
-    [nodes]
-  );
-
-  // Handle edge reconnection (dragging edge endpoints to new handles/nodes)
-  const onReconnect = useCallback(
-    (oldEdge, newConnection) => {
-      // Normalize handles (same as onConnect) - ConnectionMode.Loose can produce mismatched types
-      let sourceHandle = newConnection.sourceHandle;
-      let targetHandle = newConnection.targetHandle;
-      if (sourceHandle && sourceHandle.endsWith('-target')) {
-        sourceHandle = sourceHandle.replace('-target', '-source');
-      }
-      if (targetHandle && targetHandle.endsWith('-source')) {
-        targetHandle = targetHandle.replace('-source', '-target');
-      }
-
-      saveSnapshot();
-      setEdges((eds) =>
-        eds.map((edge) => {
-          if (edge.id === oldEdge.id) {
-            return {
-              ...edge,
-              source: newConnection.source,
-              target: newConnection.target,
-              sourceHandle,
-              targetHandle,
-            };
-          }
-          return edge;
-        })
-      );
-    },
-    [setEdges, saveSnapshot]
-  );
+  // Edge operations
+  const { onConnect, onReconnect, isValidConnection, createTransition, handleEdgePropertyChange, handleReorderEdge } = useEdgeOperations(nodes, setEdges, saveSnapshot);
 
   const [isAddingNode, setIsAddingNode] = useState(false);
   const [isAddingDecision, setIsAddingDecision] = useState(false);
@@ -1295,8 +945,8 @@ const App = () => {
     tabWidth: 4,
   });
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
-  const [copiedNodes, setCopiedNodes] = useState([]);
-  const [copiedEdges, setCopiedEdges] = useState([]);
+  // Clipboard operations
+  const { handleCopy, handlePaste, handleDuplicate } = useClipboard(nodes, edges, setNodes, setEdges, setSelectedTreeItem, saveSnapshot);
 
   const selectedNode = useMemo(() => {
     if (selectedTreeItem === '/') {
@@ -1315,432 +965,16 @@ const App = () => {
     return nodes.find(n => n.id === selectedTreeItem);
   }, [nodes, selectedTreeItem, rootHistory, machineProperties]);
 
-  const generateUniqueNodeLabel = useCallback((baseLabel, parentId, currentNodes) => {
-    let counter = 1;
-    let newLabel = baseLabel;
-    let isUnique = false;
-
-    while (!isUnique) {
-      isUnique = true;
-      const siblings = currentNodes.filter(n => n.parentId === parentId);
-      for (const sibling of siblings) {
-        if (sibling.data.label.trim() === newLabel.trim()) {
-          isUnique = false;
-          counter++;
-          newLabel = `${baseLabel} ${counter}`;
-          break;
-        }
-      }
-    }
-    return newLabel;
-  }, []);
-
-  const getAllDescendants = useCallback((parentNodeId, allNodes) => {
-    const descendants = [];
-    const queue = [parentNodeId];
-    const visited = new Set();
-
-    while (queue.length > 0) {
-      const currentId = queue.shift();
-      if (visited.has(currentId)) continue;
-      visited.add(currentId);
-
-      const children = allNodes.filter(n => n.parentId === currentId);
-      for (const child of children) {
-        descendants.push(child);
-        queue.push(child.id);
-      }
-    }
-    return descendants;
-  }, []);
-
-  const handleCopy = useCallback(() => {
-    const selectedNodes = nodes.filter(node => node.selected);
-    if (selectedNodes.length === 0) {
-      console.log('No nodes selected to copy.');
-      setCopiedNodes([]);
-      setCopiedEdges([]);
-      return;
-    }
-
-    const nodesToCopySet = new Set();
-
-    selectedNodes.forEach(sNode => {
-      nodesToCopySet.add(sNode);
-      const descendants = getAllDescendants(sNode.id, nodes);
-      descendants.forEach(dNode => nodesToCopySet.add(dNode));
-    });
-
-    const finalNodesToCopy = Array.from(nodesToCopySet).map(node => ({ ...node }));
-    const copiedNodeIds = new Set(finalNodesToCopy.map(n => n.id));
-
-    // Copy edges where both source and target are in the copied set (deep copy data)
-    const edgesToCopy = edges
-      .filter(edge => copiedNodeIds.has(edge.source) && copiedNodeIds.has(edge.target))
-      .map(edge => ({
-        ...edge,
-        data: edge.data ? {
-          ...edge.data,
-          controlPoints: edge.data.controlPoints ? [...edge.data.controlPoints] : [],
-        } : { controlPoints: [], label: '' },
-      }));
-
-    setCopiedNodes(finalNodesToCopy);
-    setCopiedEdges(edgesToCopy);
-    console.log('Nodes copied:', finalNodesToCopy.map(n => n.id));
-    console.log('Edges copied:', edgesToCopy.map(e => e.id));
-  }, [nodes, edges, getAllDescendants]);
-
-    const handlePaste = useCallback(() => {
-      if (copiedNodes.length === 0) {
-        console.log('No nodes to paste.');
-        return;
-      }
-  
-      const newIdMap = new Map();
-      const newNodes = [];
-      const offset = { x: 50, y: 50 }; // Default relative offset for new child nodes
-  
-      // Determine if there's a selected node to act as a parent
-      const currentlySelectedNode = nodes.find(n => n.selected);
-      let potentialParentNodeId = null;
-  
-      if (currentlySelectedNode && !copiedNodes.some(n => n.id === currentlySelectedNode.id)) {
-        potentialParentNodeId = currentlySelectedNode.id;
-      }
-  
-      copiedNodes.forEach(oldNode => {
-        const newId = getNextId();
-        newIdMap.set(oldNode.id, newId);
-  
-        // Determine parentId for the new node
-        let newNodeParentId = oldNode.parentId;
-        let newNodeExtent = oldNode.extent;
-  
-        if (potentialParentNodeId && (!oldNode.parentId || !copiedNodes.some(n => n.id === oldNode.parentId))) {
-          // If there's a selected node and the oldNode doesn't have a copied parent,
-          // make it a child of the selected node.
-          newNodeParentId = potentialParentNodeId;
-          newNodeExtent = 'parent';
-        } else if (oldNode.parentId && copiedNodes.some(n => n.id === oldNode.parentId)) {
-          // Original parent was copied, remap to new parent ID
-          newNodeParentId = newIdMap.get(oldNode.parentId);
-        } else {
-          // No parent, or parent not copied and no selected node acts as parent, so it's top-level
-          newNodeParentId = undefined;
-          newNodeExtent = undefined;
-        }
-  
-        // Calculate position
-        let newPosition;
-        if (potentialParentNodeId && newNodeParentId === potentialParentNodeId) {
-          // If it's becoming a child of the selected node, place it at a default relative position
-          newPosition = { x: offset.x, y: offset.y };
-        } else if (oldNode.parentId && copiedNodes.some(n => n.id === oldNode.parentId)) {
-          // Child of another copied node - keep same relative position within parent
-          newPosition = { ...oldNode.position };
-        } else {
-          // Top-level node (no parent, or parent not copied), apply offset
-          newPosition = { x: oldNode.position.x + offset.x, y: oldNode.position.y + offset.y };
-        }
-  
-        const newNode = {
-          ...oldNode,
-          id: newId,
-          selected: false,
-          position: newPosition,
-          parentId: newNodeParentId,
-          extent: newNodeExtent,
-          data: {
-            ...oldNode.data,
-            label: generateUniqueNodeLabel(oldNode.data.label, newNodeParentId, nodes.concat(newNodes))
-          },
-        };
-        newNodes.push(newNode);
-      });
-      
-      // Paste edges with remapped IDs (deep copy data)
-      const pastedEdges = copiedEdges.map(edge => ({
-        ...edge,
-        id: `e${newIdMap.get(edge.source)}-${newIdMap.get(edge.target)}`,
-        source: newIdMap.get(edge.source),
-        target: newIdMap.get(edge.target),
-        selected: false,
-        data: edge.data ? {
-          ...edge.data,
-          controlPoints: edge.data.controlPoints ? [...edge.data.controlPoints] : [],
-        } : { controlPoints: [], label: '' },
-      }));
-
-      saveSnapshot();
-      setNodes((nds) => {
-        const deselectedExistingNodes = nds.map(node => ({ ...node, selected: false }));
-        return deselectedExistingNodes.concat(newNodes.map(node => ({...node, selected: true})));
-      });
-      setEdges((eds) => eds.concat(pastedEdges));
-      setSelectedTreeItem(newNodes.length > 0 ? newNodes[0].id : null);
-
-      // Removed setCopiedNodes([]); to allow multiple pastes
-      console.log('Nodes pasted.');
-      console.log('Edges pasted:', pastedEdges.map(e => e.id));
-    }, [copiedNodes, copiedEdges, nodes, setNodes, setEdges, generateUniqueNodeLabel, setSelectedTreeItem, saveSnapshot]);
-  const handleDuplicate = useCallback(() => {
-    const selectedNodes = nodes.filter(node => node.selected);
-    if (selectedNodes.length === 0) {
-      console.log('No nodes selected to duplicate.');
-      return;
-    }
-
-    const nodesToCopySet = new Set();
-    selectedNodes.forEach(sNode => {
-      nodesToCopySet.add(sNode);
-      const descendants = getAllDescendants(sNode.id, nodes);
-      descendants.forEach(dNode => nodesToCopySet.add(dNode));
-    });
-
-    const nodesToDuplicate = Array.from(nodesToCopySet).map(node => ({ ...node }));
-
-    const newIdMap = new Map();
-    const duplicatedNodes = [];
-    const offset = { x: 50, y: 50 }; // Default relative offset for new child nodes
-
-    // --- Start: Logic for potential external parent ---
-    const currentlySelectedNode = nodes.find(n => n.selected);
-    let potentialParentNodeId = null;
-
-    // For duplication, ensure the selected node for parenting is NOT one of the nodes being duplicated
-    // This is to avoid a node trying to parent itself or its own duplicated subgraph.
-    // The request is 'if a state is previously selected'.
-    // If the *only* selected items are the ones being duplicated, then they should duplicate as siblings.
-    // If there's one *external* selected node, then the duplicated nodes should attach to it.
-    const externalSelectedNodes = nodes.filter(n => n.selected && !nodesToDuplicate.some(dn => dn.id === n.id));
-    if (externalSelectedNodes.length === 1) {
-      potentialParentNodeId = externalSelectedNodes[0].id;
-    }
-    // --- End: Logic for potential external parent ---
-
-    nodesToDuplicate.forEach(oldNode => {
-      const newId = getNextId();
-      newIdMap.set(oldNode.id, newId);
-
-      let newNodeParentId = oldNode.parentId;
-      let newNodeExtent = oldNode.extent;
-
-      if (potentialParentNodeId && (!oldNode.parentId || !nodesToDuplicate.some(n => n.id === oldNode.parentId))) {
-        // If there's an external selected node and this oldNode doesn't have a duplicated parent,
-        // make it a child of the external selected node.
-        newNodeParentId = potentialParentNodeId;
-        newNodeExtent = 'parent';
-      } else if (oldNode.parentId && nodesToDuplicate.some(n => n.id === oldNode.parentId)) {
-        // Original parent was duplicated, remap to new parent ID
-        newNodeParentId = newIdMap.get(oldNode.parentId);
-      } else {
-        // No parent, or parent not duplicated and no external selected node acts as parent, so it's top-level
-        newNodeParentId = undefined;
-        newNodeExtent = undefined;
-      }
-
-      // Calculate position
-      let newPosition;
-      if (potentialParentNodeId && newNodeParentId === potentialParentNodeId) {
-        // If it's becoming a child of the selected external node, place it at a default relative position
-        newPosition = { x: offset.x, y: offset.y };
-      } else if (oldNode.parentId && nodesToDuplicate.some(n => n.id === oldNode.parentId)) {
-        // Child of another duplicated node - keep same relative position within parent
-        newPosition = { ...oldNode.position };
-      } else {
-        // Top-level node (no parent, or parent not duplicated), apply offset
-        newPosition = { x: oldNode.position.x + offset.x, y: oldNode.position.y + offset.y };
-      }
-
-      const newNode = {
-        ...oldNode,
-        id: newId,
-        selected: false,
-        position: newPosition,
-        parentId: newNodeParentId,
-        extent: newNodeExtent,
-        data: {
-          ...oldNode.data,
-          label: generateUniqueNodeLabel(oldNode.data.label, newNodeParentId, nodes.concat(duplicatedNodes))
-        },
-      };
-      duplicatedNodes.push(newNode);
-    });
-
-    // Duplicate edges (transitions) where both source and target are in the duplicated set (deep copy data)
-    const duplicatedNodeIds = new Set(nodesToDuplicate.map(n => n.id));
-    const duplicatedEdges = edges
-      .filter(edge => duplicatedNodeIds.has(edge.source) && duplicatedNodeIds.has(edge.target))
-      .map(edge => ({
-        ...edge,
-        id: `e${newIdMap.get(edge.source)}-${newIdMap.get(edge.target)}`,
-        source: newIdMap.get(edge.source),
-        target: newIdMap.get(edge.target),
-        selected: false,
-        data: edge.data ? {
-          ...edge.data,
-          controlPoints: edge.data.controlPoints ? [...edge.data.controlPoints] : [],
-        } : { controlPoints: [], label: '' },
-      }));
-
-    saveSnapshot();
-    setNodes((nds) => {
-      const deselectedExistingNodes = nds.map(node => ({ ...node, selected: false }));
-      return deselectedExistingNodes.concat(duplicatedNodes.map(node => ({...node, selected: true})));
-    });
-    setEdges((eds) => eds.concat(duplicatedEdges));
-    setSelectedTreeItem(duplicatedNodes.length > 0 ? duplicatedNodes[0].id : null);
-
-    console.log('Nodes duplicated.');
-  }, [nodes, edges, getAllDescendants, getNextId, generateUniqueNodeLabel, setNodes, setEdges, setSelectedTreeItem, saveSnapshot]);
-
-  const handleSave = useCallback(async () => {
-    const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, true, machineProperties);
-    let result;
-    if (currentFilePath) {
-      result = await window.fileAPI.saveFileDirect(yamlContent, currentFilePath);
-    } else {
-      result = await window.fileAPI.saveFile(yamlContent, 'statemachine.yaml');
-    }
-    if (result.success && result.filePath) {
-      setCurrentFilePath(result.filePath);
-    } else if (result.error) {
-      alert('Error saving file: ' + result.error);
-    }
-  }, [nodes, edges, rootHistory, machineProperties, currentFilePath]);
-
-  const handleOpen = useCallback(async () => {
-    const result = await window.fileAPI.openFile();
-    if (result.success && result.content) {
-      try {
-        const { nodes: loadedNodes, edges: loadedEdges, rootHistory: loadedRootHistory, machineProperties: loadedMachineProperties } = convertFromYaml(result.content);
-        setNodes(loadedNodes);
-        setEdges(loadedEdges);
-        setRootHistory(loadedRootHistory);
-        setMachineProperties(loadedMachineProperties);
-        setSelectedTreeItem(null);
-        // Update idCounter to avoid conflicts
-        const maxId = loadedNodes.reduce((max, node) => {
-          const match = node.id.match(/node_(\d+)/);
-          if (match) {
-            return Math.max(max, parseInt(match[1], 10));
-          }
-          return max;
-        }, 0);
-        idCounter = maxId + 1;
-        // Update stateNameCounter based on existing S# names
-        const maxStateNum = loadedNodes.reduce((max, node) => {
-          const match = node.data.label.match(/^S(\d+)$/);
-          if (match) {
-            return Math.max(max, parseInt(match[1], 10));
-          }
-          return max;
-        }, 0);
-        stateNameCounter = maxStateNum + 1;
-        setCurrentFilePath(result.filePath || null);
-        clearUndoRedo();
-      } catch (error) {
-        alert('Error parsing YAML file: ' + (error as Error).message);
-      }
-    } else if (result.error) {
-      alert('Error opening file: ' + result.error);
-    }
-  }, [setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, clearUndoRedo]);
-
-  const handleNew = useCallback(() => {
-    if (nodes.length > 0) {
-      const confirmed = window.confirm('Are you sure you want to create a new state machine? Unsaved changes will be lost.');
-      if (!confirmed) {
-        return;
-      }
-    }
-    setNodes([]);
-    setEdges([]);
-    setRootHistory(false);
-    setMachineProperties(defaultMachineProperties);
-    setSelectedTreeItem(null);
-    setCurrentFilePath(null);
-    idCounter = 1;
-    stateNameCounter = 1;
-    clearUndoRedo();
-  }, [nodes, setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, clearUndoRedo]);
 
 
-  const handleExportPhoenix = useCallback(async () => {
-    const { yaml: phoenixYaml, warnings } = convertToPhoenixYaml(
-      nodes as Node<{ label: string; history: boolean; orthogonal: boolean; entry: string; exit: string; do: string }>[],
-      edges,
-    );
 
-    let defaultName = 'statemachine-phoenix.yaml';
-    if (currentFilePath) {
-      const baseName = currentFilePath.replace(/\.(yaml|yml)$/i, '');
-      defaultName = baseName + '-phoenix.yaml';
-    }
+  // File operations
+  const { handleSave, handleOpen, handleNew } = useFileOperations(
+    nodes, edges, rootHistory, machineProperties, currentFilePath,
+    setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo,
+  );
 
-    const result = await window.fileAPI.saveFile(phoenixYaml, defaultName);
-    if (result.success) {
-      if (warnings.length > 0) {
-        alert('Export to Phoenix completed with warnings:\n\n' + warnings.join('\n'));
-      }
-    } else if (result.error) {
-      alert('Error exporting file: ' + result.error);
-    }
-  }, [nodes, edges, currentFilePath]);
-
-  useEffect(() => {
-    const cleanup = window.fileAPI.onExportPhoenix(handleExportPhoenix);
-    return cleanup;
-  }, [handleExportPhoenix]);
-
-  const buildTreeData = useCallback(() => {
-    // Exclude decision nodes from the tree
-    const stateNodes = nodes.filter(n => n.type !== 'decisionNode');
-    const nodesMap = new Map(stateNodes.map(node => [node.id, { ...node, children: [] }]));
-
-    stateNodes.forEach(node => {
-      if (node.parentId) {
-        const parent = nodesMap.get(node.parentId);
-        if (parent) {
-          parent.children.push(node);
-        }
-      }
-    });
-
-    const buildSubtree = (nodeItem) => {
-      const childrenNodes = nodesMap.get(nodeItem.id).children;
-
-      const treeNode = {
-        id: nodeItem.id,
-        label: nodeItem.data.label,
-        type: 'state',
-        children: []
-      };
-
-      childrenNodes.forEach(childNode => {
-        treeNode.children.push(buildSubtree(childNode));
-      });
-
-      return treeNode;
-    };
-
-    const tree = [];
-    nodesMap.forEach(node => {
-      if (!node.parentId) {
-        tree.push(buildSubtree(node));
-      }
-    });
-
-    return [{
-      id: '/',
-      label: '/',
-      type: 'root',
-      children: tree,
-    }];
-  }, [nodes]);
-
-  const treeData = buildTreeData();
+  const treeData = useMemo(() => buildTreeData(nodes), [nodes]);
 
   const onNodesChangeWithSelection = useCallback(
     (changes) => {
@@ -2040,260 +1274,19 @@ const App = () => {
     );
   }, [nodes, setNodes, setRootHistory, setMachineProperties, saveSnapshot]);
 
-  const handleEdgePropertyChange = useCallback((edgeId: string, propertyName: string, newValue: unknown) => {
-    saveSnapshot();
-    setEdges((eds) => {
-      // First, apply the property change
-      const result = eds.map((edge) => {
-        if (edge.id === edgeId) {
-          return {
-            ...edge,
-            data: {
-              ...edge.data,
-              [propertyName]: newValue,
-            },
-          };
-        }
-        return edge;
-      });
-
-      // When a guard is added to a previously guardless transition,
-      // move it up before the first guardless sibling
-      if (propertyName === 'guard') {
-        const edge = eds.find(e => e.id === edgeId);
-        const hadGuard = !!(edge?.data?.guard);
-        const hasGuard = !!(newValue as string);
-        if (!hadGuard && hasGuard) {
-          const sourceId = edge!.source;
-          // Find sibling indices (same source) in array order
-          const siblingIndices: number[] = [];
-          for (let i = 0; i < result.length; i++) {
-            if (result[i].source === sourceId) siblingIndices.push(i);
-          }
-          const myArrayIndex = result.findIndex(e => e.id === edgeId);
-          // Find the first guardless sibling that comes before this edge
-          let insertBeforeArrayIndex = -1;
-          for (const idx of siblingIndices) {
-            if (idx === myArrayIndex) break;
-            if (!result[idx].data?.guard) {
-              insertBeforeArrayIndex = idx;
-              break;
-            }
-          }
-          if (insertBeforeArrayIndex !== -1 && insertBeforeArrayIndex < myArrayIndex) {
-            // Remove the edge from its current position and insert before the first guardless sibling
-            const moved = result.splice(myArrayIndex, 1)[0];
-            result.splice(insertBeforeArrayIndex, 0, moved);
-          }
-        }
-      }
-
-      return result;
-    });
-  }, [setEdges, saveSnapshot]);
-
-  // Reorder an edge among its siblings (edges with the same source)
-  const handleReorderEdge = useCallback((edgeId: string, direction: 'up' | 'down') => {
-    saveSnapshot();
-    setEdges((eds) => {
-      const edgeIndex = eds.findIndex(e => e.id === edgeId);
-      if (edgeIndex === -1) return eds;
-      const edge = eds[edgeIndex];
-      const sourceId = edge.source;
-
-      // Collect indices of sibling edges (same source) in array order
-      const siblingIndices: number[] = [];
-      for (let i = 0; i < eds.length; i++) {
-        if (eds[i].source === sourceId) siblingIndices.push(i);
-      }
-
-      const posInSiblings = siblingIndices.indexOf(edgeIndex);
-      if (posInSiblings === -1) return eds;
-      if (direction === 'up' && posInSiblings === 0) return eds;
-      if (direction === 'down' && posInSiblings === siblingIndices.length - 1) return eds;
-
-      const swapPos = direction === 'up' ? posInSiblings - 1 : posInSiblings + 1;
-      const swapIndex = siblingIndices[swapPos];
-
-      // Swap the two edges in the array
-      const newEdges = [...eds];
-      [newEdges[edgeIndex], newEdges[swapIndex]] = [newEdges[swapIndex], newEdges[edgeIndex]];
-      return newEdges;
-    });
-  }, [setEdges, saveSnapshot]);
-
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      // Skip keyboard shortcuts when user is typing in an input field
-      const activeElement = document.activeElement;
-      const isInTextInput = activeElement && (
-        activeElement.tagName === 'INPUT' ||
-        activeElement.tagName === 'TEXTAREA' ||
-        (activeElement as HTMLElement).isContentEditable
-      );
-
-      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-      const isModifierPressed = isMac ? event.metaKey : event.ctrlKey;
-
-      // Allow Escape to work even in text inputs (to close dialogs, exit modes)
-      // But skip other single-key shortcuts when in text input
-      if (isInTextInput && event.key !== 'Escape') {
-        return;
-      }
-
-      // Delete selected history marker
-      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedMarkerId?.startsWith('history-marker-')) {
-        event.preventDefault();
-        saveSnapshot();
-        if (selectedMarkerId === 'history-marker-root') {
-          setRootHistory(false);
-          setMachineProperties(prev => {
-            const updated = { ...prev };
-            delete (updated as Record<string, unknown>).historyMarkerPos;
-            delete (updated as Record<string, unknown>).historyMarkerSize;
-            return updated;
-          });
-        } else {
-          const stateId = selectedMarkerId.replace('history-marker-', '');
-          setNodes(nds => nds.map(n => {
-            if (n.id === stateId) {
-              const newData = { ...n.data, history: false };
-              delete (newData as Record<string, unknown>).historyMarkerPos;
-              delete (newData as Record<string, unknown>).historyMarkerSize;
-              return { ...n, data: newData };
-            }
-            return n;
-          }));
-        }
-        setSelectedMarkerId(null);
-      } else if (event.key === 'n' && !isModifierPressed) {
-        event.preventDefault();
-        setIsAddingNode(true);
-      } else if (event.key === 'd' && !isModifierPressed) {
-        event.preventDefault();
-        setIsAddingDecision(true);
-      } else if (event.key === 't' && !isModifierPressed) {
-        event.preventDefault();
-        // Check if a transition (edge) is selected - if so, recompute its handles
-        const selectedEdge = edges.find(e => e.selected);
-        if (selectedEdge) {
-          saveSnapshot();
-          const { sourceHandle, targetHandle } = calculateBestHandles(selectedEdge.source, selectedEdge.target);
-          setEdges((eds) =>
-            eds.map((edge) => {
-              if (edge.id === selectedEdge.id) {
-                return {
-                  ...edge,
-                  sourceHandle,
-                  targetHandle,
-                };
-              }
-              return edge;
-            })
-          );
-        } else {
-          // Start transition creation from currently selected node
-          const selectedNode = nodes.find(n => n.selected);
-          if (selectedNode) {
-            setIsAddingTransition(true);
-            setTransitionSourceId(selectedNode.id);
-          }
-        }
-      } else if (event.key === 'Escape' && isAddingDecision) {
-        event.preventDefault();
-        setIsAddingDecision(false);
-      } else if (event.key === 'Escape' && isAddingTransition) {
-        event.preventDefault();
-        setIsAddingTransition(false);
-        setTransitionSourceId(null);
-      } else if (event.key === 'z' && !isModifierPressed) {
-        event.preventDefault();
-        handleSemanticZoomToSelected();
-      } else if (event.key === 'g' && !isModifierPressed && !event.shiftKey) {
-        event.preventDefault();
-        handleGroupStates();
-      } else if (event.key === 'G' && event.shiftKey && !isModifierPressed) {
-        event.preventDefault();
-        // Shift+G: ungroup selected node and enter ungroup mode
-        const selectedNode = nodes.find(n => n.selected);
-        if (selectedNode && selectedNode.parentId) {
-          handleUngroupState(selectedNode.id);
-        }
-        // Always enter ungroup mode so user can click on nodes to ungroup them
-        setIsUngroupingMode(true);
-        console.log('Entered ungroup mode');
-      } else if (event.key === 'i' && !isModifierPressed) {
-        event.preventDefault();
-        // I key: Set selected node as initial state of its parent (or root)
-        const selectedNode = nodes.find(n => n.selected);
-        if (selectedNode) {
-          setIsSettingInitial(true);
-          setInitialTargetId(selectedNode.id);
-          if (selectedNode.parentId) {
-            console.log('Click on parent to place initial marker for:', selectedNode.data.label);
-          } else {
-            console.log('Click on canvas to place root initial marker for:', selectedNode.data.label);
-          }
-        }
-      } else if (event.key === 'h' && !isModifierPressed) {
-        event.preventDefault();
-        setIsSettingHistory(true);
-        console.log('Click on a state to place history marker');
-      } else if (event.key === 'Escape' && isSettingHistory) {
-        event.preventDefault();
-        setIsSettingHistory(false);
-      } else if (event.key === 'Escape' && isSettingInitial) {
-        event.preventDefault();
-        setIsSettingInitial(false);
-        setInitialTargetId(null);
-      } else if (event.key === 'Escape' && isUngroupingMode) {
-        event.preventDefault();
-        setIsUngroupingMode(false);
-      } else if (event.key === 'Escape') {
-        event.preventDefault();
-        handleNavigateUp();
-      } else if (isModifierPressed) {
-        if (event.key === 'z' || event.key === 'Z') {
-          event.preventDefault();
-          if (event.shiftKey) {
-            handleRedo();
-          } else {
-            handleUndo();
-          }
-        } else {
-          switch (event.key) {
-            case 'c':
-              event.preventDefault();
-              handleCopy();
-              break;
-            case 'v':
-              event.preventDefault();
-              handlePaste();
-              break;
-            case 'd':
-              event.preventDefault();
-              handleDuplicate();
-              break;
-            case 's':
-              event.preventDefault();
-              handleSave();
-              break;
-            case 'o':
-              event.preventDefault();
-              handleOpen();
-              break;
-            default:
-              break;
-          }
-        }
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [handleCopy, handlePaste, handleDuplicate, handleSave, handleOpen, handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState, handleUndo, handleRedo, saveSnapshot, setIsAddingNode, setIsAddingDecision, isAddingDecision, nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, selectedMarkerId, calculateBestHandles, setEdges, setRootHistory, setMachineProperties]);
+  // Keyboard shortcuts
+  useKeyboardShortcuts({
+    handleCopy, handlePaste, handleDuplicate, handleSave, handleOpen,
+    handleUndo, handleRedo, handleSemanticZoomToSelected, handleNavigateUp,
+    handleGroupStates, handleUngroupState, saveSnapshot,
+    nodes, edges,
+    isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory,
+    selectedMarkerId,
+    setIsAddingNode, setIsAddingDecision, setIsAddingTransition, setTransitionSourceId,
+    setIsUngroupingMode, setIsSettingInitial, setInitialTargetId, setIsSettingHistory,
+    setSelectedMarkerId, setEdges, setNodes, setRootHistory,
+    setMachineProperties: setMachineProperties as unknown as (updater: (prev: unknown) => unknown) => void,
+  });
 
   const onPaneClick = useCallback(
     (event) => {
@@ -2420,7 +1413,7 @@ const App = () => {
         );
       }
     },
-    [isAddingNode, isAddingDecision, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setMachineProperties, setRootHistory, generateUniqueNodeLabel, nodes, effectiveScale, effectivePan, viewportSize, saveSnapshot]
+    [isAddingNode, isAddingDecision, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setMachineProperties, setRootHistory, nodes, effectiveScale, effectivePan, viewportSize, saveSnapshot]
   );
 
   // Capture snapshot before drag begins
@@ -2799,7 +1792,7 @@ const App = () => {
         event.stopPropagation();
       }
     },
-    [isAddingNode, isAddingDecision, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setSelectedTreeItem, nodes, generateUniqueNodeLabel, effectiveScale, effectivePan, viewportSize, saveSnapshot]
+    [isAddingNode, isAddingDecision, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setSelectedTreeItem, nodes, effectiveScale, effectivePan, viewportSize, saveSnapshot]
   );
 
   return (
