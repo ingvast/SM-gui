@@ -138,7 +138,10 @@ app.on('activate', () => {
 ipcMain.handle('save-file', async (_event, content: string, defaultName: string) => {
   const { canceled, filePath } = await dialog.showSaveDialog({
     defaultPath: defaultName,
-    filters: [{ name: 'YAML Files', extensions: ['yaml', 'yml'] }],
+    filters: [
+      { name: 'State Machine Builder Files', extensions: ['smb'] },
+      { name: 'YAML Files', extensions: ['yaml', 'yml'] },
+    ],
   });
 
   if (canceled || !filePath) {
@@ -164,7 +167,10 @@ ipcMain.handle('save-file-direct', async (_event, content: string, filePath: str
 
 ipcMain.handle('open-file', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
-    filters: [{ name: 'YAML Files', extensions: ['yaml', 'yml'] }],
+    filters: [
+      { name: 'State Machine Builder Files', extensions: ['smb'] },
+      { name: 'YAML Files', extensions: ['yaml', 'yml'] },
+    ],
     properties: ['openFile'],
   });
 

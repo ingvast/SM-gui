@@ -224,7 +224,7 @@ const App = () => {
   // Update window title based on current file
   useEffect(() => {
     if (currentFilePath) {
-      const fileName = currentFilePath.split('/').pop()?.replace(/\.(yaml|yml)$/i, '') || currentFilePath;
+      const fileName = currentFilePath.split('/').pop()?.replace(/\.(smb|yaml|yml)$/i, '') || currentFilePath;
       document.title = `${fileName} - SM Editor`;
     } else {
       document.title = 'SM Editor';

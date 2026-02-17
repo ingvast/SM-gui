@@ -23,7 +23,7 @@ export function useFileOperations(
     if (currentFilePath) {
       result = await window.fileAPI.saveFileDirect(yamlContent, currentFilePath);
     } else {
-      result = await window.fileAPI.saveFile(yamlContent, 'statemachine.yaml');
+      result = await window.fileAPI.saveFile(yamlContent, 'statemachine.smb');
     }
     if (result.success && result.filePath) {
       setCurrentFilePath(result.filePath);
@@ -92,7 +92,7 @@ export function useFileOperations(
     const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, true, machineProperties);
     const defaultName = currentFilePath
       ? currentFilePath.replace(/^.*[\\/]/, '')
-      : 'statemachine.yaml';
+      : 'statemachine.smb';
     const result = await window.fileAPI.saveFile(yamlContent, defaultName);
     if (result.success && result.filePath) {
       setCurrentFilePath(result.filePath);
@@ -109,7 +109,7 @@ export function useFileOperations(
 
     let defaultName = 'statemachine-phoenix.yaml';
     if (currentFilePath) {
-      const baseName = currentFilePath.replace(/\.(yaml|yml)$/i, '');
+      const baseName = currentFilePath.replace(/\.(smb|yaml|yml)$/i, '');
       defaultName = baseName + '-phoenix.yaml';
     }
 
