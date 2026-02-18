@@ -36,6 +36,10 @@ html, body {
   cursor: n-resize !important;
 }
 
+.react-flow__pane {
+  background-color: #e8e8e8;
+}
+
 .react-flow__nodes {
   z-index: -1;
 }

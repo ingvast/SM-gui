@@ -120,6 +120,8 @@ Cases when the connection is between an ancestor and descendant.
 - `Shift+G` - Ungroup mode: move selected node out of its parent, then click additional nodes to move them out. Cursor changes to up-arrow.
 - `Escape` - Exit current mode (add node, transition, ungroup, initial) or navigate up one level in semantic zoom
 - `Ctrl/Cmd + c` - Copy selected nodes and descendants
+- `Ctrl/Cmd + Shift + c` - Copy diagram as image to clipboard (paste into email/docs)
+- `Ctrl/Cmd + p` - Export diagram as PDF (auto-download)
 - `Ctrl/Cmd + v` - Paste copied nodes
 - `Ctrl/Cmd + d` - Duplicate selected nodes
 - `Ctrl/Cmd + s` - Save

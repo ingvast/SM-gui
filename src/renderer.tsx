@@ -57,6 +57,7 @@ import { useFileOperations } from './hooks/useFileOperations';
 import { useGrouping } from './hooks/useGrouping';
 import { useEdgeOperations } from './hooks/useEdgeOperations';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { copyImageToClipboard, exportToPdf } from './utils/exportImage';
 
 const theme = createTheme({
   palette: {
@@ -1286,11 +1287,25 @@ const App = () => {
     );
   }, [nodes, setNodes, setRootHistory, setMachineProperties, saveSnapshot]);
 
+  const handleCopyImage = useCallback(async () => {
+    if (!reactFlowWrapper.current) return;
+    await copyImageToClipboard(reactFlowWrapper.current);
+  }, []);
+
+  const handleExportPdf = useCallback(async () => {
+    if (!reactFlowWrapper.current) return;
+    const name = currentFilePath
+      ? currentFilePath.replace(/^.*[\\/]/, '').replace(/\.\w+$/, '')
+      : 'statemachine';
+    await exportToPdf(reactFlowWrapper.current, name + '.pdf');
+  }, [currentFilePath]);
+
   // Keyboard shortcuts
   useKeyboardShortcuts({
     handleCopy, handlePaste, handleDuplicate, handleDuplicateWithExternalEdges, handleSave, handleOpen,
     handleUndo, handleRedo, handleSemanticZoomToSelected, handleNavigateUp,
     handleGroupStates, handleUngroupState, saveSnapshot,
+    handleCopyImage, handleExportPdf,
     nodes, edges,
     isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory,
     selectedMarkerId,
