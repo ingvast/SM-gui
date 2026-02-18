@@ -57,7 +57,7 @@ import { useFileOperations } from './hooks/useFileOperations';
 import { useGrouping } from './hooks/useGrouping';
 import { useEdgeOperations } from './hooks/useEdgeOperations';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
-import { copyImageToClipboard, exportToPdf } from './utils/exportImage';
+import { copyImageToClipboard } from './utils/exportImage';
 
 const theme = createTheme({
   palette: {
@@ -1293,12 +1293,22 @@ const App = () => {
   }, []);
 
   const handleExportPdf = useCallback(async () => {
-    if (!reactFlowWrapper.current) return;
+    // Inject @page CSS rule matching the canvas size so the PDF page matches the current view
+    const pageStyle = document.createElement('style');
+    pageStyle.textContent = `@page { size: ${viewportSize.width}px ${viewportSize.height}px; margin: 0; }`;
+    document.head.appendChild(pageStyle);
+
     const name = currentFilePath
       ? currentFilePath.replace(/^.*[\\/]/, '').replace(/\.\w+$/, '')
       : 'statemachine';
-    await exportToPdf(reactFlowWrapper.current, name + '.pdf');
-  }, [currentFilePath]);
+
+    try {
+      await (window as unknown as { fileAPI: { exportPdf: (f: string) => Promise<unknown> } })
+        .fileAPI.exportPdf(name + '.pdf');
+    } finally {
+      pageStyle.remove();
+    }
+  }, [viewportSize, currentFilePath]);
 
   // Keyboard shortcuts
   useKeyboardShortcuts({
@@ -1824,7 +1834,7 @@ const App = () => {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw' }}>
-      <AppBar position="static" color="default" elevation={1}>
+      <AppBar className="no-print" position="static" color="default" elevation={1}>
         <Toolbar variant="dense" sx={{ gap: 1 }}>
           <Tooltip title="New (Cmd+N)">
             <Button
@@ -1912,6 +1922,7 @@ const App = () => {
 
       <Box sx={{ display: 'flex', flexGrow: 1, overflow: 'hidden' }}>
         <Paper
+          className="no-print"
           elevation={0}
           sx={{
             width: 280,
@@ -1994,6 +2005,7 @@ const App = () => {
             autoPanOnConnect={false}
             elevateNodesOnSelect={false}
             deleteKeyCode={['Backspace', 'Delete']}
+            proOptions={{ hideAttribution: true }}
           />
         </Box>
       </Box>

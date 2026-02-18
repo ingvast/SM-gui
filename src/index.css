@@ -47,3 +47,16 @@ html, body {
 .react-flow__edges {
   z-index: 1;
 }
+
+@media print {
+  @page {
+    margin: 0;
+  }
+  .no-print {
+    display: none !important;
+  }
+  body, html {
+    overflow: visible !important;
+    height: auto !important;
+  }
+}

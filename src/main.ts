@@ -196,6 +196,28 @@ ipcMain.handle('save-settings', async (_event, settings: Settings) => {
   return { success: true };
 });
 
+ipcMain.handle('export-pdf', async (event, fileName: string) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return { success: false, error: 'No window' };
+
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    defaultPath: fileName,
+    filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+  });
+  if (canceled || !filePath) return { success: false, canceled: true };
+
+  try {
+    const data = await win.webContents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,
+    });
+    fs.writeFileSync(filePath, data);
+    return { success: true, filePath };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
 // External editor IPC handler
 ipcMain.handle('edit-in-external-editor', async (_event, content: string, language: string) => {
   const settings = loadSettings();
