@@ -8,6 +8,11 @@ interface StateData {
   entry: string;
   exit: string;
   do: string;
+  annotation?: string;
+  showAnnotation?: boolean;
+  showEntry?: boolean;
+  showDo?: boolean;
+  showExit?: boolean;
   initial?: string;
   initialMarkerPos?: { x: number; y: number };
   initialMarkerSize?: number;
@@ -77,6 +82,7 @@ interface YamlState {
   entry?: string;
   exit?: string;
   do?: string;
+  annotation?: string;
   history?: boolean;
   orthogonal?: boolean;
   initial?: string;
@@ -92,6 +98,10 @@ interface YamlState {
     initialMarkerSize?: number;
     historyMarkerPos?: { x: number; y: number };
     historyMarkerSize?: number;
+    showAnnotation?: boolean;
+    showEntry?: boolean;
+    showDo?: boolean;
+    showExit?: boolean;
   };
 }
 
@@ -281,6 +291,9 @@ export function convertToYaml(
     if (node.data.do?.trim()) {
       stateObj.do = node.data.do;
     }
+    if (node.data.annotation?.trim()) {
+      stateObj.annotation = node.data.annotation;
+    }
     if (node.data.history) {
       stateObj.history = true;
     }
@@ -302,6 +315,11 @@ export function convertToYaml(
         stateObj.graphics.historyMarkerPos = node.data.historyMarkerPos;
         stateObj.graphics.historyMarkerSize = node.data.historyMarkerSize;
       }
+      // Store show flags
+      if (node.data.showAnnotation) stateObj.graphics.showAnnotation = true;
+      if (node.data.showEntry) stateObj.graphics.showEntry = true;
+      if (node.data.showDo) stateObj.graphics.showDo = true;
+      if (node.data.showExit) stateObj.graphics.showExit = true;
     }
 
     // Add child states (exclude decision nodes)
@@ -790,6 +808,11 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
         entry: safeStateData.entry || '',
         exit: safeStateData.exit || '',
         do: safeStateData.do || '',
+        annotation: safeStateData.annotation || '',
+        showAnnotation: safeStateData.graphics?.showAnnotation || false,
+        showEntry: safeStateData.graphics?.showEntry || false,
+        showDo: safeStateData.graphics?.showDo || false,
+        showExit: safeStateData.graphics?.showExit || false,
         // initial will be resolved after children are created
         initialMarkerPos: safeStateData.graphics?.initialMarkerPos,
         initialMarkerSize: safeStateData.graphics?.initialMarkerSize,

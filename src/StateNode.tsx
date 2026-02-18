@@ -62,7 +62,7 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
     return lines.every(line => line.length * charWidth > availableWidth);
   };
 
-  // Build candidate sections in order: entry, annotation, do, exit
+  // Build candidate sections in order: annotation, entry, do, exit
   type Section = {
     key: string;
     text: string;
@@ -74,18 +74,18 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
   };
   const candidates: Section[] = [];
 
-  if (data.showEntry && data.entry) {
-    candidates.push({
-      key: 'entry', text: data.entry, textAlign: 'left',
-      fontFamily: '"Consolas", "Monaco", "Courier New", monospace',
-      whiteSpace: 'pre', removePriority: 3,
-    });
-  }
   if (data.showAnnotation && data.annotation) {
     candidates.push({
       key: 'annotation', text: data.annotation, textAlign: 'left',
       fontFamily: 'inherit', fontStyle: 'italic',
       whiteSpace: 'pre-wrap', removePriority: 999, // never removed
+    });
+  }
+  if (data.showEntry && data.entry) {
+    candidates.push({
+      key: 'entry', text: data.entry, textAlign: 'left',
+      fontFamily: '"Consolas", "Monaco", "Courier New", monospace',
+      whiteSpace: 'pre', removePriority: 3,
     });
   }
   if (data.showDo && data.do) {

@@ -599,18 +599,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <OpenInFullIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Box>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={tempShowEntry}
-                onChange={handleShowEntryChange}
-                size="small"
-                disabled={selectedNode.id === '/'}
-              />
-            }
-            label="Show entry"
-            sx={{ mt: -1 }}
-          />
 
           <Box sx={{ position: 'relative' }}>
             <TextField
@@ -642,18 +630,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <OpenInFullIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Box>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={tempShowExit}
-                onChange={handleShowExitChange}
-                size="small"
-                disabled={selectedNode.id === '/'}
-              />
-            }
-            label="Show exit"
-            sx={{ mt: -1 }}
-          />
 
           <Box sx={{ position: 'relative' }}>
             <TextField
@@ -685,18 +661,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <OpenInFullIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Box>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={tempShowDo}
-                onChange={handleShowDoChange}
-                size="small"
-                disabled={selectedNode.id === '/'}
-              />
-            }
-            label="Show do"
-            sx={{ mt: -1 }}
-          />
 
           <Box sx={{ position: 'relative' }}>
             <TextField
@@ -727,18 +691,31 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <OpenInFullIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Box>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={tempShowAnnotation}
-                onChange={handleShowAnnotationChange}
-                size="small"
-                disabled={selectedNode.id === '/'}
-              />
-            }
-            label="Show annotation"
-            sx={{ mt: -1 }}
-          />
+          <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0, mt: -1 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+              Show in state:
+            </Typography>
+            <FormControlLabel
+              control={<Checkbox checked={tempShowEntry} onChange={handleShowEntryChange} size="small" disabled={selectedNode.id === '/'} sx={{ p: 0.25 }} />}
+              label={<Typography variant="caption">Entry</Typography>}
+              sx={{ mr: 1, ml: 0 }}
+            />
+            <FormControlLabel
+              control={<Checkbox checked={tempShowExit} onChange={handleShowExitChange} size="small" disabled={selectedNode.id === '/'} sx={{ p: 0.25 }} />}
+              label={<Typography variant="caption">Exit</Typography>}
+              sx={{ mr: 1, ml: 0 }}
+            />
+            <FormControlLabel
+              control={<Checkbox checked={tempShowDo} onChange={handleShowDoChange} size="small" disabled={selectedNode.id === '/'} sx={{ p: 0.25 }} />}
+              label={<Typography variant="caption">Do</Typography>}
+              sx={{ mr: 1, ml: 0 }}
+            />
+            <FormControlLabel
+              control={<Checkbox checked={tempShowAnnotation} onChange={handleShowAnnotationChange} size="small" disabled={selectedNode.id === '/'} sx={{ p: 0.25 }} />}
+              label={<Typography variant="caption">Note</Typography>}
+              sx={{ ml: 0 }}
+            />
+          </Box>
         </Box>
       )}
 
