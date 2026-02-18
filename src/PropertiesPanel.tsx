@@ -113,7 +113,12 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const [tempEntry, setTempEntry] = useState('');
   const [tempExit, setTempExit] = useState('');
   const [tempDo, setTempDo] = useState('');
-  const [expandedField, setExpandedField] = useState<'entry' | 'exit' | 'do' | 'guard' | 'action' | null>(null);
+  const [tempAnnotation, setTempAnnotation] = useState('');
+  const [tempShowAnnotation, setTempShowAnnotation] = useState(false);
+  const [tempShowEntry, setTempShowEntry] = useState(false);
+  const [tempShowExit, setTempShowExit] = useState(false);
+  const [tempShowDo, setTempShowDo] = useState(false);
+  const [expandedField, setExpandedField] = useState<'entry' | 'exit' | 'do' | 'annotation' | 'guard' | 'action' | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [tempGuard, setTempGuard] = useState('');
   const [tempAction, setTempAction] = useState('');
@@ -155,11 +160,21 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         setTempEntry((selectedNode.data.entry as string) || '');
         setTempExit((selectedNode.data.exit as string) || '');
         setTempDo((selectedNode.data.do as string) || '');
+        setTempAnnotation((selectedNode.data.annotation as string) || '');
+        setTempShowAnnotation((selectedNode.data.showAnnotation as boolean) || false);
+        setTempShowEntry((selectedNode.data.showEntry as boolean) || false);
+        setTempShowExit((selectedNode.data.showExit as boolean) || false);
+        setTempShowDo((selectedNode.data.showDo as boolean) || false);
       } else {
         setTempName('');
         setTempEntry('');
         setTempExit('');
         setTempDo('');
+        setTempAnnotation('');
+        setTempShowAnnotation(false);
+        setTempShowEntry(false);
+        setTempShowExit(false);
+        setTempShowDo(false);
       }
       // Clear selected edge when node changes
       setSelectedEdgeId(null);
@@ -229,6 +244,41 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     handleCodeFieldTab(event, tempDo, setTempDo, settings.tabWidth);
   };
 
+  const handleAnnotationChangeLocal = (event: React.ChangeEvent<HTMLInputElement>) => setTempAnnotation(event.target.value);
+  const handleAnnotationBlur = () => {
+    if (selectedNode && tempAnnotation !== (selectedNode.data.annotation as string)) {
+      onPropertyChange(selectedNode.id, 'annotation', tempAnnotation);
+    }
+  };
+  const handleShowAnnotationChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const checked = event.target.checked;
+    setTempShowAnnotation(checked);
+    if (selectedNode) {
+      onPropertyChange(selectedNode.id, 'showAnnotation', checked);
+    }
+  };
+  const handleShowEntryChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const checked = event.target.checked;
+    setTempShowEntry(checked);
+    if (selectedNode) {
+      onPropertyChange(selectedNode.id, 'showEntry', checked);
+    }
+  };
+  const handleShowExitChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const checked = event.target.checked;
+    setTempShowExit(checked);
+    if (selectedNode) {
+      onPropertyChange(selectedNode.id, 'showExit', checked);
+    }
+  };
+  const handleShowDoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const checked = event.target.checked;
+    setTempShowDo(checked);
+    if (selectedNode) {
+      onPropertyChange(selectedNode.id, 'showDo', checked);
+    }
+  };
+
   // Edge property handlers
   const handleGuardChangeLocal = (event: React.ChangeEvent<HTMLInputElement>) => setTempGuard(event.target.value);
   const handleGuardBlur = () => {
@@ -265,6 +315,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     if (field === 'entry') currentValue = tempEntry;
     else if (field === 'exit') currentValue = tempExit;
     else if (field === 'do') currentValue = tempDo;
+    else if (field === 'annotation') currentValue = tempAnnotation;
     else if (field === 'guard') currentValue = tempGuard;
     else if (field === 'action') currentValue = tempAction;
 
@@ -282,6 +333,9 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         } else if (field === 'do' && selectedNode) {
           setTempDo(result.content);
           onPropertyChange(selectedNode.id, 'do', result.content);
+        } else if (field === 'annotation' && selectedNode) {
+          setTempAnnotation(result.content);
+          onPropertyChange(selectedNode.id, 'annotation', result.content);
         } else if (field === 'guard' && (selectedCanvasEdge || selectedEdgeId)) {
           const edgeId = selectedCanvasEdge?.id || selectedEdgeId!;
           setTempGuard(result.content);
@@ -313,6 +367,9 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     } else if (expandedField === 'do' && selectedNode) {
       setTempDo(value);
       onPropertyChange(selectedNode.id, 'do', value);
+    } else if (expandedField === 'annotation' && selectedNode) {
+      setTempAnnotation(value);
+      onPropertyChange(selectedNode.id, 'annotation', value);
     } else if (expandedField === 'guard' && (selectedCanvasEdge || selectedEdgeId)) {
       const edgeId = selectedCanvasEdge?.id || selectedEdgeId!;
       setTempGuard(value);
@@ -328,6 +385,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     if (expandedField === 'entry') return tempEntry;
     if (expandedField === 'exit') return tempExit;
     if (expandedField === 'do') return tempDo;
+    if (expandedField === 'annotation') return tempAnnotation;
     if (expandedField === 'guard') return tempGuard;
     if (expandedField === 'action') return tempAction;
     return '';
@@ -337,6 +395,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     if (expandedField === 'entry') return 'Entry Action Code';
     if (expandedField === 'exit') return 'Exit Action Code';
     if (expandedField === 'do') return 'Activity Code';
+    if (expandedField === 'annotation') return 'Annotation';
     if (expandedField === 'guard') return 'Guard Condition';
     if (expandedField === 'action') return 'Transition Action';
     return '';
@@ -540,6 +599,18 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <OpenInFullIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Box>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={tempShowEntry}
+                onChange={handleShowEntryChange}
+                size="small"
+                disabled={selectedNode.id === '/'}
+              />
+            }
+            label="Show entry"
+            sx={{ mt: -1 }}
+          />
 
           <Box sx={{ position: 'relative' }}>
             <TextField
@@ -571,6 +642,18 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <OpenInFullIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Box>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={tempShowExit}
+                onChange={handleShowExitChange}
+                size="small"
+                disabled={selectedNode.id === '/'}
+              />
+            }
+            label="Show exit"
+            sx={{ mt: -1 }}
+          />
 
           <Box sx={{ position: 'relative' }}>
             <TextField
@@ -602,6 +685,60 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <OpenInFullIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Box>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={tempShowDo}
+                onChange={handleShowDoChange}
+                size="small"
+                disabled={selectedNode.id === '/'}
+              />
+            }
+            label="Show do"
+            sx={{ mt: -1 }}
+          />
+
+          <Box sx={{ position: 'relative' }}>
+            <TextField
+              label="Annotation"
+              size="small"
+              fullWidth
+              multiline
+              rows={3}
+              value={tempAnnotation}
+              onChange={handleAnnotationChangeLocal}
+              onBlur={handleAnnotationBlur}
+              placeholder="Annotation text..."
+              disabled={selectedNode.id === '/'}
+            />
+            <IconButton
+              size="small"
+              onClick={() => handleExpandClick('annotation')}
+              sx={{
+                position: 'absolute',
+                right: 4,
+                top: 4,
+                padding: '2px',
+                opacity: 0.6,
+                '&:hover': { opacity: 1 },
+              }}
+              title="Expand editor"
+            >
+              <OpenInFullIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Box>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={tempShowAnnotation}
+                onChange={handleShowAnnotationChange}
+                size="small"
+                disabled={selectedNode.id === '/'}
+              />
+            }
+            label="Show annotation"
+            sx={{ mt: -1 }}
+          />
         </Box>
       )}
 

@@ -392,6 +392,7 @@ const App = () => {
           ...node.data,
           semanticScale: effectiveScale,
           screenWidth: t.screenWidth,
+          screenHeight: t.screenHeight,
           minWidth: mins?.minWidth,
           minHeight: mins?.minHeight,
         },
