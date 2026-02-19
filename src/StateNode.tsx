@@ -159,7 +159,7 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
 
       {showLabel && <div style={labelStyle}>{data.label}</div>}
 
-      {sections.length > 0 && (
+      {showLabel && sections.length > 0 && (
         <div style={{
           position: 'absolute',
           top: labelAreaHeight,
