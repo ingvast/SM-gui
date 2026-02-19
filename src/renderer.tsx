@@ -1246,14 +1246,14 @@ const App = () => {
           [propertyName]: newValue,
         }));
       }
-      return;
+      return true;
     }
 
     if (propertyName === 'label') {
       const trimmedNewValue = newValue.trim();
       if (!trimmedNewValue) {
         alert('State name cannot be empty!');
-        return;
+        return false;
       }
 
       const nodeToChange = nodes.find(n => n.id === nodeId);
@@ -1267,7 +1267,7 @@ const App = () => {
 
         if (isDuplicate) {
           alert(`A sibling state with the name "${trimmedNewValue}" already exists!`);
-          return;
+          return false;
         }
       }
     }
@@ -1286,6 +1286,7 @@ const App = () => {
         return node;
       })
     );
+    return true;
   }, [nodes, setNodes, setRootHistory, setMachineProperties, saveSnapshot]);
 
   const handleCopyImage = useCallback(async () => {

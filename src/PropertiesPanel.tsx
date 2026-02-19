@@ -91,7 +91,7 @@ interface PropertiesPanelProps {
   selectedCanvasEdge: Edge | null;
   nodes: Node[];
   edges: Edge[];
-  onPropertyChange: (nodeId: string, property: string, value: unknown) => void;
+  onPropertyChange: (nodeId: string, property: string, value: unknown) => boolean;
   onEdgePropertyChange: (edgeId: string, property: string, value: unknown) => void;
   onReorderEdge: (edgeId: string, direction: 'up' | 'down') => void;
   settings: Settings;
@@ -198,7 +198,11 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
   const handleNameBlur = () => {
     if (selectedNode && tempName !== selectedNode.data.label) {
-      onPropertyChange(selectedNode.id, 'label', tempName);
+      const accepted = onPropertyChange(selectedNode.id, 'label', tempName);
+      if (!accepted) {
+        // Validation rejected the change, reset to original label
+        setTempName(selectedNode.data.label);
+      }
     }
   };
 
