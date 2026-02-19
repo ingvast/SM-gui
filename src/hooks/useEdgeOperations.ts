@@ -45,8 +45,9 @@ export function useEdgeOperations(
           type: 'spline',
           data: { controlPoints: [], label: '' },
           markerEnd: { type: MarkerType.ArrowClosed },
+          selected: true,
         };
-        return [...eds, newEdge];
+        return [...eds.map(e => ({ ...e, selected: false })), newEdge];
       });
     },
     [nodes, setEdges, saveSnapshot]

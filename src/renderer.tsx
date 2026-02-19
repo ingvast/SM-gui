@@ -928,15 +928,26 @@ const App = () => {
   // Grouping operations
   const { handleGroupStates, handleUngroupState } = useGrouping(nodes, setNodes, saveSnapshot);
 
-  // Edge operations
-  const { onConnect, onReconnect, isValidConnection, createTransition, handleEdgePropertyChange, handleReorderEdge } = useEdgeOperations(nodes, setEdges, saveSnapshot);
-
   const [isAddingNode, setIsAddingNode] = useState(false);
   const [isAddingDecision, setIsAddingDecision] = useState(false);
   const [isAddingTransition, setIsAddingTransition] = useState(false);
   const [transitionSourceId, setTransitionSourceId] = useState<string | null>(null);
   const [focusGuard, setFocusGuard] = useState(false);
   const [focusName, setFocusName] = useState(false);
+
+  // Edge operations
+  const { onConnect: onConnectBase, onReconnect, isValidConnection, createTransition, handleEdgePropertyChange, handleReorderEdge } = useEdgeOperations(nodes, setEdges, saveSnapshot);
+
+  const justConnectedRef = useRef(false);
+
+  const onConnect = useCallback((params) => {
+    onConnectBase(params);
+    // Deselect nodes and focus the Guard field, same as the t-key transition path
+    justConnectedRef.current = true;
+    setSelectedTreeItem(null);
+    setNodes((nds) => nds.map((n) => ({ ...n, selected: false })));
+    setFocusGuard(true);
+  }, [onConnectBase, setNodes]);
   const [isUngroupingMode, setIsUngroupingMode] = useState(false);
   const [isSettingInitial, setIsSettingInitial] = useState(false);
   const [initialTargetId, setInitialTargetId] = useState<string | null>(null);
@@ -950,7 +961,17 @@ const App = () => {
   });
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   // Clipboard operations
-  const { handleCopy, handlePaste, handleDuplicate, handleDuplicateWithExternalEdges } = useClipboard(nodes, edges, setNodes, setEdges, setSelectedTreeItem, saveSnapshot);
+  const { handleCopy, handlePaste, handleDuplicate: handleDuplicateBase, handleDuplicateWithExternalEdges: handleDuplicateWithExternalEdgesBase } = useClipboard(nodes, edges, setNodes, setEdges, setSelectedTreeItem, saveSnapshot);
+
+  const handleDuplicate = useCallback(() => {
+    handleDuplicateBase();
+    setFocusName(true);
+  }, [handleDuplicateBase]);
+
+  const handleDuplicateWithExternalEdges = useCallback(() => {
+    handleDuplicateWithExternalEdgesBase();
+    setFocusName(true);
+  }, [handleDuplicateWithExternalEdgesBase]);
 
   const selectedNode = useMemo(() => {
     if (selectedTreeItem === '/') {
@@ -1697,6 +1718,13 @@ const App = () => {
         // Deselect all real nodes
         setNodes((nds) => nds.map((n) => ({ ...n, selected: false })));
         setEdges((eds) => eds.map((e) => ({ ...e, selected: false })));
+        return;
+      }
+
+      // If we just created an edge by dragging (onConnect fired), skip normal node selection
+      // so the newly created edge stays selected and the Guard field gets focus.
+      if (justConnectedRef.current) {
+        justConnectedRef.current = false;
         return;
       }
 

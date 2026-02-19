@@ -76,7 +76,7 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
 
   if (data.showAnnotation && data.annotation) {
     candidates.push({
-      key: 'annotation', text: data.annotation, textAlign: 'left',
+      key: 'annotation', text: data.annotation, textAlign: 'center',
       fontFamily: 'inherit', fontStyle: 'italic',
       whiteSpace: 'pre-wrap', removePriority: 999, // never removed
     });
