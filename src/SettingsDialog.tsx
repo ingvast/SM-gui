@@ -13,12 +13,17 @@ import {
   Radio,
   Typography,
   Box,
+  Checkbox,
 } from '@mui/material';
 
 export interface Settings {
   editorPreference: 'system' | 'builtin' | 'custom';
   customEditorCommand: string;
   tabWidth: number;
+  defaultShowEntry: boolean;
+  defaultShowExit: boolean;
+  defaultShowDo: boolean;
+  defaultShowAnnotation: boolean;
 }
 
 interface SettingsDialogProps {
@@ -118,6 +123,52 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
               A dialog will appear asking you to confirm when done editing.
             </Typography>
           )}
+
+          <FormControl component="fieldset">
+            <FormLabel component="legend">Show in State (defaults for new states)</FormLabel>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0, mt: 0.5 }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={tempSettings.defaultShowEntry}
+                    onChange={(e) => setTempSettings({ ...tempSettings, defaultShowEntry: e.target.checked })}
+                  />
+                }
+                label="Entry"
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={tempSettings.defaultShowExit}
+                    onChange={(e) => setTempSettings({ ...tempSettings, defaultShowExit: e.target.checked })}
+                  />
+                }
+                label="Exit"
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={tempSettings.defaultShowDo}
+                    onChange={(e) => setTempSettings({ ...tempSettings, defaultShowDo: e.target.checked })}
+                  />
+                }
+                label="Do"
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={tempSettings.defaultShowAnnotation}
+                    onChange={(e) => setTempSettings({ ...tempSettings, defaultShowAnnotation: e.target.checked })}
+                  />
+                }
+                label="Note"
+              />
+            </Box>
+          </FormControl>
 
           <TextField
             label="Tab Width"

@@ -958,6 +958,10 @@ const App = () => {
     editorPreference: 'builtin',
     customEditorCommand: 'code -w {file}',
     tabWidth: 4,
+    defaultShowEntry: false,
+    defaultShowExit: false,
+    defaultShowDo: false,
+    defaultShowAnnotation: false,
   });
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   // Clipboard operations
@@ -1458,7 +1462,7 @@ const App = () => {
           id: getNextId(),
           type: 'stateNode',
           position: { x: worldX, y: worldY },
-          data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '' },
+          data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '', showEntry: settings.defaultShowEntry, showExit: settings.defaultShowExit, showDo: settings.defaultShowDo, showAnnotation: settings.defaultShowAnnotation },
           style: { width: stateWidth, height: stateHeight },
           selected: true,
         };
@@ -1807,7 +1811,7 @@ const App = () => {
           position: newRelativePosition,
           parentId: node.id,
           extent: 'parent',
-          data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '' },
+          data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '', showEntry: settings.defaultShowEntry, showExit: settings.defaultShowExit, showDo: settings.defaultShowDo, showAnnotation: settings.defaultShowAnnotation },
           style: { width: scaledNodeWidth, height: scaledNodeHeight },
           selected: true,
         };
