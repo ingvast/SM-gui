@@ -61,7 +61,7 @@ interface YamlDecisionTransition {
   to: string;
   guard?: string;
   action?: string;
-  geometry?: {
+  graphics?: {
     sourceHandle?: string;
     targetHandle?: string;
     controlPoints?: { x: number; y: number }[];
@@ -109,7 +109,7 @@ interface YamlTransition {
   to: string;
   guard?: string;
   action?: string;
-  geometry?: {
+  graphics?: {
     sourceHandle?: string;
     targetHandle?: string;
     controlPoints?: { x: number; y: number }[];
@@ -373,7 +373,7 @@ export function convertToYaml(
             const hasControlPoints = edgeData?.controlPoints && edgeData.controlPoints.length > 0;
             const hasLabelPosition = edgeData?.labelPosition != null;
             if (hasHandles || hasControlPoints || hasLabelPosition) {
-              t.geometry = {
+              t.graphics = {
                 sourceHandle: edge.sourceHandle || undefined,
                 targetHandle: edge.targetHandle || undefined,
                 controlPoints: hasControlPoints ? edgeData!.controlPoints : undefined,
@@ -415,14 +415,14 @@ export function convertToYaml(
         if ((edge.data as { action?: string })?.action) {
           transition.action = (edge.data as { action: string }).action;
         }
-        // Save edge geometry if present (only when includeGraphics is true)
+        // Save edge graphics if present (only when includeGraphics is true)
         if (includeGraphics) {
           const edgeData = edge.data as { controlPoints?: { x: number; y: number }[]; labelPosition?: number } | undefined;
           const hasHandles = edge.sourceHandle || edge.targetHandle;
           const hasControlPoints = edgeData?.controlPoints && edgeData.controlPoints.length > 0;
           const hasLabelPosition = edgeData?.labelPosition != null;
           if (hasHandles || hasControlPoints || hasLabelPosition) {
-            transition.geometry = {
+            transition.graphics = {
               sourceHandle: edge.sourceHandle || undefined,
               targetHandle: edge.targetHandle || undefined,
               controlPoints: hasControlPoints ? edgeData!.controlPoints : undefined,
@@ -538,7 +538,7 @@ export function convertToYaml(
           const hasControlPoints = edgeData?.controlPoints && edgeData.controlPoints.length > 0;
           const hasLabelPosition = edgeData?.labelPosition != null;
           if (hasHandles || hasControlPoints || hasLabelPosition) {
-            t.geometry = {
+            t.graphics = {
               sourceHandle: edge.sourceHandle || undefined,
               targetHandle: edge.targetHandle || undefined,
               controlPoints: hasControlPoints ? edgeData!.controlPoints : undefined,
@@ -1005,16 +1005,17 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
   function createEdgeFromTransition(
     sourceId: string,
     targetId: string,
-    transition: { to: string; guard?: string; action?: string; geometry?: { sourceHandle?: string; targetHandle?: string; controlPoints?: { x: number; y: number }[]; labelPosition?: number } }
+    transition: { to: string; guard?: string; action?: string; graphics?: { sourceHandle?: string; targetHandle?: string; controlPoints?: { x: number; y: number }[]; labelPosition?: number }; geometry?: { sourceHandle?: string; targetHandle?: string; controlPoints?: { x: number; y: number }[]; labelPosition?: number } }
   ) {
+    const edgeGraphics = transition.graphics || transition.geometry;
     const edge: Edge = {
       id: `e${sourceId}-${targetId}-${edges.length}`,
       source: sourceId,
       target: targetId,
       type: 'spline',
       data: {
-        controlPoints: transition.geometry?.controlPoints || [],
-        labelPosition: transition.geometry?.labelPosition,
+        controlPoints: edgeGraphics?.controlPoints || [],
+        labelPosition: edgeGraphics?.labelPosition,
         label: '',
         guard: transition.guard || '',
         action: transition.action || '',
@@ -1022,11 +1023,11 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
       markerEnd: { type: MarkerType.ArrowClosed },
     };
 
-    if (transition.geometry?.sourceHandle) {
-      edge.sourceHandle = transition.geometry.sourceHandle;
+    if (edgeGraphics?.sourceHandle) {
+      edge.sourceHandle = edgeGraphics.sourceHandle;
     }
-    if (transition.geometry?.targetHandle) {
-      edge.targetHandle = transition.geometry.targetHandle;
+    if (edgeGraphics?.targetHandle) {
+      edge.targetHandle = edgeGraphics.targetHandle;
     }
 
     edges.push(edge);
