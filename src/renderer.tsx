@@ -1282,6 +1282,14 @@ const App = () => {
         alert('State name cannot be empty!');
         return false;
       }
+      if (trimmedNewValue.includes('/')) {
+        alert('State name cannot contain slashes!');
+        return false;
+      }
+      if (/^\.+$/.test(trimmedNewValue)) {
+        alert('State name cannot consist of only dots!');
+        return false;
+      }
 
       const nodeToChange = nodes.find(n => n.id === nodeId);
       if (nodeToChange) {
