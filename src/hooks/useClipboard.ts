@@ -1,7 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
 import { Node, Edge } from 'reactflow';
 import { getAllDescendants, generateUniqueNodeLabel } from '../utils/nodeUtils';
 import { getNextId } from '../utils/idCounters';
+
+const CLIPBOARD_MARKER = 'sm-gui-clipboard:';
 
 export function useClipboard(
   nodes: Node[],
@@ -11,15 +13,11 @@ export function useClipboard(
   setSelectedTreeItem: (id: string | null) => void,
   saveSnapshot: () => void,
 ) {
-  const [copiedNodes, setCopiedNodes] = useState<Node[]>([]);
-  const [copiedEdges, setCopiedEdges] = useState<Edge[]>([]);
 
-  const handleCopy = useCallback(() => {
+  const handleCopy = useCallback(async () => {
     const selectedNodes = nodes.filter(node => node.selected);
     if (selectedNodes.length === 0) {
       console.log('No nodes selected to copy.');
-      setCopiedNodes([]);
-      setCopiedEdges([]);
       return;
     }
 
@@ -44,13 +42,35 @@ export function useClipboard(
         } : { controlPoints: [], label: '' },
       }));
 
-    setCopiedNodes(finalNodesToCopy);
-    setCopiedEdges(edgesToCopy);
+    const clipboardData = JSON.stringify({ nodes: finalNodesToCopy, edges: edgesToCopy });
+    try {
+      await navigator.clipboard.writeText(CLIPBOARD_MARKER + clipboardData);
+    } catch (err) {
+      console.error('Failed to write to system clipboard:', err);
+    }
+
     console.log('Nodes copied:', finalNodesToCopy.map(n => n.id));
     console.log('Edges copied:', edgesToCopy.map(e => e.id));
   }, [nodes, edges]);
 
-  const handlePaste = useCallback(() => {
+  const handlePaste = useCallback(async () => {
+    let copiedNodes: Node[] = [];
+    let copiedEdges: Edge[] = [];
+
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text.startsWith(CLIPBOARD_MARKER)) {
+        console.log('Clipboard does not contain SM-GUI data.');
+        return;
+      }
+      const parsed = JSON.parse(text.slice(CLIPBOARD_MARKER.length));
+      copiedNodes = parsed.nodes || [];
+      copiedEdges = parsed.edges || [];
+    } catch (err) {
+      console.error('Failed to read from system clipboard:', err);
+      return;
+    }
+
     if (copiedNodes.length === 0) {
       console.log('No nodes to paste.');
       return;
@@ -130,7 +150,7 @@ export function useClipboard(
 
     console.log('Nodes pasted.');
     console.log('Edges pasted:', pastedEdges.map(e => e.id));
-  }, [copiedNodes, copiedEdges, nodes, setNodes, setEdges, setSelectedTreeItem, saveSnapshot]);
+  }, [nodes, setNodes, setEdges, setSelectedTreeItem, saveSnapshot]);
 
   const duplicateNodes = useCallback((includeExternalEdges: boolean) => {
     const selectedNodes = nodes.filter(node => node.selected);

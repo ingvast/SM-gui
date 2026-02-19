@@ -4,8 +4,8 @@ import { calculateBestHandles } from '../utils/handleUtils';
 
 interface KeyboardShortcutsParams {
   // Handlers
-  handleCopy: () => void;
-  handlePaste: () => void;
+  handleCopy: () => Promise<void>;
+  handlePaste: () => Promise<void>;
   handleDuplicate: () => void;
   handleDuplicateWithExternalEdges: () => void;
   handleSave: () => void;
