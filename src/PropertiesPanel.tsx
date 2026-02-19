@@ -96,6 +96,10 @@ interface PropertiesPanelProps {
   onReorderEdge: (edgeId: string, direction: 'up' | 'down') => void;
   settings: Settings;
   language: string;
+  focusGuard?: boolean;
+  onGuardFocused?: () => void;
+  focusName?: boolean;
+  onNameFocused?: () => void;
 }
 
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
@@ -108,6 +112,10 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onReorderEdge,
   settings,
   language,
+  focusGuard,
+  onGuardFocused,
+  focusName,
+  onNameFocused,
 }) => {
   const [tempName, setTempName] = useState('');
   const [tempEntry, setTempEntry] = useState('');
@@ -123,6 +131,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const [tempGuard, setTempGuard] = useState('');
   const [tempAction, setTempAction] = useState('');
   const [activeTab, setActiveTab] = useState(0);
+  const guardFieldRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
+  const nameFieldRef = useRef<HTMLInputElement | null>(null);
 
   // Get node label by id
   const getNodeLabel = (nodeId: string) => {
@@ -191,6 +201,30 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       setTempAction('');
     }
   }, [selectedEdge]);
+
+  // Focus guard field when requested (e.g. after creating a new transition)
+  useEffect(() => {
+    if (focusGuard) {
+      setTimeout(() => {
+        guardFieldRef.current?.focus();
+        onGuardFocused?.();
+      }, 50);
+    }
+  }, [focusGuard, onGuardFocused]);
+
+  // Focus and select-all the name field when requested (e.g. after creating a new state)
+  useEffect(() => {
+    if (focusName) {
+      setTimeout(() => {
+        const el = nameFieldRef.current;
+        if (el) {
+          el.focus();
+          el.select();
+        }
+        onNameFocused?.();
+      }, 50);
+    }
+  }, [focusName, onNameFocused]);
 
   const handleNameChangeLocal = (event: React.ChangeEvent<HTMLInputElement>) => {
     setTempName(event.target.value);
@@ -450,6 +484,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               onBlur={handleGuardBlur}
               onKeyDown={handleGuardKeyDown}
               placeholder="Guard condition..."
+              inputRef={guardFieldRef}
               slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
             />
             <IconButton
@@ -542,6 +577,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           onBlur={handleNameBlur}
           onKeyDown={handleNameKeyDown}
           disabled={selectedNode.id === '/'}
+          inputRef={nameFieldRef}
           sx={{ mb: 1 }}
         />
       )}
@@ -846,6 +882,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   onBlur={handleGuardBlur}
                   onKeyDown={handleGuardKeyDown}
                   placeholder="Guard condition..."
+                  inputRef={guardFieldRef}
                   slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
                 />
                 <IconButton

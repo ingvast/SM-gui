@@ -935,6 +935,8 @@ const App = () => {
   const [isAddingDecision, setIsAddingDecision] = useState(false);
   const [isAddingTransition, setIsAddingTransition] = useState(false);
   const [transitionSourceId, setTransitionSourceId] = useState<string | null>(null);
+  const [focusGuard, setFocusGuard] = useState(false);
+  const [focusName, setFocusName] = useState(false);
   const [isUngroupingMode, setIsUngroupingMode] = useState(false);
   const [isSettingInitial, setIsSettingInitial] = useState(false);
   const [initialTargetId, setInitialTargetId] = useState<string | null>(null);
@@ -1437,10 +1439,13 @@ const App = () => {
           position: { x: worldX, y: worldY },
           data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '' },
           style: { width: stateWidth, height: stateHeight },
+          selected: true,
         };
         saveSnapshot();
-        setNodes((nds) => nds.concat(newNode));
+        setNodes((nds) => nds.map((n) => ({ ...n, selected: false })).concat(newNode));
+        setSelectedTreeItem(newNode.id);
         setIsAddingNode(false);
+        setFocusName(true);
       } else {
         setSelectedTreeItem(null);
         setSelectedMarkerId(null);
@@ -1573,6 +1578,10 @@ const App = () => {
         createTransition(transitionSourceId, node.id);
         setIsAddingTransition(false);
         setTransitionSourceId(null);
+        // Deselect nodes so the transition properties panel shows with Guard focused
+        setSelectedTreeItem(null);
+        setNodes((nds) => nds.map((n) => ({ ...n, selected: false })));
+        setFocusGuard(true);
         event.stopPropagation();
         return;
       }
@@ -1772,10 +1781,13 @@ const App = () => {
           extent: 'parent',
           data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '' },
           style: { width: scaledNodeWidth, height: scaledNodeHeight },
+          selected: true,
         };
         saveSnapshot();
-        setNodes((nds) => nds.concat(newNode));
+        setNodes((nds) => nds.map((n) => ({ ...n, selected: false })).concat(newNode));
+        setSelectedTreeItem(newNode.id);
         setIsAddingNode(false);
+        setFocusName(true);
         event.stopPropagation();
       }
 
@@ -1957,6 +1969,10 @@ const App = () => {
               onReorderEdge={handleReorderEdge}
               settings={settings}
               language={machineProperties.language}
+              focusGuard={focusGuard}
+              onGuardFocused={() => setFocusGuard(false)}
+              focusName={focusName}
+              onNameFocused={() => setFocusName(false)}
             />
           </Box>
         </Paper>

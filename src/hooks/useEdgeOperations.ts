@@ -72,7 +72,7 @@ export function useEdgeOperations(
     };
 
     saveSnapshot();
-    setEdges((eds) => eds.concat(newEdge));
+    setEdges((eds) => eds.map(e => ({ ...e, selected: false })).concat({ ...newEdge, selected: true }));
   }, [nodes, setEdges, saveSnapshot]);
 
   const isValidConnection = useCallback(
