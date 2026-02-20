@@ -87,6 +87,8 @@ declare global {
       saveFile: (content: string, defaultName: string) => Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
       saveFileDirect: (content: string, filePath: string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
       openFile: () => Promise<{ success: boolean; content?: string; filePath?: string; canceled?: boolean; error?: string }>;
+      importPhoenix: () => Promise<{ success: boolean; content?: string; filePath?: string; canceled?: boolean; error?: string }>;
+      onImportPhoenix: (callback: () => void) => () => void;
     };
     settingsAPI: {
       get: () => Promise<Settings>;

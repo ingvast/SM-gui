@@ -1,5 +1,6 @@
 import yaml from 'js-yaml';
 import { Node, Edge, MarkerType } from 'reactflow';
+import dagre from '@dagrejs/dagre';
 
 interface StateData {
   label: string;
@@ -1199,4 +1200,291 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     rootHistory: doc.history || false,
     machineProperties,
   };
+}
+
+// --- Import from Phoenix YAML ---
+
+interface PhoenixState {
+  in?: string[];
+  out?: string[];
+  next?: string | Record<string, string>;
+}
+type PhoenixDocument = Record<string, Record<string, PhoenixState | null> | null>;
+
+export function convertFromPhoenixYaml(yamlContent: string): ConvertFromYamlResult {
+  const doc = yaml.load(yamlContent) as PhoenixDocument;
+
+  // Phase 1: Parse Phoenix structure into intermediate representation
+  interface ParsedState {
+    name: string;
+    parentName?: string;
+    entry: string;
+    exit: string;
+    children: string[]; // child state names
+  }
+  interface ParsedTransition {
+    sourceName: string;        // "Parent/Child" or "TopLevel"
+    targetName: string;        // same format
+    guard: string;
+  }
+
+  const stateMap = new Map<string, ParsedState>(); // keyed by "Parent/Child" or "TopLevel"
+  const transitions: ParsedTransition[] = [];
+
+  if (!doc || typeof doc !== 'object') {
+    return { nodes: [], edges: [], rootHistory: false, machineProperties: defaultMachineProperties };
+  }
+
+  for (const [topName, children] of Object.entries(doc)) {
+    const topKey = topName;
+    const topState: ParsedState = {
+      name: topName,
+      entry: '',
+      exit: '',
+      children: [],
+    };
+    stateMap.set(topKey, topState);
+
+    if (children && typeof children === 'object') {
+      for (const [childName, childData] of Object.entries(children)) {
+        const childKey = `${topName}/${childName}`;
+        const parsed: ParsedState = {
+          name: childName,
+          parentName: topName,
+          entry: '',
+          exit: '',
+          children: [],
+        };
+
+        if (childData && typeof childData === 'object') {
+          const cd = childData as PhoenixState;
+          if (cd.in) {
+            parsed.entry = (Array.isArray(cd.in) ? cd.in : [cd.in]).join('\n');
+          }
+          if (cd.out) {
+            parsed.exit = (Array.isArray(cd.out) ? cd.out : [cd.out]).join('\n');
+          }
+
+          // Parse transitions
+          if (cd.next) {
+            if (typeof cd.next === 'string') {
+              // Single unguarded transition: "TopLevel SubState" or just "TopLevel"
+              const targetKey = phoenixTargetToKey(cd.next);
+              transitions.push({ sourceName: childKey, targetName: targetKey, guard: '' });
+            } else if (typeof cd.next === 'object') {
+              // Guarded transitions: { guard: "TopLevel SubState", ... }
+              for (const [guard, target] of Object.entries(cd.next)) {
+                const targetKey = phoenixTargetToKey(target);
+                transitions.push({ sourceName: childKey, targetName: targetKey, guard });
+              }
+            }
+          }
+        }
+
+        stateMap.set(childKey, parsed);
+        topState.children.push(childKey);
+      }
+    }
+  }
+
+  // Phase 2: Dagre layout
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: 'LR', ranksep: 80, nodesep: 40 });
+  g.setDefaultEdgeLabel(() => ({}));
+
+  // Add only leaf nodes to Dagre (second-level states + childless top-level states)
+  const leafKeys: string[] = [];
+  const nodeSizes = new Map<string, { width: number; height: number }>();
+
+  for (const [key, state] of stateMap) {
+    if (state.children.length === 0) {
+      // Leaf node — estimate size from content
+      const labelLen = state.name.length;
+      const entryLines = state.entry ? state.entry.split('\n').length : 0;
+      const exitLines = state.exit ? state.exit.split('\n').length : 0;
+      const contentLines = entryLines + exitLines;
+      const width = Math.min(400, Math.max(150, labelLen * 10 + 40));
+      const height = Math.min(300, Math.max(75, 40 + contentLines * 20));
+      nodeSizes.set(key, { width, height });
+      g.setNode(key, { width, height });
+      leafKeys.push(key);
+    }
+  }
+
+  // For top-level states with children, we don't add them to Dagre;
+  // their size/position will be computed from children's bounding box.
+
+  // Add edges to Dagre
+  for (const t of transitions) {
+    const sourceLeaf = stateMap.has(t.sourceName) ? t.sourceName : null;
+    const targetLeaf = stateMap.has(t.targetName) ? t.targetName : null;
+    if (sourceLeaf && targetLeaf && g.hasNode(sourceLeaf) && g.hasNode(targetLeaf)) {
+      g.setEdge(sourceLeaf, targetLeaf);
+    }
+  }
+
+  // Run Dagre layout
+  dagre.layout(g);
+
+  // Read positions (Dagre gives center coords, convert to top-left)
+  const absolutePositions = new Map<string, { x: number; y: number }>();
+  for (const key of leafKeys) {
+    const dagreNode = g.node(key);
+    const size = nodeSizes.get(key)!;
+    absolutePositions.set(key, {
+      x: dagreNode.x - size.width / 2,
+      y: dagreNode.y - size.height / 2,
+    });
+  }
+
+  // Phase 3: Compute parent state positions from children bounding boxes
+  const parentPadding = { top: 35, left: 20, right: 20, bottom: 20 };
+
+  for (const [key, state] of stateMap) {
+    if (state.children.length > 0) {
+      // Compute bounding box of children
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const childKey of state.children) {
+        const pos = absolutePositions.get(childKey);
+        const size = nodeSizes.get(childKey);
+        if (pos && size) {
+          minX = Math.min(minX, pos.x);
+          minY = Math.min(minY, pos.y);
+          maxX = Math.max(maxX, pos.x + size.width);
+          maxY = Math.max(maxY, pos.y + size.height);
+        }
+      }
+
+      const parentX = minX - parentPadding.left;
+      const parentY = minY - parentPadding.top;
+      const parentWidth = (maxX - minX) + parentPadding.left + parentPadding.right;
+      const parentHeight = (maxY - minY) + parentPadding.top + parentPadding.bottom;
+
+      absolutePositions.set(key, { x: parentX, y: parentY });
+      nodeSizes.set(key, { width: parentWidth, height: parentHeight });
+    }
+  }
+
+  // For childless top-level states, position is already set from Dagre
+
+  // Phase 4: Create ReactFlow nodes
+  const nodes: Node<StateData>[] = [];
+  let nodeIdCounter = 1;
+  const keyToNodeId = new Map<string, string>();
+
+  // Parents must come before children in the array
+  // First pass: top-level states
+  for (const [key, state] of stateMap) {
+    if (!state.parentName) {
+      const nodeId = `node_${nodeIdCounter++}`;
+      keyToNodeId.set(key, nodeId);
+      const pos = absolutePositions.get(key)!;
+      const size = nodeSizes.get(key)!;
+      nodes.push({
+        id: nodeId,
+        type: 'stateNode',
+        position: { x: pos.x, y: pos.y },
+        data: {
+          label: state.name,
+          history: false,
+          orthogonal: false,
+          entry: state.entry,
+          exit: state.exit,
+          do: '',
+        },
+        style: { width: size.width, height: size.height },
+      });
+    }
+  }
+
+  // Second pass: child states (convert to relative positions)
+  for (const [key, state] of stateMap) {
+    if (state.parentName) {
+      const nodeId = `node_${nodeIdCounter++}`;
+      keyToNodeId.set(key, nodeId);
+      const parentId = keyToNodeId.get(state.parentName)!;
+      const parentPos = absolutePositions.get(state.parentName)!;
+      const childPos = absolutePositions.get(key)!;
+      const size = nodeSizes.get(key)!;
+      nodes.push({
+        id: nodeId,
+        type: 'stateNode',
+        position: { x: childPos.x - parentPos.x, y: childPos.y - parentPos.y },
+        parentId,
+        extent: 'parent',
+        data: {
+          label: state.name,
+          history: false,
+          orthogonal: false,
+          entry: state.entry,
+          exit: state.exit,
+          do: '',
+        },
+        style: { width: size.width, height: size.height },
+      });
+    }
+  }
+
+  // Phase 5: Create edges with handles
+  const edges: Edge[] = [];
+  for (const t of transitions) {
+    const sourceId = keyToNodeId.get(t.sourceName);
+    const targetId = keyToNodeId.get(t.targetName);
+    if (!sourceId || !targetId) continue;
+
+    // Determine handle direction based on relative positions
+    const sourcePos = absolutePositions.get(t.sourceName);
+    const targetPos = absolutePositions.get(t.targetName);
+    let sourceHandle = 'right-source';
+    let targetHandle = 'left-target';
+    if (sourcePos && targetPos) {
+      const dx = targetPos.x - sourcePos.x;
+      const dy = targetPos.y - sourcePos.y;
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        if (dx >= 0) {
+          sourceHandle = 'right-source';
+          targetHandle = 'left-target';
+        } else {
+          sourceHandle = 'left-source';
+          targetHandle = 'right-target';
+        }
+      } else {
+        if (dy >= 0) {
+          sourceHandle = 'bottom-source';
+          targetHandle = 'top-target';
+        } else {
+          sourceHandle = 'top-source';
+          targetHandle = 'bottom-target';
+        }
+      }
+    }
+
+    const edge: Edge = {
+      id: `e${sourceId}-${targetId}-${edges.length}`,
+      source: sourceId,
+      target: targetId,
+      sourceHandle,
+      targetHandle,
+      type: 'spline',
+      data: {
+        controlPoints: [],
+        label: '',
+        guard: t.guard,
+        action: '',
+      },
+      markerEnd: { type: MarkerType.ArrowClosed },
+    };
+    edges.push(edge);
+  }
+
+  return { nodes, edges, rootHistory: false, machineProperties: defaultMachineProperties };
+}
+
+/** Convert Phoenix target string "TopLevel SubState" or "TopLevel" to internal key "TopLevel/SubState" or "TopLevel" */
+function phoenixTargetToKey(target: string): string {
+  const parts = target.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return `${parts[0]}/${parts[1]}`;
+  }
+  return parts[0];
 }

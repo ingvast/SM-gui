@@ -105,6 +105,15 @@ app.on('ready', () => {
             }
           },
         },
+        {
+          label: 'Import from Phoenix',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+            if (win) {
+              win.webContents.send('import-phoenix');
+            }
+          },
+        },
       ],
     },
     { role: 'editMenu' as const },
@@ -169,6 +178,26 @@ ipcMain.handle('open-file', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
     filters: [
       { name: 'State Machine Builder Files', extensions: ['smb'] },
+      { name: 'YAML Files', extensions: ['yaml', 'yml'] },
+    ],
+    properties: ['openFile'],
+  });
+
+  if (canceled || filePaths.length === 0) {
+    return { success: false, canceled: true };
+  }
+
+  try {
+    const content = fs.readFileSync(filePaths[0], 'utf-8');
+    return { success: true, content, filePath: filePaths[0] };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle('import-phoenix', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    filters: [
       { name: 'YAML Files', extensions: ['yaml', 'yml'] },
     ],
     properties: ['openFile'],

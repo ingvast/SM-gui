@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { Node, Edge } from 'reactflow';
-import { convertToYaml, convertFromYaml, convertToPhoenixYaml, MachineProperties, defaultMachineProperties } from '../yamlConverter';
+import { convertToYaml, convertFromYaml, convertToPhoenixYaml, convertFromPhoenixYaml, MachineProperties, defaultMachineProperties } from '../yamlConverter';
 import { resetIdCounter, resetStateNameCounter } from '../utils/idCounters';
 
 export function useFileOperations(
@@ -123,6 +123,44 @@ export function useFileOperations(
     }
   }, [nodes, edges, currentFilePath]);
 
+  const handleImportPhoenix = useCallback(async () => {
+    const result = await window.fileAPI.importPhoenix();
+    if (result.success && result.content) {
+      try {
+        const { nodes: loadedNodes, edges: loadedEdges, rootHistory: loadedRootHistory, machineProperties: loadedMachineProperties } = convertFromPhoenixYaml(result.content);
+        setNodes(loadedNodes);
+        setEdges(loadedEdges);
+        setRootHistory(loadedRootHistory);
+        setMachineProperties(loadedMachineProperties);
+        setSelectedTreeItem(null);
+        // Update idCounter to avoid conflicts
+        const maxId = loadedNodes.reduce((max, node) => {
+          const match = node.id.match(/node_(\d+)/);
+          if (match) {
+            return Math.max(max, parseInt(match[1], 10));
+          }
+          return max;
+        }, 0);
+        resetIdCounter(maxId + 1);
+        // Update stateNameCounter based on existing S# names
+        const maxStateNum = loadedNodes.reduce((max, node) => {
+          const match = node.data.label.match(/^S(\d+)$/);
+          if (match) {
+            return Math.max(max, parseInt(match[1], 10));
+          }
+          return max;
+        }, 0);
+        resetStateNameCounter(maxStateNum + 1);
+        setCurrentFilePath(null); // Phoenix file is not an .smb file
+        clearUndoRedo();
+      } catch (error) {
+        alert('Error parsing Phoenix YAML file: ' + (error as Error).message);
+      }
+    } else if (result.error) {
+      alert('Error opening file: ' + result.error);
+    }
+  }, [setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo]);
+
   useEffect(() => {
     const cleanup = window.fileAPI.onExportPhoenix(handleExportPhoenix);
     return cleanup;
@@ -133,5 +171,10 @@ export function useFileOperations(
     return cleanup;
   }, [handleSaveAs]);
 
-  return { handleSave, handleOpen, handleNew, handleExportPhoenix, handleSaveAs };
+  useEffect(() => {
+    const cleanup = window.fileAPI.onImportPhoenix(handleImportPhoenix);
+    return cleanup;
+  }, [handleImportPhoenix]);
+
+  return { handleSave, handleOpen, handleNew, handleExportPhoenix, handleSaveAs, handleImportPhoenix };
 }
