@@ -1207,6 +1207,7 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
 interface PhoenixState {
   in?: string[];
   out?: string[];
+  on?: string[];
   next?: string | Record<string, string>;
 }
 type PhoenixDocument = Record<string, Record<string, PhoenixState | null> | null>;
@@ -1258,11 +1259,23 @@ export function convertFromPhoenixYaml(yamlContent: string): ConvertFromYamlResu
 
         if (childData && typeof childData === 'object') {
           const cd = childData as PhoenixState;
-          if (cd.in) {
-            parsed.entry = (Array.isArray(cd.in) ? cd.in : [cd.in]).join('\n');
+          const entryLines: string[] = cd.in ? (Array.isArray(cd.in) ? cd.in : [cd.in]) : [];
+          const exitLines: string[] = cd.out ? (Array.isArray(cd.out) ? cd.out : [cd.out]) : [];
+
+          // "on" items become set(name, True) on entry and set(name, False) on exit
+          if (cd.on) {
+            const onItems = Array.isArray(cd.on) ? cd.on : [cd.on];
+            for (const name of onItems) {
+              entryLines.push(`set('${name}', True)`);
+              exitLines.push(`set('${name}', False)`);
+            }
           }
-          if (cd.out) {
-            parsed.exit = (Array.isArray(cd.out) ? cd.out : [cd.out]).join('\n');
+
+          if (entryLines.length > 0) {
+            parsed.entry = entryLines.join('\n');
+          }
+          if (exitLines.length > 0) {
+            parsed.exit = exitLines.join('\n');
           }
 
           // Parse transitions
