@@ -136,6 +136,7 @@ Cases when the connection is between an ancestor and descendant.
 - `p` - Create proxy: select a target state, press P, then click on canvas (or inside a parent state) to place a proxy node pointing to it
 - `t` - Start transition from selected node (click target to complete), or recompute handles if a transition is selected
 - `i` - Set initial state: select a child state, press I, then click in the parent to place the initial marker (small filled circle with arrow to the initial state)
+- `v` - Toggle visibility of transition guard/event labels
 - `z` - Zoom to fit selected state, or fit all states if nothing selected
 - `g` - Group: make all states visually inside the selected state into its children
 - `Shift+G` - Ungroup mode: move selected node out of its parent, then click additional nodes to move them out. Cursor changes to up-arrow.

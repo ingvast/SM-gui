@@ -43,7 +43,7 @@ import HistoryMarker from './HistoryMarker';
 import StateTree from './StateTree';
 import PropertiesPanel from './PropertiesPanel';
 import SplineEdge from './SplineEdge';
-import { EdgesProvider } from './EdgesContext';
+import { EdgesProvider, LabelsVisibleProvider } from './EdgesContext';
 import MachinePropertiesDialog from './MachinePropertiesDialog';
 import SettingsDialog, { Settings } from './SettingsDialog';
 import { MachineProperties, defaultMachineProperties, computeProxyLabel } from './yamlConverter';
@@ -932,6 +932,7 @@ const App = () => {
   // Grouping operations
   const { handleGroupStates, handleUngroupState } = useGrouping(nodes, setNodes, saveSnapshot);
 
+  const [showLabels, setShowLabels] = useState(true);
   const [isAddingNode, setIsAddingNode] = useState(false);
   const [isAddingDecision, setIsAddingDecision] = useState(false);
   const [isAddingProxy, setIsAddingProxy] = useState(false);
@@ -1400,6 +1401,7 @@ const App = () => {
     setIsAddingProxy, setProxyTargetId,
     setSelectedMarkerId, setEdges, setNodes, setRootHistory,
     setMachineProperties: setMachineProperties as unknown as (updater: (prev: unknown) => unknown) => void,
+    toggleShowLabels: () => setShowLabels(v => !v),
   });
 
   const onPaneClick = useCallback(
@@ -2178,6 +2180,7 @@ const App = () => {
           onMouseUp={handlePaneMouseUp}
           onMouseLeave={handlePaneMouseUp}
         >
+          <LabelsVisibleProvider value={showLabels}>
           <EdgesProvider value={setEdges}>
             <ReactFlow
               nodes={transformedNodes}
@@ -2212,6 +2215,7 @@ const App = () => {
               proOptions={{ hideAttribution: true }}
             />
           </EdgesProvider>
+          </LabelsVisibleProvider>
         </Box>
       </Box>
 

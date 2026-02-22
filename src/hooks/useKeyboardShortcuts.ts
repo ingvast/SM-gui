@@ -19,6 +19,7 @@ interface KeyboardShortcutsParams {
   saveSnapshot: () => void;
   handleCopyImage: () => Promise<void>;
   handleExportPdf: () => Promise<void>;
+  toggleShowLabels: () => void;
 
   // State
   nodes: Node[];
@@ -54,7 +55,7 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
     handleCopy, handlePaste, handleDuplicate, handleDuplicateWithExternalEdges, handleSave, handleOpen,
     handleUndo, handleRedo, handleSemanticZoomToSelected, handleNavigateUp,
     handleGroupStates, handleUngroupState, saveSnapshot,
-    handleCopyImage, handleExportPdf,
+    handleCopyImage, handleExportPdf, toggleShowLabels,
     nodes, edges,
     isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
     selectedMarkerId,
@@ -146,6 +147,9 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
       } else if (event.key === 'z' && !isModifierPressed) {
         event.preventDefault();
         handleSemanticZoomToSelected();
+      } else if (event.key === 'v' && !isModifierPressed) {
+        event.preventDefault();
+        toggleShowLabels();
       } else if (event.key === 'g' && !isModifierPressed && !event.shiftKey) {
         event.preventDefault();
         handleGroupStates();
@@ -258,7 +262,7 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
   }, [
     handleCopy, handlePaste, handleDuplicate, handleDuplicateWithExternalEdges, handleSave, handleOpen,
     handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState,
-    handleUndo, handleRedo, saveSnapshot, handleCopyImage, handleExportPdf,
+    handleUndo, handleRedo, saveSnapshot, handleCopyImage, handleExportPdf, toggleShowLabels,
     setIsAddingNode, setIsAddingDecision, isAddingDecision,
     nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
     selectedMarkerId, setEdges, setRootHistory, setMachineProperties, setNodes,

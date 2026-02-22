@@ -17,3 +17,12 @@ export function useSetEdges(): SetEdges {
   }
   return setEdges;
 }
+
+// Context for toggling label visibility (v key)
+const LabelsVisibleContext = createContext<boolean>(true);
+
+export const LabelsVisibleProvider = LabelsVisibleContext.Provider;
+
+export function useLabelsVisible(): boolean {
+  return useContext(LabelsVisibleContext);
+}
