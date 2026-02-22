@@ -65,8 +65,22 @@ export function generateUniqueNodeLabel(baseLabel: string, parentId: string | un
   return newLabel;
 }
 
+export function computeNodePath(nodeId: string, nodes: Node[]): string {
+  const node = nodes.find(n => n.id === nodeId);
+  if (!node) return '';
+  const parts: string[] = [node.data.label];
+  let current = node;
+  while (current.parentId) {
+    const parent = nodes.find(n => n.id === current.parentId);
+    if (!parent) break;
+    parts.unshift(parent.data.label);
+    current = parent;
+  }
+  return parts.join('/');
+}
+
 export function buildTreeData(nodes: Node[]) {
-  const stateNodes = nodes.filter(n => n.type !== 'decisionNode');
+  const stateNodes = nodes.filter(n => n.type !== 'decisionNode' && n.type !== 'proxyNode');
   const nodesMap = new Map(stateNodes.map(node => [node.id, { ...node, children: [] as Node[] }]));
 
   stateNodes.forEach(node => {

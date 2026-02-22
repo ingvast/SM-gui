@@ -28,6 +28,7 @@ interface KeyboardShortcutsParams {
   isUngroupingMode: boolean;
   isSettingInitial: boolean;
   isSettingHistory: boolean;
+  isAddingProxy: boolean;
   selectedMarkerId: string | null;
 
   // Setters
@@ -39,6 +40,8 @@ interface KeyboardShortcutsParams {
   setIsSettingInitial: (v: boolean) => void;
   setInitialTargetId: (id: string | null) => void;
   setIsSettingHistory: (v: boolean) => void;
+  setIsAddingProxy: (v: boolean) => void;
+  setProxyTargetId: (id: string | null) => void;
   setSelectedMarkerId: (id: string | null) => void;
   setEdges: (updater: (eds: Edge[]) => Edge[]) => void;
   setNodes: (updater: (nds: Node[]) => Node[]) => void;
@@ -53,10 +56,11 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
     handleGroupStates, handleUngroupState, saveSnapshot,
     handleCopyImage, handleExportPdf,
     nodes, edges,
-    isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory,
+    isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
     selectedMarkerId,
     setIsAddingNode, setIsAddingDecision, setIsAddingTransition, setTransitionSourceId,
     setIsUngroupingMode, setIsSettingInitial, setInitialTargetId, setIsSettingHistory,
+    setIsAddingProxy, setProxyTargetId,
     setSelectedMarkerId, setEdges, setNodes, setRootHistory, setMachineProperties,
   } = params;
 
@@ -165,6 +169,18 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
             console.log('Click on canvas to place root initial marker for:', selectedNode.data.label);
           }
         }
+      } else if (event.key === 'p' && !isModifierPressed) {
+        event.preventDefault();
+        const selectedNode = nodes.find(n => n.selected);
+        if (selectedNode && selectedNode.type === 'stateNode') {
+          setIsAddingProxy(true);
+          setProxyTargetId(selectedNode.id);
+          console.log('Click to place proxy for:', selectedNode.data.label);
+        }
+      } else if (event.key === 'Escape' && isAddingProxy) {
+        event.preventDefault();
+        setIsAddingProxy(false);
+        setProxyTargetId(null);
       } else if (event.key === 'h' && !isModifierPressed) {
         event.preventDefault();
         setIsSettingHistory(true);
@@ -244,9 +260,10 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
     handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState,
     handleUndo, handleRedo, saveSnapshot, handleCopyImage, handleExportPdf,
     setIsAddingNode, setIsAddingDecision, isAddingDecision,
-    nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory,
+    nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
     selectedMarkerId, setEdges, setRootHistory, setMachineProperties, setNodes,
     setIsAddingTransition, setTransitionSourceId, setIsUngroupingMode,
     setIsSettingInitial, setInitialTargetId, setIsSettingHistory, setSelectedMarkerId,
+    setIsAddingProxy, setProxyTargetId,
   ]);
 }

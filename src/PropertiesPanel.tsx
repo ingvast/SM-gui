@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { computeRelativePath } from './yamlConverter';
 import {
   Box,
   TextField,
@@ -74,6 +75,7 @@ interface Edge {
 interface Node {
   id: string;
   type?: string;
+  parentId?: string;
   data: {
     label: string;
     [key: string]: unknown;
@@ -134,11 +136,44 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const guardFieldRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
   const nameFieldRef = useRef<HTMLInputElement | null>(null);
 
-  // Get node label by id
+  // Get node label by id (plain name, used for source display and non-transition contexts)
   const getNodeLabel = (nodeId: string) => {
     const node = nodes.find(n => n.id === nodeId);
     return node?.data?.label || nodeId;
   };
+
+  // Compute the absolute path of a node by walking the parentId chain
+  const computeNodePathLocal = useCallback((nodeId: string): string => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return nodeId;
+    const parts: string[] = [node.data.label];
+    let current: Node = node;
+    while (current.parentId) {
+      const parent = nodes.find(n => n.id === current.parentId);
+      if (!parent) break;
+      parts.unshift(parent.data.label);
+      current = parent;
+    }
+    return parts.join('/');
+  }, [nodes]);
+
+  // Get transition target display label using relative path rules (same as YAML export).
+  // For proxy targets, resolves to the proxy's real target path before computing.
+  const getTransitionTargetLabel = useCallback((sourceId: string, targetId: string): string => {
+    const targetNode = nodes.find(n => n.id === targetId);
+    if (!targetNode) return targetId;
+
+    // Resolve through proxy to get the effective target path
+    let effectiveTargetPath: string;
+    if (targetNode.type === 'proxyNode') {
+      effectiveTargetPath = (targetNode.data.targetPath as string) || targetNode.data.label;
+    } else {
+      effectiveTargetPath = computeNodePathLocal(targetId);
+    }
+
+    const sourcePath = computeNodePathLocal(sourceId);
+    return computeRelativePath(sourcePath, effectiveTargetPath);
+  }, [nodes, computeNodePathLocal]);
 
   // Compute outgoing and incoming transitions
   const outgoingTransitions = useMemo(() => {
@@ -469,7 +504,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         </Typography>
         <Box sx={{ p: 1, bgcolor: '#f5f5f5', borderRadius: 1 }}>
           <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-            {getNodeLabel(selectedCanvasEdge.source)} → {getNodeLabel(selectedCanvasEdge.target)}
+            {getNodeLabel(selectedCanvasEdge.source)} → {getTransitionTargetLabel(selectedCanvasEdge.source, selectedCanvasEdge.target)}
           </Typography>
 
           <Box sx={{ position: 'relative', mb: 1 }}>
@@ -560,6 +595,22 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   }
 
   const isDecision = selectedNode.type === 'decisionNode';
+  const isProxy = selectedNode.type === 'proxyNode';
+
+  if (isProxy) {
+    const targetPath = (selectedNode.data as { targetPath?: string }).targetPath || selectedNode.data.label;
+    const broken = (selectedNode.data as { broken?: boolean }).broken;
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, p: 1 }}>
+        <Typography variant="subtitle2" color="text.secondary">
+          Proxy
+        </Typography>
+        <Typography variant="body2" color={broken ? 'error' : 'text.primary'}>
+          {broken ? '⚠ Target missing:' : 'Target:'} {targetPath}
+        </Typography>
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -797,7 +848,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       }}
                     >
                       <ListItemText
-                        primary={getNodeLabel(edge.target)}
+                        primary={getTransitionTargetLabel(edge.source, edge.target)}
                         secondary={edge.data?.guard ? `[${edge.data.guard}]` : undefined}
                         primaryTypographyProps={{
                           variant: 'body2',
@@ -871,7 +922,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           {selectedEdge && (
             <Box sx={{ mt: 1, p: 1, bgcolor: '#f5f5f5', borderRadius: 1 }}>
               <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                Transition: {getNodeLabel(selectedEdge.source)} → {getNodeLabel(selectedEdge.target)}
+                Transition: {getNodeLabel(selectedEdge.source)} → {getTransitionTargetLabel(selectedEdge.source, selectedEdge.target)}
               </Typography>
 
               <Box sx={{ position: 'relative', mb: 1 }}>

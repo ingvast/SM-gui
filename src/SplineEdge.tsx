@@ -1,5 +1,6 @@
 import React, { useCallback, useState, useEffect, useRef } from 'react';
-import { EdgeProps, useReactFlow, useStore, Position } from 'reactflow';
+import { EdgeProps, useStore, Position } from 'reactflow';
+import { useSetEdges } from './EdgesContext';
 
 // Coordinate system transformation utilities
 // Local coords: (0,0) = source, (1,0) = target
@@ -435,7 +436,7 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   selected,
   data,
 }) => {
-  const { setEdges } = useReactFlow();
+  const setEdges = useSetEdges();
   const transform = useStore((state) => ({ x: state.transform[0], y: state.transform[1], zoom: state.transform[2] }));
 
   // No counter-scaling needed - viewport is locked at zoom=1 and edges are at screen coordinates
