@@ -1,5 +1,7 @@
 import React, { memo } from 'react';
 import { Handle, Position } from 'reactflow';
+import { NodeResizer } from '@reactflow/node-resizer';
+import '@reactflow/node-resizer/dist/style.css';
 import './ProxyNode.css';
 
 interface ProxyNodeData {
@@ -17,9 +19,10 @@ interface ProxyNodeProps {
   selected: boolean;
 }
 
-export default memo(({ data }: ProxyNodeProps) => {
+export default memo(({ data, selected }: ProxyNodeProps) => {
   return (
     <div className={`proxy-node${data.broken ? ' broken' : ''}`}>
+      <NodeResizer isVisible={selected} minWidth={60} minHeight={24} />
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {data.broken ? `⚠ ${data.targetPath}` : `→ ${data.label}`}
       </span>
