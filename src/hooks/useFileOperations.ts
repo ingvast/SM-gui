@@ -16,6 +16,8 @@ export function useFileOperations(
   setSelectedTreeItem: (id: string | null) => void,
   setCurrentFilePath: (path: string | null) => void,
   clearUndoRedo: () => void,
+  onSaved?: () => void,
+  onLoaded?: () => void,
 ) {
   const handleSave = useCallback(async () => {
     const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, true, machineProperties);
@@ -27,10 +29,11 @@ export function useFileOperations(
     }
     if (result.success && result.filePath) {
       setCurrentFilePath(result.filePath);
+      onSaved?.();
     } else if (result.error) {
       alert('Error saving file: ' + result.error);
     }
-  }, [nodes, edges, rootHistory, machineProperties, currentFilePath, setCurrentFilePath]);
+  }, [nodes, edges, rootHistory, machineProperties, currentFilePath, setCurrentFilePath, onSaved]);
 
   const handleOpen = useCallback(async () => {
     const result = await window.fileAPI.openFile();
@@ -71,13 +74,14 @@ export function useFileOperations(
         resetProxyNameCounter(maxProxyNum + 1);
         setCurrentFilePath(result.filePath || null);
         clearUndoRedo();
+        onLoaded?.();
       } catch (error) {
         alert('Error parsing YAML file: ' + (error as Error).message);
       }
     } else if (result.error) {
       alert('Error opening file: ' + result.error);
     }
-  }, [setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo]);
+  }, [setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo, onLoaded]);
 
   const handleNew = useCallback(() => {
     if (nodes.length > 0) {
@@ -96,7 +100,8 @@ export function useFileOperations(
     resetStateNameCounter(1);
     resetProxyNameCounter(1);
     clearUndoRedo();
-  }, [nodes, setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo]);
+    onLoaded?.();
+  }, [nodes, setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo, onLoaded]);
 
   const handleSaveAs = useCallback(async () => {
     const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, true, machineProperties);
@@ -106,10 +111,11 @@ export function useFileOperations(
     const result = await window.fileAPI.saveFile(yamlContent, defaultName);
     if (result.success && result.filePath) {
       setCurrentFilePath(result.filePath);
+      onSaved?.();
     } else if (result.error) {
       alert('Error saving file: ' + result.error);
     }
-  }, [nodes, edges, rootHistory, machineProperties, currentFilePath, setCurrentFilePath]);
+  }, [nodes, edges, rootHistory, machineProperties, currentFilePath, setCurrentFilePath, onSaved]);
 
   const handleExportPhoenix = useCallback(async () => {
     const { yaml: phoenixYaml, warnings } = convertToPhoenixYaml(
@@ -164,6 +170,7 @@ export function useFileOperations(
         resetProxyNameCounter(1); // Phoenix files have no proxy nodes
         setCurrentFilePath(null); // Phoenix file is not an .smb file
         clearUndoRedo();
+        onLoaded?.();
       } catch (error) {
         alert('Error parsing Phoenix YAML file: ' + (error as Error).message);
       }

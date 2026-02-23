@@ -843,7 +843,7 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
           className="nodrag nopan"
           style={{
             position: 'absolute',
-            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            transform: `translate(-50%, -100%) translate(${labelX}px, ${labelY}px)`,
             pointerEvents: disablePointer ? 'none' : 'all',
             cursor: selected ? (draggingLabel ? 'grabbing' : 'grab') : 'default',
             fontSize: labelFontSize,

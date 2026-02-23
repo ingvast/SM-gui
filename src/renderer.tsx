@@ -172,11 +172,14 @@ const App = () => {
   const [machineProperties, setMachineProperties] = useState<MachineProperties>(defaultMachineProperties);
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
   const [rootHistory, setRootHistory] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [saveFlash, setSaveFlash] = useState(false);
 
   // Undo/Redo
   const { pushSnapshot, undo, redo, canUndo, canRedo, clear: clearUndoRedo } = useUndoRedo();
   const saveSnapshot = useCallback(() => {
     pushSnapshot({ nodes, edges, machineProperties, rootHistory });
+    setIsDirty(true);
   }, [nodes, edges, machineProperties, rootHistory, pushSnapshot]);
   const dragStartSnapshot = useRef<{ nodes: typeof nodes; edges: typeof edges; machineProperties: typeof machineProperties; rootHistory: boolean } | null>(null);
 
@@ -227,15 +230,16 @@ const App = () => {
     });
   }, []);
 
-  // Update window title based on current file
+  // Update window title based on current file and dirty state
   useEffect(() => {
+    const prefix = isDirty ? '* ' : '';
     if (currentFilePath) {
       const fileName = currentFilePath.split('/').pop()?.replace(/\.(smb|yaml|yml)$/i, '') || currentFilePath;
-      document.title = `${fileName} - SM Editor`;
+      document.title = `${prefix}${fileName} - SM Editor`;
     } else {
-      document.title = 'SM Editor';
+      document.title = `${prefix}SM Editor`;
     }
-  }, [currentFilePath]);
+  }, [currentFilePath, isDirty]);
 
   // Animation loop for smooth transitions
   useEffect(() => {
@@ -1078,11 +1082,21 @@ const App = () => {
 
 
 
+  const onSaved = useCallback(() => setIsDirty(false), []);
+  const onLoaded = useCallback(() => setIsDirty(false), []);
+
   // File operations
   const { handleSave, handleOpen, handleNew } = useFileOperations(
     nodes, edges, rootHistory, machineProperties, currentFilePath,
     setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo,
+    onSaved, onLoaded,
   );
+
+  const handleSaveWithFlash = useCallback(async () => {
+    setSaveFlash(true);
+    setTimeout(() => setSaveFlash(false), 200);
+    await handleSave();
+  }, [handleSave]);
 
   const treeData = useMemo(() => buildTreeData(nodes), [nodes]);
 
@@ -1463,7 +1477,7 @@ const App = () => {
 
   // Keyboard shortcuts
   useKeyboardShortcuts({
-    handleCopy, handlePaste, handleDuplicate, handleDuplicateWithExternalEdges, handleSave, handleOpen,
+    handleCopy, handlePaste, handleDuplicate, handleDuplicateWithExternalEdges, handleSave: handleSaveWithFlash, handleOpen,
     handleUndo, handleRedo, handleSemanticZoomToSelected, handleNavigateUp,
     handleGroupStates, handleUngroupState, saveSnapshot,
     handleCopyImage, handleExportPdf,
@@ -1686,10 +1700,11 @@ const App = () => {
   // Handle drag stop - push pre-drag snapshot for undo
   const onNodeDragStop = useCallback(
     (event, node) => {
-      // Push the pre-drag snapshot for undo
+      // Push the pre-drag snapshot for undo and mark dirty
       if (dragStartSnapshot.current) {
         pushSnapshot(dragStartSnapshot.current);
         dragStartSnapshot.current = null;
+        setIsDirty(true);
       }
       if (node.id === 'initial-marker-root') {
         // Root initial marker - update machineProperties
@@ -2204,9 +2219,14 @@ const App = () => {
               variant="contained"
               size="small"
               startIcon={<SaveIcon />}
-              onClick={handleSave}
+              onClick={handleSaveWithFlash}
+              sx={{
+                transition: 'filter 0.1s ease',
+                ...(saveFlash ? { filter: 'brightness(0.7)' } : {}),
+                ...(isDirty ? { fontWeight: 700 } : {}),
+              }}
             >
-              Save
+              Save{isDirty ? ' *' : ''}
             </Button>
           </Tooltip>
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
