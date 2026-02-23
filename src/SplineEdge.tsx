@@ -21,6 +21,7 @@ interface SplineEdgeData {
   sourceIsAncestor?: boolean;  // true if source is ancestor of target
   targetIsAncestor?: boolean;  // true if target is ancestor of source
   warning?: boolean;           // true if this transition is unreachable (after a guardless transition)
+  anyEdgeSelected?: boolean;   // true if any edge in the graph is selected
 }
 
 // Transform from local (normalized) coordinates to absolute canvas coordinates
@@ -768,8 +769,12 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
     arrowPath += ' Z';
   }
 
+  // When any edge is selected, disable pointer-events on non-selected edges
+  // so reconnect handles on the selected edge are easy to grab.
+  const disablePointer = data?.anyEdgeSelected && !selected;
+
   return (
-    <g>
+    <g style={disablePointer ? { pointerEvents: 'none' } : undefined}>
       {/* Invisible wider path for easier clicking (uses full path to node edge) */}
       <path
         d={pathD}

@@ -590,6 +590,7 @@ const App = () => {
 
   // Filter edges: show if at least one endpoint is visible
   const transformedEdges = useMemo(() => {
+    const anyEdgeSelected = edges.some(e => e.selected);
     const regularEdges = edges
       .filter(edge => {
         return visibleNodeIds.has(edge.source) || visibleNodeIds.has(edge.target);
@@ -610,6 +611,7 @@ const App = () => {
             effectiveScale,
             sourceIsAncestor,  // true if source is ancestor of target
             targetIsAncestor,  // true if target is ancestor of source
+            anyEdgeSelected,
           },
         };
       });
@@ -2273,7 +2275,7 @@ const App = () => {
               connectionRadius={40}
               connectionMode={ConnectionMode.Loose}
               edgesUpdatable={false}
-              reconnectRadius={10}
+              reconnectRadius={20}
               minZoom={1}
               maxZoom={1}
               zoomOnScroll={false}
