@@ -1478,8 +1478,8 @@ export function convertFromPhoenixYaml(yamlContent: string): ConvertFromYamlResu
           if (cd.on) {
             const onItems = Array.isArray(cd.on) ? cd.on : [cd.on];
             for (const name of onItems) {
-              entryLines.push(`set('${name}', True)`);
-              exitLines.push(`set('${name}', False)`);
+              entryLines.push(`on('${name}')`);
+              exitLines.push(`off('${name}')`);
             }
           }
 
