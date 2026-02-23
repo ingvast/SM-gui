@@ -938,6 +938,7 @@ const App = () => {
   const [isAddingDecision, setIsAddingDecision] = useState(false);
   const [isAddingProxy, setIsAddingProxy] = useState(false);
   const [proxyTargetId, setProxyTargetId] = useState<string | null>(null);
+  const [proxySourceEdgeId, setProxySourceEdgeId] = useState<string | null>(null);
   const [isAddingTransition, setIsAddingTransition] = useState(false);
   const [transitionSourceId, setTransitionSourceId] = useState<string | null>(null);
   const [isRetargetingTransition, setIsRetargetingTransition] = useState(false);
@@ -1403,7 +1404,7 @@ const App = () => {
     selectedMarkerId,
     setIsAddingNode, setIsAddingDecision, setIsAddingTransition, setTransitionSourceId,
     setIsUngroupingMode, setIsSettingInitial, setInitialTargetId, setIsSettingHistory,
-    setIsAddingProxy, setProxyTargetId,
+    setIsAddingProxy, setProxyTargetId, setProxySourceEdgeId,
     setIsRetargetingTransition, setIsResourcingTransition, setRetargetEdgeId,
     setSelectedMarkerId, setEdges, setNodes, setRootHistory,
     setMachineProperties: setMachineProperties as unknown as (updater: (prev: unknown) => unknown) => void,
@@ -1481,6 +1482,7 @@ const App = () => {
         if (!targetNode) {
           setIsAddingProxy(false);
           setProxyTargetId(null);
+          setProxySourceEdgeId(null);
           return;
         }
 
@@ -1496,8 +1498,9 @@ const App = () => {
         const proxyWidth = 150 / effectiveScale;
         const proxyHeight = 40 / effectiveScale;
 
+        const newProxyId = getNextId();
         const newProxy = {
-          id: getNextId(),
+          id: newProxyId,
           type: 'proxyNode',
           position: { x: worldX, y: worldY },
           data: {
@@ -1513,6 +1516,16 @@ const App = () => {
 
         saveSnapshot();
         setNodes((nds) => [...nds, newProxy]);
+        if (proxySourceEdgeId) {
+          const sourceId = edges.find(e => e.id === proxySourceEdgeId)?.source ?? '';
+          const { sourceHandle, targetHandle } = calculateBestHandles(sourceId, newProxyId, [...nodes, newProxy]);
+          setEdges((eds) => eds.map(edge =>
+            edge.id === proxySourceEdgeId
+              ? { ...edge, target: newProxyId, sourceHandle, targetHandle }
+              : edge
+          ));
+          setProxySourceEdgeId(null);
+        }
         setIsAddingProxy(false);
         setProxyTargetId(null);
         event.stopPropagation();
@@ -1579,7 +1592,7 @@ const App = () => {
         );
       }
     },
-    [isAddingNode, isAddingDecision, isAddingProxy, proxyTargetId, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setMachineProperties, setRootHistory, nodes, effectiveScale, effectivePan, viewportSize, saveSnapshot]
+    [isAddingNode, isAddingDecision, isAddingProxy, proxyTargetId, proxySourceEdgeId, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setMachineProperties, setRootHistory, nodes, edges, effectiveScale, effectivePan, viewportSize, saveSnapshot]
   );
 
   // Capture snapshot before drag begins
@@ -2020,6 +2033,7 @@ const App = () => {
         if (!targetNode) {
           setIsAddingProxy(false);
           setProxyTargetId(null);
+          setProxySourceEdgeId(null);
           return;
         }
 
@@ -2054,8 +2068,9 @@ const App = () => {
         }
 
         const parentPath = computeNodePath(node.id, nodes);
+        const newProxyId = getNextId();
         const newProxy = {
-          id: getNextId(),
+          id: newProxyId,
           type: 'proxyNode',
           position: newRelativePosition,
           parentId: node.id,
@@ -2073,12 +2088,22 @@ const App = () => {
 
         saveSnapshot();
         setNodes((nds) => [...nds, newProxy]);
+        if (proxySourceEdgeId) {
+          const sourceId = edges.find(e => e.id === proxySourceEdgeId)?.source ?? '';
+          const { sourceHandle, targetHandle } = calculateBestHandles(sourceId, newProxyId, [...nodes, newProxy]);
+          setEdges((eds) => eds.map(edge =>
+            edge.id === proxySourceEdgeId
+              ? { ...edge, target: newProxyId, sourceHandle, targetHandle }
+              : edge
+          ));
+          setProxySourceEdgeId(null);
+        }
         setIsAddingProxy(false);
         setProxyTargetId(null);
         event.stopPropagation();
       }
     },
-    [isAddingNode, isAddingDecision, isAddingProxy, proxyTargetId, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, isRetargetingTransition, isResourcingTransition, retargetEdgeId, setNodes, setEdges, setSelectedTreeItem, nodes, edges, effectiveScale, effectivePan, viewportSize, saveSnapshot]
+    [isAddingNode, isAddingDecision, isAddingProxy, proxyTargetId, proxySourceEdgeId, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, isRetargetingTransition, isResourcingTransition, retargetEdgeId, setNodes, setEdges, setSelectedTreeItem, nodes, edges, effectiveScale, effectivePan, viewportSize, saveSnapshot]
   );
 
   return (

@@ -133,8 +133,10 @@ Cases when the connection is between an ancestor and descendant.
 
 - `n` - Enter "add node" mode (click to place new state)
 - `d` - Enter "add decision" mode (click to place decision circle; click inside a state to add as child)
-- `p` - Create proxy: select a target state, press P, then click on canvas (or inside a parent state) to place a proxy node pointing to it
+- `p` - Create proxy: select a target state, press P, then click on canvas (or inside a parent state) to place a proxy node pointing to it. Or select a transition, press P to create a proxy of its target and automatically retarget the transition to the new proxy.
 - `t` - Start transition from selected node (click target to complete), or recompute handles if a transition is selected
+- `Shift+T` - With a transition selected: enter retarget mode, click any node to set it as the new target
+- `Shift+S` - With a transition selected: enter re-source mode, click any state or decision to set it as the new source
 - `i` - Set initial state: select a child state, press I, then click in the parent to place the initial marker (small filled circle with arrow to the initial state)
 - `v` - Toggle visibility of transition guard/event labels
 - `z` - Zoom to fit selected state, or fit all states if nothing selected

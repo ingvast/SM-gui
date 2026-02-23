@@ -45,6 +45,7 @@ interface KeyboardShortcutsParams {
   setIsSettingHistory: (v: boolean) => void;
   setIsAddingProxy: (v: boolean) => void;
   setProxyTargetId: (id: string | null) => void;
+  setProxySourceEdgeId: (id: string | null) => void;
   setIsRetargetingTransition: (v: boolean) => void;
   setIsResourcingTransition: (v: boolean) => void;
   setRetargetEdgeId: (id: string | null) => void;
@@ -67,7 +68,7 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
     selectedMarkerId,
     setIsAddingNode, setIsAddingDecision, setIsAddingTransition, setTransitionSourceId,
     setIsUngroupingMode, setIsSettingInitial, setInitialTargetId, setIsSettingHistory,
-    setIsAddingProxy, setProxyTargetId,
+    setIsAddingProxy, setProxyTargetId, setProxySourceEdgeId,
     setIsRetargetingTransition, setIsResourcingTransition, setRetargetEdgeId,
     setSelectedMarkerId, setEdges, setNodes, setRootHistory, setMachineProperties,
   } = params;
@@ -208,12 +209,19 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
         if (selectedNode && selectedNode.type === 'stateNode') {
           setIsAddingProxy(true);
           setProxyTargetId(selectedNode.id);
-          console.log('Click to place proxy for:', selectedNode.data.label);
+        } else {
+          const selectedEdge = edges.find(e => e.selected);
+          if (selectedEdge) {
+            setIsAddingProxy(true);
+            setProxyTargetId(selectedEdge.target);
+            setProxySourceEdgeId(selectedEdge.id);
+          }
         }
       } else if (event.key === 'Escape' && isAddingProxy) {
         event.preventDefault();
         setIsAddingProxy(false);
         setProxyTargetId(null);
+        setProxySourceEdgeId(null);
       } else if (event.key === 'h' && !isModifierPressed) {
         event.preventDefault();
         setIsSettingHistory(true);
@@ -298,7 +306,7 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
     selectedMarkerId, setEdges, setRootHistory, setMachineProperties, setNodes,
     setIsAddingTransition, setTransitionSourceId, setIsUngroupingMode,
     setIsSettingInitial, setInitialTargetId, setIsSettingHistory, setSelectedMarkerId,
-    setIsAddingProxy, setProxyTargetId,
+    setIsAddingProxy, setProxyTargetId, setProxySourceEdgeId,
     setIsRetargetingTransition, setIsResourcingTransition, setRetargetEdgeId,
   ]);
 }
