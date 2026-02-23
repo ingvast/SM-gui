@@ -396,8 +396,8 @@ export function convertToYaml(
       if (node.data.showExit) stateObj.graphics.showExit = true;
     }
 
-    // Add child states (exclude decision nodes)
-    const stateChildren = nodes.filter(n => n.parentId === node.id && n.type !== 'decisionNode');
+    // Add child states (exclude decision and proxy nodes)
+    const stateChildren = nodes.filter(n => n.parentId === node.id && n.type === 'stateNode');
     if (stateChildren.length > 0) {
       const states: Record<string, YamlState> = {};
       stateChildren.forEach(child => {
