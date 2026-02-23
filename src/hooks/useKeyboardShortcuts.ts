@@ -30,6 +30,8 @@ interface KeyboardShortcutsParams {
   isSettingInitial: boolean;
   isSettingHistory: boolean;
   isAddingProxy: boolean;
+  isRetargetingTransition: boolean;
+  isResourcingTransition: boolean;
   selectedMarkerId: string | null;
 
   // Setters
@@ -43,6 +45,9 @@ interface KeyboardShortcutsParams {
   setIsSettingHistory: (v: boolean) => void;
   setIsAddingProxy: (v: boolean) => void;
   setProxyTargetId: (id: string | null) => void;
+  setIsRetargetingTransition: (v: boolean) => void;
+  setIsResourcingTransition: (v: boolean) => void;
+  setRetargetEdgeId: (id: string | null) => void;
   setSelectedMarkerId: (id: string | null) => void;
   setEdges: (updater: (eds: Edge[]) => Edge[]) => void;
   setNodes: (updater: (nds: Node[]) => Node[]) => void;
@@ -58,10 +63,12 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
     handleCopyImage, handleExportPdf, toggleShowLabels,
     nodes, edges,
     isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
+    isRetargetingTransition, isResourcingTransition,
     selectedMarkerId,
     setIsAddingNode, setIsAddingDecision, setIsAddingTransition, setTransitionSourceId,
     setIsUngroupingMode, setIsSettingInitial, setInitialTargetId, setIsSettingHistory,
     setIsAddingProxy, setProxyTargetId,
+    setIsRetargetingTransition, setIsResourcingTransition, setRetargetEdgeId,
     setSelectedMarkerId, setEdges, setNodes, setRootHistory, setMachineProperties,
   } = params;
 
@@ -137,6 +144,28 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
             setTransitionSourceId(selectedNode.id);
           }
         }
+      } else if (event.key === 'T' && event.shiftKey && !isModifierPressed) {
+        event.preventDefault();
+        const selectedEdge = edges.find(e => e.selected);
+        if (selectedEdge) {
+          setIsRetargetingTransition(true);
+          setRetargetEdgeId(selectedEdge.id);
+        }
+      } else if (event.key === 'S' && event.shiftKey && !isModifierPressed) {
+        event.preventDefault();
+        const selectedEdge = edges.find(e => e.selected);
+        if (selectedEdge) {
+          setIsResourcingTransition(true);
+          setRetargetEdgeId(selectedEdge.id);
+        }
+      } else if (event.key === 'Escape' && isRetargetingTransition) {
+        event.preventDefault();
+        setIsRetargetingTransition(false);
+        setRetargetEdgeId(null);
+      } else if (event.key === 'Escape' && isResourcingTransition) {
+        event.preventDefault();
+        setIsResourcingTransition(false);
+        setRetargetEdgeId(null);
       } else if (event.key === 'Escape' && isAddingDecision) {
         event.preventDefault();
         setIsAddingDecision(false);
@@ -265,9 +294,11 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
     handleUndo, handleRedo, saveSnapshot, handleCopyImage, handleExportPdf, toggleShowLabels,
     setIsAddingNode, setIsAddingDecision, isAddingDecision,
     nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
+    isRetargetingTransition, isResourcingTransition,
     selectedMarkerId, setEdges, setRootHistory, setMachineProperties, setNodes,
     setIsAddingTransition, setTransitionSourceId, setIsUngroupingMode,
     setIsSettingInitial, setInitialTargetId, setIsSettingHistory, setSelectedMarkerId,
     setIsAddingProxy, setProxyTargetId,
+    setIsRetargetingTransition, setIsResourcingTransition, setRetargetEdgeId,
   ]);
 }

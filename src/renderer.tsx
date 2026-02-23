@@ -53,6 +53,7 @@ import {
   SEMANTIC_ZOOM_CONFIG,
 } from './semanticZoom';
 import { calculateNodeDepth, isAncestorOf, buildTreeData, getAllDescendants, computeNodePath } from './utils/nodeUtils';
+import { calculateBestHandles } from './utils/handleUtils';
 import { getNextId, getNextStateName, getNextDecisionName, getNextProxyName } from './utils/idCounters';
 import { useClipboard } from './hooks/useClipboard';
 import { useFileOperations } from './hooks/useFileOperations';
@@ -939,6 +940,9 @@ const App = () => {
   const [proxyTargetId, setProxyTargetId] = useState<string | null>(null);
   const [isAddingTransition, setIsAddingTransition] = useState(false);
   const [transitionSourceId, setTransitionSourceId] = useState<string | null>(null);
+  const [isRetargetingTransition, setIsRetargetingTransition] = useState(false);
+  const [isResourcingTransition, setIsResourcingTransition] = useState(false);
+  const [retargetEdgeId, setRetargetEdgeId] = useState<string | null>(null);
   const [focusGuard, setFocusGuard] = useState(false);
   const [focusName, setFocusName] = useState(false);
 
@@ -1395,10 +1399,12 @@ const App = () => {
     handleCopyImage, handleExportPdf,
     nodes, edges,
     isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
+    isRetargetingTransition, isResourcingTransition,
     selectedMarkerId,
     setIsAddingNode, setIsAddingDecision, setIsAddingTransition, setTransitionSourceId,
     setIsUngroupingMode, setIsSettingInitial, setInitialTargetId, setIsSettingHistory,
     setIsAddingProxy, setProxyTargetId,
+    setIsRetargetingTransition, setIsResourcingTransition, setRetargetEdgeId,
     setSelectedMarkerId, setEdges, setNodes, setRootHistory,
     setMachineProperties: setMachineProperties as unknown as (updater: (prev: unknown) => unknown) => void,
     toggleShowLabels: () => setShowLabels(v => !v),
@@ -1698,6 +1704,48 @@ const App = () => {
         setSelectedTreeItem(null);
         setNodes((nds) => nds.map((n) => ({ ...n, selected: false })));
         setFocusGuard(true);
+        event.stopPropagation();
+        return;
+      }
+
+      // Handle retargeting a transition (Shift+T)
+      if (isRetargetingTransition && retargetEdgeId) {
+        saveSnapshot();
+        const { sourceHandle, targetHandle } = calculateBestHandles(
+          edges.find(e => e.id === retargetEdgeId)?.source ?? '',
+          node.id,
+          nodes,
+        );
+        setEdges((eds) => eds.map((edge) => {
+          if (edge.id === retargetEdgeId) {
+            return { ...edge, target: node.id, targetHandle, sourceHandle };
+          }
+          return edge;
+        }));
+        setIsRetargetingTransition(false);
+        setRetargetEdgeId(null);
+        event.stopPropagation();
+        return;
+      }
+
+      // Handle re-sourcing a transition (Shift+S)
+      if (isResourcingTransition && retargetEdgeId) {
+        // Proxy nodes cannot be sources
+        if (node.type === 'proxyNode') return;
+        saveSnapshot();
+        const { sourceHandle, targetHandle } = calculateBestHandles(
+          node.id,
+          edges.find(e => e.id === retargetEdgeId)?.target ?? '',
+          nodes,
+        );
+        setEdges((eds) => eds.map((edge) => {
+          if (edge.id === retargetEdgeId) {
+            return { ...edge, source: node.id, sourceHandle, targetHandle };
+          }
+          return edge;
+        }));
+        setIsResourcingTransition(false);
+        setRetargetEdgeId(null);
         event.stopPropagation();
         return;
       }
@@ -2030,7 +2078,7 @@ const App = () => {
         event.stopPropagation();
       }
     },
-    [isAddingNode, isAddingDecision, isAddingProxy, proxyTargetId, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setSelectedTreeItem, nodes, effectiveScale, effectivePan, viewportSize, saveSnapshot]
+    [isAddingNode, isAddingDecision, isAddingProxy, proxyTargetId, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, isRetargetingTransition, isResourcingTransition, retargetEdgeId, setNodes, setEdges, setSelectedTreeItem, nodes, edges, effectiveScale, effectivePan, viewportSize, saveSnapshot]
   );
 
   return (
@@ -2166,13 +2214,13 @@ const App = () => {
 
         <Box
           ref={reactFlowWrapper}
-          className={isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
+          className={isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
           sx={{
             flexGrow: 1,
             position: 'relative',
-            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair' : 'default'),
+            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair' : 'default'),
             '& *': {
-              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair !important' : undefined),
+              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair !important' : undefined),
             },
           }}
           onMouseDown={handlePaneMouseDown}
