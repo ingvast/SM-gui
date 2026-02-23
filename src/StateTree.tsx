@@ -34,6 +34,8 @@ const StateTree = ({ treeData, onSelect, selectedItemId }) => {
           // Selection is handled by TreeNode onClick
         }}
         defaultExpandedItems={['/']}
+        expansionTrigger="iconContainer"
+        itemChildrenIndentation={24}
       >
         {treeData.map(node => (
           <TreeNode

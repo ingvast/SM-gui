@@ -26,6 +26,12 @@
   box-shadow: 0 0 0 1.5px #1976d2, 0 0 12px 4px rgba(25, 118, 210, 0.35);
 }
 
+.proxy-node.target-selected {
+  border-color: #f57c00;
+  color: #e65100;
+  box-shadow: 0 0 0 1.5px #f57c00, 0 0 12px 5px rgba(245, 124, 0, 0.45);
+}
+
 .proxy-node .invisible-handle {
   width: 8px !important;
   height: 8px !important;

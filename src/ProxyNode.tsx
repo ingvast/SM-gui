@@ -12,6 +12,7 @@ interface ProxyNodeData {
   broken?: boolean;
   screenWidth?: number;
   screenHeight?: number;
+  targetSelected?: boolean;
 }
 
 interface ProxyNodeProps {
@@ -21,7 +22,7 @@ interface ProxyNodeProps {
 
 export default memo(({ data, selected }: ProxyNodeProps) => {
   return (
-    <div className={`proxy-node${data.broken ? ' broken' : ''}${selected ? ' selected' : ''}`}>
+    <div className={`proxy-node${data.broken ? ' broken' : ''}${selected ? ' selected' : ''}${data.targetSelected ? ' target-selected' : ''}`}>
       <NodeResizer isVisible={selected} minWidth={60} minHeight={24} />
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {data.broken ? `⚠ ${data.targetPath}` : `→ ${data.label}`}

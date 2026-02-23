@@ -9,14 +9,13 @@
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #1976d2;
-  color: white;
+  background: white;
+  border: 1.5px solid;  /* color set inline */
   font-size: 9px;
-  line-height: 16px;
+  line-height: 13px;
   text-align: center;
   pointer-events: all;
   z-index: 10;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
 }
 
 /* Hide ReactFlow handles - they exist for connection logic but are not visible */

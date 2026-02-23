@@ -378,6 +378,11 @@ const App = () => {
         .map(n => (n.data as unknown as { targetId: string }).targetId)
     );
 
+    // Compute set of currently selected state/decision node IDs
+    const selectedNodeIds = new Set<string>(
+      nodes.filter(n => n.selected).map(n => n.id)
+    );
+
     // Build result with all visible nodes
     const result = nodes.map(node => {
       const t = nodeTransforms.get(node.id);
@@ -408,6 +413,7 @@ const App = () => {
           minWidth: mins?.minWidth,
           minHeight: mins?.minHeight,
           hasProxy: node.type === 'stateNode' && proxyTargetIds.has(node.id),
+          targetSelected: node.type === 'proxyNode' && selectedNodeIds.has((node.data as unknown as { targetId: string }).targetId),
         },
       };
     }).filter(Boolean) as typeof nodes;
@@ -2216,7 +2222,7 @@ const App = () => {
             borderColor: 'divider',
           }}
         >
-          <Box sx={{ p: 2, flexShrink: 0 }}>
+          <Box sx={{ p: 2, maxHeight: '50%', overflowY: 'auto', flexShrink: 0 }}>
             <Typography variant="subtitle2" color="text.secondary" gutterBottom>
               State Tree
             </Typography>
@@ -2226,9 +2232,6 @@ const App = () => {
           <Divider />
 
           <Box sx={{ p: 2, flexGrow: 1, overflowY: 'auto' }}>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-              Properties
-            </Typography>
             <PropertiesPanel
               selectedNode={selectedNode}
               selectedCanvasEdge={edges.find(e => e.selected) || null}

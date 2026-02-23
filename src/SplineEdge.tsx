@@ -791,6 +791,7 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
         fill="none"
         stroke={selected ? '#1976d2' : (data?.warning ? '#e65100' : '#b1b1b7')}
         strokeWidth={strokeWidth}
+        filter={selected ? `url(#edge-glow-${id})` : undefined}
       />
 
       {/* Custom arrowhead */}
@@ -798,6 +799,7 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
         d={arrowPath}
         fill={selected ? '#1976d2' : (data?.warning ? '#e65100' : '#b1b1b7')}
         stroke="none"
+        filter={selected ? `url(#edge-glow-${id})` : undefined}
       />
 
       {/* Control point handles (only shown when selected, not for self-loops) */}
@@ -816,7 +818,7 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
         />
       ))}
 
-      {/* Background filter for label readability */}
+      {/* Filters */}
       <defs>
         <filter id={`label-bg-${id}`} x="-0.05" y="-0.05" width="1.1" height="1.1">
           <feFlood floodColor="white" floodOpacity="0.5" result="bg" />
@@ -825,6 +827,11 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
+        {selected && (
+          <filter id={`edge-glow-${id}`} x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="0" stdDeviation="3.5" floodColor="#1976d2" floodOpacity="0.75" />
+          </filter>
+        )}
       </defs>
 
       {/* Transition labels (guard + label), draggable along edge when selected */}
@@ -844,8 +851,9 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
               textAnchor="middle"
               style={{
                 fontSize: labelFontSize,
-                fill: data?.warning && !selected ? '#e65100' : '#666',
+                fill: selected ? '#1976d2' : (data?.warning ? '#e65100' : '#666'),
                 fontFamily: '"Consolas", "Monaco", "Courier New", monospace',
+                fontWeight: selected ? 600 : undefined,
               }}
             >
               [{guardText}]
@@ -858,7 +866,8 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
               textAnchor="middle"
               style={{
                 fontSize: labelFontSize,
-                fill: data?.warning && !selected ? '#e65100' : '#333',
+                fill: selected ? '#1976d2' : (data?.warning ? '#e65100' : '#333'),
+                fontWeight: selected ? 600 : undefined,
               }}
             >
               {data.label}

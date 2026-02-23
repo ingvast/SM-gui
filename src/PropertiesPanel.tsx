@@ -499,9 +499,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   if ((!selectedNode || !selectedNode.data) && selectedCanvasEdge) {
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, p: 1 }}>
-        <Typography variant="subtitle2" color="text.secondary">
-          Transition
-        </Typography>
         <Box sx={{ p: 1, bgcolor: '#f5f5f5', borderRadius: 1 }}>
           <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
             {getNodeLabel(selectedCanvasEdge.source)} → {getTransitionTargetLabel(selectedCanvasEdge.source, selectedCanvasEdge.target)}
@@ -614,9 +611,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-        {isDecision ? 'Decision' : 'Properties'}
-      </Typography>
 
       {!isDecision && (
         <TextField

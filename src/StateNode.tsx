@@ -123,12 +123,14 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
     sections = sections.filter(s => s !== toRemove);
   }
 
+  const borderColor = selected ? '#1976d2' : (isOrthogonal ? '#0066cc' : (isParent ? '#666' : '#1a192b'));
+
   const nodeStyle: React.CSSProperties = {
     position: 'relative',
     fontSize: `${fontSize}px`,
     borderWidth: isOrthogonal ? '2px' : `${borderWidth}px`,
     borderStyle: isOrthogonal ? 'dashed' : (isParent ? 'dashed' : 'solid'),
-    borderColor: selected ? '#1976d2' : (isOrthogonal ? '#0066cc' : (isParent ? '#666' : '#1a192b')),
+    borderColor,
     borderRadius: `${borderRadius}px`,
     backgroundColor: isOrthogonal ? 'rgba(240, 248, 255, 0.9)' : (isParent ? 'rgba(249, 249, 249, 0.85)' : 'rgba(255, 255, 255, 0.85)'),
     width: '100%',
@@ -161,8 +163,14 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
 
       {showLabel && <div style={labelStyle}>{data.label}</div>}
 
-      {data.hasProxy && (
-        <div className="proxy-target-badge" title="This state has proxy references">
+      {data.hasProxy && (() => {
+        const badgeDiameter = 16;
+        const w = data.screenWidth ?? Infinity;
+        const h = data.screenHeight ?? Infinity;
+        return badgeDiameter < 0.3 * w && badgeDiameter < 0.3 * h;
+      })() && (
+        <div className="proxy-target-badge" title="This state has proxy references"
+          style={{ borderColor, color: borderColor }}>
           ↙
         </div>
       )}
