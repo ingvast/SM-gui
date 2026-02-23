@@ -21,6 +21,11 @@
   color: #e53935;
 }
 
+.proxy-node.selected {
+  border-color: #1976d2;
+  box-shadow: 0 0 0 1.5px #1976d2, 0 0 12px 4px rgba(25, 118, 210, 0.35);
+}
+
 .proxy-node .invisible-handle {
   width: 8px !important;
   height: 8px !important;

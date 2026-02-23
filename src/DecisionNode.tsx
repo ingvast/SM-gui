@@ -17,7 +17,7 @@ interface DecisionNodeProps {
 
 export default memo(({ selected }: DecisionNodeProps) => {
   return (
-    <div className="decision-node">
+    <div className={`decision-node${selected ? ' selected' : ''}`}>
       <NodeResizer
         isVisible={selected}
         keepAspectRatio={true}

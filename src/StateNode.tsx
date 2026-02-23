@@ -127,11 +127,12 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
     fontSize: `${fontSize}px`,
     borderWidth: isOrthogonal ? '2px' : `${borderWidth}px`,
     borderStyle: isOrthogonal ? 'dashed' : (isParent ? 'dashed' : 'solid'),
-    borderColor: isOrthogonal ? '#0066cc' : (isParent ? '#666' : '#1a192b'),
+    borderColor: selected ? '#1976d2' : (isOrthogonal ? '#0066cc' : (isParent ? '#666' : '#1a192b')),
     borderRadius: `${borderRadius}px`,
     backgroundColor: isOrthogonal ? 'rgba(240, 248, 255, 0.9)' : (isParent ? 'rgba(249, 249, 249, 0.85)' : 'rgba(255, 255, 255, 0.85)'),
     width: '100%',
     height: '100%',
+    boxShadow: selected ? '0 0 0 1.5px #1976d2, 0 0 12px 4px rgba(25, 118, 210, 0.35)' : undefined,
   };
 
   const labelStyle: React.CSSProperties = {

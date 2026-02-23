@@ -21,7 +21,7 @@ interface ProxyNodeProps {
 
 export default memo(({ data, selected }: ProxyNodeProps) => {
   return (
-    <div className={`proxy-node${data.broken ? ' broken' : ''}`}>
+    <div className={`proxy-node${data.broken ? ' broken' : ''}${selected ? ' selected' : ''}`}>
       <NodeResizer isVisible={selected} minWidth={60} minHeight={24} />
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {data.broken ? `⚠ ${data.targetPath}` : `→ ${data.label}`}

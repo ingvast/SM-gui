@@ -40,6 +40,14 @@ html, body {
   background-color: #e8e8e8;
 }
 
+/* Suppress ReactFlow's default selection outline — we use custom glow instead */
+.react-flow__node.selected > div {
+  outline: none !important;
+}
+.react-flow__node.selected {
+  outline: none !important;
+}
+
 .react-flow__nodes {
   z-index: -1;
 }
