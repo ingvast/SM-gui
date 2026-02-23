@@ -371,6 +371,13 @@ const App = () => {
       }
     }
 
+    // Compute set of state IDs that have at least one proxy node pointing to them
+    const proxyTargetIds = new Set<string>(
+      nodes
+        .filter(n => n.type === 'proxyNode')
+        .map(n => (n.data as unknown as { targetId: string }).targetId)
+    );
+
     // Build result with all visible nodes
     const result = nodes.map(node => {
       const t = nodeTransforms.get(node.id);
@@ -400,6 +407,7 @@ const App = () => {
           screenHeight: t.screenHeight,
           minWidth: mins?.minWidth,
           minHeight: mins?.minHeight,
+          hasProxy: node.type === 'stateNode' && proxyTargetIds.has(node.id),
         },
       };
     }).filter(Boolean) as typeof nodes;

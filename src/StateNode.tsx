@@ -26,6 +26,7 @@ interface StateNodeData {
   screenHeight?: number; // Current rendered height in pixels
   minWidth?: number;     // Minimum width to contain children (screen pixels)
   minHeight?: number;    // Minimum height to contain children (screen pixels)
+  hasProxy?: boolean;    // True if at least one proxy node points to this state
 }
 
 interface StateNodeProps {
@@ -159,6 +160,12 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
       <Handle type="target" position={Position.Left} id="left-target" className="invisible-handle" />
 
       {showLabel && <div style={labelStyle}>{data.label}</div>}
+
+      {data.hasProxy && (
+        <div className="proxy-target-badge" title="This state has proxy references">
+          ↙
+        </div>
+      )}
 
       {showLabel && sections.length > 0 && (
         <div style={{

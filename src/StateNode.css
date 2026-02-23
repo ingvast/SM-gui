@@ -2,6 +2,23 @@
   box-sizing: border-box;
 }
 
+.proxy-target-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #1976d2;
+  color: white;
+  font-size: 9px;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: all;
+  z-index: 10;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
 /* Hide ReactFlow handles - they exist for connection logic but are not visible */
 .state-node .react-flow__handle {
   background: transparent !important;
