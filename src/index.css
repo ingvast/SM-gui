@@ -31,6 +31,16 @@ html, body {
   cursor: crosshair !important;
 }
 
+.panning-mode,
+.panning-mode * {
+  cursor: grab !important;
+}
+
+.panning-active,
+.panning-active * {
+  cursor: grabbing !important;
+}
+
 .ungroup-cursor,
 .ungroup-cursor * {
   cursor: n-resize !important;

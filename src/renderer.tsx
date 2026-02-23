@@ -795,21 +795,66 @@ const App = () => {
       : transformedEdges,
   [transformedEdges, hoveredEdgeId]);
 
-  // Custom wheel handler for semantic zoom (added manually to avoid passive listener)
+  // Custom wheel handler for semantic zoom/pan (added manually to avoid passive listener)
   useEffect(() => {
     const wrapper = reactFlowWrapper.current;
     if (!wrapper) return;
 
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
-      const delta = -event.deltaY * 0.001;
       const rect = wrapper.getBoundingClientRect();
-      adjustZoom(delta, event.clientX - rect.left, event.clientY - rect.top);
+      if (event.ctrlKey) {
+        // Pinch gesture (Mac trackpad) or Ctrl+scroll → zoom
+        const delta = -event.deltaY * 0.005;
+        adjustZoom(delta, event.clientX - rect.left, event.clientY - rect.top);
+      } else if (event.shiftKey) {
+        // Shift+scroll → horizontal pan
+        adjustPan(-event.deltaY, 0);
+      } else {
+        // Two-finger scroll (Mac trackpad) or plain scroll wheel → pan
+        adjustPan(-event.deltaX, -event.deltaY);
+      }
     };
 
     wrapper.addEventListener('wheel', handleWheel, { passive: false });
     return () => wrapper.removeEventListener('wheel', handleWheel);
-  }, [adjustZoom]);
+  }, [adjustZoom, adjustPan]);
+
+  // Space+drag and middle-mouse pan (work anywhere, including over nodes)
+  const spaceHeld = useRef(false);
+  const [isSpaceHeld, setIsSpaceHeld] = useState(false);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !e.repeat) {
+        const target = e.target as HTMLElement;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+        e.preventDefault();
+        spaceHeld.current = true;
+        setIsSpaceHeld(true);
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        spaceHeld.current = false;
+        setIsSpaceHeld(false);
+      }
+    };
+    // Pan on mousemove when space is held, or when middle mouse button is held (buttons===4)
+    const onMouseMove = (e: MouseEvent) => {
+      if (spaceHeld.current || e.buttons === 4) {
+        adjustPan(e.movementX, e.movementY);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+    document.addEventListener('mousemove', onMouseMove);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keyup', onKeyUp);
+      document.removeEventListener('mousemove', onMouseMove);
+    };
+  }, [adjustPan]);
 
   // Pan handling - drag background to pan
   const isPanning = useRef(false);
@@ -2271,9 +2316,9 @@ const App = () => {
           sx={{
             flexGrow: 1,
             position: 'relative',
-            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair' : 'default'),
+            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair' : isSpaceHeld ? 'grab' : 'default'),
             '& *': {
-              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair !important' : undefined),
+              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair !important' : isSpaceHeld ? 'grab !important' : undefined),
             },
           }}
           onMouseDown={handlePaneMouseDown}

@@ -219,8 +219,16 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
   const incomingTransitions = useMemo(() => {
     if (!selectedNode || selectedNode.id === '/') return [];
-    return edges.filter(e => e.target === selectedNode.id);
-  }, [edges, selectedNode]);
+    return edges.filter(e => {
+      if (e.target === selectedNode.id) return true;
+      // Also include edges targeting proxy nodes that resolve to this state
+      const targetNode = nodes.find(n => n.id === e.target);
+      if (targetNode?.type === 'proxyNode') {
+        return (targetNode.data.targetId as string) === selectedNode.id;
+      }
+      return false;
+    });
+  }, [edges, nodes, selectedNode]);
 
   // Get currently selected edge (from list or from canvas)
   const selectedEdge = useMemo(() => {

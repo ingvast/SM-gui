@@ -1,5 +1,5 @@
 import React, { useCallback, useState, useEffect, useRef } from 'react';
-import { EdgeProps, useStore, Position } from 'reactflow';
+import { EdgeProps, useStore, Position, EdgeLabelRenderer } from 'reactflow';
 import { useSetEdges, useLabelsVisible } from './EdgesContext';
 
 // Coordinate system transformation utilities
@@ -775,6 +775,7 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   const disablePointer = data?.anyEdgeSelected && !selected;
 
   return (
+    <>
     <g style={disablePointer ? { pointerEvents: 'none' } : undefined}>
       {/* Invisible wider path for easier clicking (uses full path to node edge) */}
       <path
@@ -821,13 +822,6 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
 
       {/* Filters */}
       <defs>
-        <filter id={`label-bg-${id}`} x="-0.05" y="-0.05" width="1.1" height="1.1">
-          <feFlood floodColor="white" floodOpacity="0.5" result="bg" />
-          <feMerge>
-            <feMergeNode in="bg" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
         {selected && (
           <filter id={`edge-glow-${id}`} x="-20%" y="-20%" width="140%" height="140%">
             <feDropShadow dx="0" dy="0" stdDeviation="3.5" floodColor="#1976d2" floodOpacity="0.75" />
@@ -839,49 +833,48 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
           </filter>
         )}
       </defs>
+    </g>
 
-      {/* Transition labels (guard + label), draggable along edge when selected */}
-      {showLabels && (guardText || data?.label) && (
-        <g
+    {/* Transition labels rendered in HTML layer above all edges */}
+    {showLabels && (guardText || data?.label) && (
+      <EdgeLabelRenderer>
+        <div
           onMouseDown={handleLabelMouseDown}
-          filter={`url(#label-bg-${id})`}
+          className="nodrag nopan"
           style={{
+            position: 'absolute',
+            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            pointerEvents: disablePointer ? 'none' : 'all',
             cursor: selected ? (draggingLabel ? 'grabbing' : 'grab') : 'default',
-            pointerEvents: (guardText || data?.label) ? 'all' : 'none',
+            fontSize: labelFontSize,
+            fontFamily: '"Consolas", "Monaco", "Courier New", monospace',
+            background: 'rgba(255,255,255,0.75)',
+            padding: '0 3px',
+            borderRadius: 2,
+            textAlign: 'center',
+            lineHeight: '14px',
           }}
         >
           {guardText && (
-            <text
-              x={labelX}
-              y={labelY}
-              textAnchor="middle"
-              style={{
-                fontSize: labelFontSize,
-                fill: selected ? '#1976d2' : (data?.warning ? '#e65100' : '#666'),
-                fontFamily: '"Consolas", "Monaco", "Courier New", monospace',
-                fontWeight: selected ? 600 : undefined,
-              }}
-            >
+            <div style={{
+              color: selected ? '#1976d2' : (data?.warning ? '#e65100' : '#666'),
+              fontWeight: selected ? 600 : undefined,
+            }}>
               [{guardText}]
-            </text>
+            </div>
           )}
           {data?.label && (
-            <text
-              x={labelX}
-              y={labelY + (guardText ? 14 : 0)}
-              textAnchor="middle"
-              style={{
-                fontSize: labelFontSize,
-                fill: selected ? '#1976d2' : (data?.warning ? '#e65100' : '#333'),
-                fontWeight: selected ? 600 : undefined,
-              }}
-            >
+            <div style={{
+              color: selected ? '#1976d2' : (data?.warning ? '#e65100' : '#333'),
+              fontWeight: selected ? 600 : undefined,
+            }}>
               {data.label}
-            </text>
+            </div>
           )}
-        </g>
-      )}
-    </g>
+        </div>
+      </EdgeLabelRenderer>
+    )}
+    </>
   );
 };
 
