@@ -97,6 +97,8 @@ interface PropertiesPanelProps {
   onEdgePropertyChange: (edgeId: string, property: string, value: unknown) => void;
   onReorderEdge: (edgeId: string, direction: 'up' | 'down') => void;
   onSelectNode?: (nodeId: string) => void;
+  onHoverEdge?: (edgeId: string) => void;
+  onUnhoverEdge?: () => void;
   settings: Settings;
   language: string;
   focusGuard?: boolean;
@@ -114,6 +116,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onEdgePropertyChange,
   onReorderEdge,
   onSelectNode,
+  onHoverEdge,
+  onUnhoverEdge,
   settings,
   language,
   focusGuard,
@@ -870,6 +874,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       key={edge.id}
                       selected={selectedEdgeId === edge.id}
                       onClick={() => setSelectedEdgeId(edge.id)}
+                      onMouseEnter={() => onHoverEdge?.(edge.id)}
+                      onMouseLeave={() => onUnhoverEdge?.()}
                       sx={{
                         py: 0.5,
                         ...(warningFlags[index] ? { bgcolor: '#fff3e0' } : {}),
@@ -926,6 +932,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     key={edge.id}
                     selected={selectedEdgeId === edge.id}
                     onClick={() => setSelectedEdgeId(edge.id)}
+                    onMouseEnter={() => onHoverEdge?.(edge.id)}
+                    onMouseLeave={() => onUnhoverEdge?.()}
                     sx={{ py: 0.5 }}
                   >
                     <ListItemText

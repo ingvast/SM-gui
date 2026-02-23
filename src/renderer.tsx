@@ -787,6 +787,14 @@ const App = () => {
     return result;
   }, [edges, visibleNodeIds, effectiveScale, nodes, transformedNodes, machineProperties]);
 
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+
+  const displayEdges = useMemo(() =>
+    hoveredEdgeId
+      ? transformedEdges.map(e => e.id === hoveredEdgeId ? { ...e, data: { ...e.data, highlighted: true } } : e)
+      : transformedEdges,
+  [transformedEdges, hoveredEdgeId]);
+
   // Custom wheel handler for semantic zoom (added manually to avoid passive listener)
   useEffect(() => {
     const wrapper = reactFlowWrapper.current;
@@ -2245,6 +2253,8 @@ const App = () => {
                 setEdges((eds) => eds.map((e) => ({ ...e, selected: false })));
                 setSelectedTreeItem(nodeId);
               }}
+              onHoverEdge={setHoveredEdgeId}
+              onUnhoverEdge={() => setHoveredEdgeId(null)}
               settings={settings}
               language={machineProperties.language}
               focusGuard={focusGuard}
@@ -2275,7 +2285,7 @@ const App = () => {
           <EdgesProvider value={setEdges}>
             <ReactFlow
               nodes={transformedNodes}
-              edges={transformedEdges}
+              edges={displayEdges}
               onNodesChange={onNodesChangeWithSelection}
               onEdgesChange={onEdgesChangeWithSelection}
               onConnect={onConnect}

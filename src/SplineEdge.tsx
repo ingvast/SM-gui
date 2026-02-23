@@ -22,6 +22,7 @@ interface SplineEdgeData {
   targetIsAncestor?: boolean;  // true if target is ancestor of source
   warning?: boolean;           // true if this transition is unreachable (after a guardless transition)
   anyEdgeSelected?: boolean;   // true if any edge in the graph is selected
+  highlighted?: boolean;       // true when hovered in the properties panel transition list
 }
 
 // Transform from local (normalized) coordinates to absolute canvas coordinates
@@ -691,7 +692,7 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   const guardText = data?.guard?.trim() || undefined;
 
   // Fixed visual sizes in screen pixels
-  const strokeWidth = selected ? 2.5 : 1.5;
+  const strokeWidth = selected ? 2.5 : (data?.highlighted ? 2.5 : 1.5);
   const hitAreaWidth = 20;
   const controlPointRadius = 8;
   const controlPointStrokeWidth = 2;
@@ -789,17 +790,17 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
       <path
         d={visiblePathD}
         fill="none"
-        stroke={selected ? '#1976d2' : (data?.warning ? '#e65100' : '#b1b1b7')}
+        stroke={selected ? '#1976d2' : (data?.highlighted ? '#f57c00' : (data?.warning ? '#e65100' : '#b1b1b7'))}
         strokeWidth={strokeWidth}
-        filter={selected ? `url(#edge-glow-${id})` : undefined}
+        filter={selected ? `url(#edge-glow-${id})` : (data?.highlighted ? `url(#edge-hover-${id})` : undefined)}
       />
 
       {/* Custom arrowhead */}
       <path
         d={arrowPath}
-        fill={selected ? '#1976d2' : (data?.warning ? '#e65100' : '#b1b1b7')}
+        fill={selected ? '#1976d2' : (data?.highlighted ? '#f57c00' : (data?.warning ? '#e65100' : '#b1b1b7'))}
         stroke="none"
-        filter={selected ? `url(#edge-glow-${id})` : undefined}
+        filter={selected ? `url(#edge-glow-${id})` : (data?.highlighted ? `url(#edge-hover-${id})` : undefined)}
       />
 
       {/* Control point handles (only shown when selected, not for self-loops) */}
@@ -830,6 +831,11 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
         {selected && (
           <filter id={`edge-glow-${id}`} x="-20%" y="-20%" width="140%" height="140%">
             <feDropShadow dx="0" dy="0" stdDeviation="3.5" floodColor="#1976d2" floodOpacity="0.75" />
+          </filter>
+        )}
+        {data?.highlighted && !selected && (
+          <filter id={`edge-hover-${id}`} x="-30%" y="-30%" width="160%" height="160%">
+            <feDropShadow dx="0" dy="0" stdDeviation="5" floodColor="#f57c00" floodOpacity="0.85" />
           </filter>
         )}
       </defs>
