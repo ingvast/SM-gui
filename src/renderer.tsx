@@ -2240,6 +2240,11 @@ const App = () => {
               onPropertyChange={handlePropertyChange}
               onEdgePropertyChange={handleEdgePropertyChange}
               onReorderEdge={handleReorderEdge}
+              onSelectNode={(nodeId) => {
+                setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })));
+                setEdges((eds) => eds.map((e) => ({ ...e, selected: false })));
+                setSelectedTreeItem(nodeId);
+              }}
               settings={settings}
               language={machineProperties.language}
               focusGuard={focusGuard}

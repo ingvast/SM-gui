@@ -96,6 +96,7 @@ interface PropertiesPanelProps {
   onPropertyChange: (nodeId: string, property: string, value: unknown) => boolean;
   onEdgePropertyChange: (edgeId: string, property: string, value: unknown) => void;
   onReorderEdge: (edgeId: string, direction: 'up' | 'down') => void;
+  onSelectNode?: (nodeId: string) => void;
   settings: Settings;
   language: string;
   focusGuard?: boolean;
@@ -112,6 +113,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onPropertyChange,
   onEdgePropertyChange,
   onReorderEdge,
+  onSelectNode,
   settings,
   language,
   focusGuard,
@@ -174,6 +176,36 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     const sourcePath = computeNodePathLocal(sourceId);
     return computeRelativePath(sourcePath, effectiveTargetPath);
   }, [nodes, computeNodePathLocal]);
+
+  // Get transition source display label using relative path rules (source as seen from target's perspective).
+  const getTransitionSourceLabel = useCallback((sourceId: string, targetId: string): string => {
+    const sourcePath = computeNodePathLocal(sourceId);
+    const targetNode = nodes.find(n => n.id === targetId);
+    let effectiveTargetPath: string;
+    if (targetNode?.type === 'proxyNode') {
+      effectiveTargetPath = (targetNode.data.targetPath as string) || targetNode.data.label;
+    } else {
+      effectiveTargetPath = computeNodePathLocal(targetId);
+    }
+    return computeRelativePath(effectiveTargetPath, sourcePath);
+  }, [nodes, computeNodePathLocal]);
+
+  // Resolve proxy node to its real target ID
+  const resolveRealTargetId = useCallback((targetId: string): string => {
+    const node = nodes.find(n => n.id === targetId);
+    if (node?.type === 'proxyNode') return (node.data.targetId as string) || targetId;
+    return targetId;
+  }, [nodes]);
+
+  // Clickable node name link
+  const NodeLink = useCallback(({ label, nodeId }: { label: string; nodeId: string }) => (
+    <span
+      onClick={(e) => { e.stopPropagation(); onSelectNode?.(nodeId); }}
+      style={{ cursor: onSelectNode ? 'pointer' : 'default', textDecoration: onSelectNode ? 'underline' : 'none', textDecorationStyle: 'dotted' }}
+    >
+      {label}
+    </span>
+  ), [onSelectNode]);
 
   // Compute outgoing and incoming transitions
   const outgoingTransitions = useMemo(() => {
@@ -501,7 +533,9 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, p: 1 }}>
         <Box sx={{ p: 1, bgcolor: '#f5f5f5', borderRadius: 1 }}>
           <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-            {getNodeLabel(selectedCanvasEdge.source)} → {getTransitionTargetLabel(selectedCanvasEdge.source, selectedCanvasEdge.target)}
+            <NodeLink label={getTransitionSourceLabel(selectedCanvasEdge.source, selectedCanvasEdge.target)} nodeId={selectedCanvasEdge.source} />
+            {' → '}
+            <NodeLink label={getTransitionTargetLabel(selectedCanvasEdge.source, selectedCanvasEdge.target)} nodeId={resolveRealTargetId(selectedCanvasEdge.target)} />
           </Typography>
 
           <Box sx={{ position: 'relative', mb: 1 }}>
@@ -828,7 +862,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             return (
               <>
                 <Typography variant="caption" color="text.secondary">
-                  Outgoing (to):
+                  To:
                 </Typography>
                 <List dense disablePadding sx={{ bgcolor: 'background.paper', borderRadius: 1, border: '1px solid #ddd' }}>
                   {outgoingTransitions.map((edge, index) => (
@@ -842,7 +876,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       }}
                     >
                       <ListItemText
-                        primary={getTransitionTargetLabel(edge.source, edge.target)}
+                        primary={<NodeLink label={getTransitionTargetLabel(edge.source, edge.target)} nodeId={resolveRealTargetId(edge.target)} />}
                         secondary={edge.data?.guard ? `[${edge.data.guard}]` : undefined}
                         primaryTypographyProps={{
                           variant: 'body2',
@@ -884,7 +918,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           {incomingTransitions.length > 0 && (
             <>
               <Typography variant="caption" color="text.secondary">
-                Incoming (from):
+                From:
               </Typography>
               <List dense disablePadding sx={{ bgcolor: 'background.paper', borderRadius: 1, border: '1px solid #ddd' }}>
                 {incomingTransitions.map((edge) => (
@@ -895,7 +929,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     sx={{ py: 0.5 }}
                   >
                     <ListItemText
-                      primary={getNodeLabel(edge.source)}
+                      primary={<NodeLink label={getTransitionSourceLabel(edge.source, edge.target)} nodeId={edge.source} />}
                       secondary={edge.data?.guard ? `[${edge.data.guard}]` : undefined}
                       primaryTypographyProps={{ variant: 'body2' }}
                       secondaryTypographyProps={{ variant: 'caption', sx: { fontFamily: 'monospace' } }}
@@ -916,7 +950,9 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           {selectedEdge && (
             <Box sx={{ mt: 1, p: 1, bgcolor: '#f5f5f5', borderRadius: 1 }}>
               <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                Transition: {getNodeLabel(selectedEdge.source)} → {getTransitionTargetLabel(selectedEdge.source, selectedEdge.target)}
+                <NodeLink label={getTransitionSourceLabel(selectedEdge.source, selectedEdge.target)} nodeId={selectedEdge.source} />
+                {' → '}
+                <NodeLink label={getTransitionTargetLabel(selectedEdge.source, selectedEdge.target)} nodeId={resolveRealTargetId(selectedEdge.target)} />
               </Typography>
 
               <Box sx={{ position: 'relative', mb: 1 }}>
