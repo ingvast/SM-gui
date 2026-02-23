@@ -128,6 +128,18 @@ export function useClipboard(
       newNodes.push(newNode);
     });
 
+    // For proxy nodes, remap targetId if the target was also copied
+    newNodes.forEach(node => {
+      if (node.type === 'proxyNode') {
+        const data = node.data as unknown as { targetId: string };
+        const remappedTargetId = newIdMap.get(data.targetId);
+        if (remappedTargetId) {
+          data.targetId = remappedTargetId;
+        }
+        // If not remapped, keep original targetId (proxy still points to original target)
+      }
+    });
+
     const pastedEdges = copiedEdges.map(edge => ({
       ...edge,
       id: `e${newIdMap.get(edge.source)}-${newIdMap.get(edge.target)}`,
@@ -217,6 +229,17 @@ export function useClipboard(
         },
       };
       duplicatedNodes.push(newNode);
+    });
+
+    // For proxy nodes, remap targetId if the target was also duplicated
+    duplicatedNodes.forEach(node => {
+      if (node.type === 'proxyNode') {
+        const data = node.data as unknown as { targetId: string };
+        const remappedTargetId = newIdMap.get(data.targetId);
+        if (remappedTargetId) {
+          data.targetId = remappedTargetId;
+        }
+      }
     });
 
     const duplicatedNodeIds = new Set(nodesToDuplicate.map(n => n.id));

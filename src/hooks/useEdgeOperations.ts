@@ -82,6 +82,9 @@ export function useEdgeOperations(
         const node = nodes.find(n => n.id === connection.source);
         if (node?.type === 'decisionNode') return false;
       }
+      // Proxy nodes cannot be source of transitions
+      const sourceNode = nodes.find(n => n.id === connection.source);
+      if (sourceNode?.type === 'proxyNode') return false;
       return true;
     },
     [nodes]

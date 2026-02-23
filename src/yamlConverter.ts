@@ -115,6 +115,16 @@ interface YamlTransition {
     targetHandle?: string;
     controlPoints?: { x: number; y: number }[];
     labelPosition?: number;
+    proxyId?: string;
+  };
+}
+
+interface YamlConnector {
+  target: string;
+  graphics?: {
+    position: { x: number; y: number };
+    size: { width: number; height: number };
+    parentId?: string;
   };
 }
 
@@ -136,6 +146,7 @@ interface YamlDocument {
   initial?: string;
   states?: Record<string, YamlState>;
   decisions?: Record<string, YamlDecisionTransition[] | YamlDecision>;
+  connectors?: Record<string, YamlConnector>;
   graphics?: {
     initialMarkerPos?: { x: number; y: number };
     initialMarkerSize?: number;
@@ -181,13 +192,17 @@ function buildNodePathMap(nodes: Node<StateData>[]): Map<string, string> {
 }
 
 // Compute a relative path from sourcePath to targetPath
-// Rules:
-//   Sibling (same parent): just the target name, e.g. "B"
+// Rules (per spec §5.2):
+//   /absolute/path: Used when the path crosses top-level state boundaries
+//   sibling: Same parent — just the target name, e.g. "B"
 //   Self: "."
-//   Child: "./Child" or "./Child/Grandchild"
-//   Parent: ".."
-//   General: "../../Uncle/Cousin"
-function computeRelativePath(sourcePath: string, targetPath: string): string {
+//   ./child: Direct child of source, e.g. "./Child/Grandchild"
+//   ../uncle: Up one level from sibling scope, e.g. parent's sibling
+//   sibling/child: Sibling's descendant, e.g. "C/D"
+//
+// Note: each "../" goes up one level from the SIBLING scope (parent level),
+// not from the state itself. So ../uncle from A/B/C reaches A's children (uncles of C).
+export function computeRelativePath(sourcePath: string, targetPath: string): string {
   if (sourcePath === targetPath) return '.';
 
   const sourceParts = sourcePath.split('/');
@@ -198,7 +213,7 @@ function computeRelativePath(sourcePath: string, targetPath: string): string {
     return './' + targetPath.substring(sourcePath.length + 1);
   }
 
-  // Sibling check (same parent)
+  // Sibling check (same parent — including root-level siblings)
   const sourceParent = sourceParts.slice(0, -1).join('/');
   const targetParent = targetParts.slice(0, -1).join('/');
   if (sourceParent === targetParent) {
@@ -219,11 +234,36 @@ function computeRelativePath(sourcePath: string, targetPath: string): string {
   const ups = sourceParts.length - commonLen;
   const downs = targetParts.slice(commonLen);
 
-  const upPath = Array(ups).fill('..').join('/');
-  if (downs.length === 0) {
-    return upPath; // target is an ancestor
+  // If the path goes all the way up to root (crosses top-level state boundaries),
+  // use absolute path per spec: "/TopState/Child"
+  if (ups >= sourceParts.length) {
+    return '/' + downs.join('/');
   }
-  return upPath + '/' + downs.join('/');
+
+  // Ancestor case (target is an ancestor of source, no path to go down)
+  // Each ".." goes up one level: ".." = parent, "../.." = grandparent
+  if (downs.length === 0) {
+    return Array(ups).fill('..').join('/');
+  }
+
+  // Navigate up from sibling scope: each "../" goes one level above sibling scope.
+  // ups=1 → sibling scope (same parent) → just the name or name/child
+  // ups=2 → one level above sibling scope → ../uncle
+  // ups=3 → two levels above → ../../great-uncle
+  const dotCount = ups - 1;
+  if (dotCount === 0) {
+    return downs.join('/');
+  }
+  return Array(dotCount).fill('..').join('/') + '/' + downs.join('/');
+}
+
+// Compute display label for a proxy node.
+// parentPath: absolute path of the state the proxy lives inside (empty string = root level).
+// targetPath: absolute path of the real target state.
+// Returns a relative path, or an absolute path prefixed with "/" for root-level proxies.
+export function computeProxyLabel(parentPath: string, targetPath: string): string {
+  if (!parentPath) return '/' + targetPath;
+  return computeRelativePath(parentPath, targetPath);
 }
 
 export function convertToYaml(
@@ -233,9 +273,14 @@ export function convertToYaml(
   includeGraphics: boolean,
   machineProperties?: MachineProperties
 ): string {
-  // Separate state nodes and decision nodes
-  const stateNodes = nodes.filter(n => n.type !== 'decisionNode');
+  // Separate state nodes, decision nodes, and proxy nodes
+  const stateNodes = nodes.filter(n => n.type !== 'decisionNode' && n.type !== 'proxyNode');
   const decisionNodes = nodes.filter(n => n.type === 'decisionNode');
+  const proxyNodes = nodes.filter(n => n.type === 'proxyNode');
+
+  // Build proxy node id -> proxy node map
+  const proxyIdToNode = new Map<string, Node<StateData>>();
+  proxyNodes.forEach(n => proxyIdToNode.set(n.id, n));
 
   const pathMap = buildNodePathMap(stateNodes);
 
@@ -252,12 +297,31 @@ export function convertToYaml(
   });
 
   // Resolve an edge target to a YAML path string
-  // If target is a decision, use @name; if target is a state, use relative path from source
+  // If target is a decision, use @name; if target is a proxy, resolve to real target; otherwise relative path from source
   function resolveEdgeTarget(edge: Edge): string {
     const decisionName = decisionIdToName.get(edge.target);
     if (decisionName) {
       return `@${decisionName}`;
     }
+
+    // If target is a proxy node, resolve to the real target state path
+    const proxyNode = proxyIdToNode.get(edge.target);
+    if (proxyNode) {
+      const realTargetId = (proxyNode.data as unknown as { targetId: string }).targetId;
+      const realTargetPath = pathMap.get(realTargetId);
+      if (realTargetPath) {
+        const sourceNode = nodes.find(n => n.id === edge.source);
+        let sourcePath: string | undefined;
+        if (sourceNode?.type === 'decisionNode') {
+          if (sourceNode.parentId) sourcePath = pathMap.get(sourceNode.parentId);
+        } else {
+          sourcePath = pathMap.get(edge.source);
+        }
+        if (sourcePath) return computeRelativePath(sourcePath, realTargetPath);
+        return realTargetPath;
+      }
+    }
+
     // For state targets, compute relative path from source
     // Source might be a decision — find its parent state for path context
     const sourceNode = nodes.find(n => n.id === edge.source);
@@ -276,6 +340,15 @@ export function convertToYaml(
       return computeRelativePath(sourcePath, targetPath);
     }
     return targetPath || edge.target;
+  }
+
+  // Get the proxyId name for an edge (if target is a proxy node)
+  function getEdgeProxyId(edge: Edge): string | undefined {
+    const proxyNode = proxyIdToNode.get(edge.target);
+    if (proxyNode) {
+      return (proxyNode.data as unknown as { name: string }).name;
+    }
+    return undefined;
   }
 
   // Build nested state structure recursively
@@ -373,12 +446,14 @@ export function convertToYaml(
             const hasHandles = edge.sourceHandle || edge.targetHandle;
             const hasControlPoints = edgeData?.controlPoints && edgeData.controlPoints.length > 0;
             const hasLabelPosition = edgeData?.labelPosition != null;
-            if (hasHandles || hasControlPoints || hasLabelPosition) {
+            const proxyId = getEdgeProxyId(edge);
+            if (hasHandles || hasControlPoints || hasLabelPosition || proxyId) {
               t.graphics = {
                 sourceHandle: edge.sourceHandle || undefined,
                 targetHandle: edge.targetHandle || undefined,
                 controlPoints: hasControlPoints ? edgeData!.controlPoints : undefined,
                 labelPosition: hasLabelPosition ? edgeData!.labelPosition : undefined,
+                proxyId: proxyId || undefined,
               };
             }
           }
@@ -422,12 +497,14 @@ export function convertToYaml(
           const hasHandles = edge.sourceHandle || edge.targetHandle;
           const hasControlPoints = edgeData?.controlPoints && edgeData.controlPoints.length > 0;
           const hasLabelPosition = edgeData?.labelPosition != null;
-          if (hasHandles || hasControlPoints || hasLabelPosition) {
+          const proxyId = getEdgeProxyId(edge);
+          if (hasHandles || hasControlPoints || hasLabelPosition || proxyId) {
             transition.graphics = {
               sourceHandle: edge.sourceHandle || undefined,
               targetHandle: edge.targetHandle || undefined,
               controlPoints: hasControlPoints ? edgeData!.controlPoints : undefined,
               labelPosition: hasLabelPosition ? edgeData!.labelPosition : undefined,
+              proxyId: proxyId || undefined,
             };
           }
         }
@@ -538,12 +615,14 @@ export function convertToYaml(
           const hasHandles = edge.sourceHandle || edge.targetHandle;
           const hasControlPoints = edgeData?.controlPoints && edgeData.controlPoints.length > 0;
           const hasLabelPosition = edgeData?.labelPosition != null;
-          if (hasHandles || hasControlPoints || hasLabelPosition) {
+          const proxyId = getEdgeProxyId(edge);
+          if (hasHandles || hasControlPoints || hasLabelPosition || proxyId) {
             t.graphics = {
               sourceHandle: edge.sourceHandle || undefined,
               targetHandle: edge.targetHandle || undefined,
               controlPoints: hasControlPoints ? edgeData!.controlPoints : undefined,
               labelPosition: hasLabelPosition ? edgeData!.labelPosition : undefined,
+              proxyId: proxyId || undefined,
             };
           }
         }
@@ -567,6 +646,31 @@ export function convertToYaml(
     doc.decisions = decisions;
   }
 
+  // 11. Proxy connectors
+  if (proxyNodes.length > 0) {
+    const connectors: Record<string, YamlConnector> = {};
+    proxyNodes.forEach(proxy => {
+      const proxyData = proxy.data as unknown as { name: string; targetId: string; targetPath: string };
+      const targetPath = pathMap.get(proxyData.targetId) || proxyData.targetPath || '';
+      const connector: YamlConnector = { target: targetPath };
+      if (includeGraphics) {
+        connector.graphics = {
+          position: { x: proxy.position.x, y: proxy.position.y },
+          size: {
+            width: (proxy.style?.width as number) || 150,
+            height: (proxy.style?.height as number) || 40,
+          },
+        };
+        if (proxy.parentId) {
+          const parentPath = pathMap.get(proxy.parentId);
+          if (parentPath) connector.graphics.parentId = parentPath;
+        }
+      }
+      connectors[proxyData.name] = connector;
+    });
+    doc.connectors = connectors;
+  }
+
   return yaml.dump(doc, { lineWidth: -1, noRefs: true });
 }
 
@@ -580,11 +684,14 @@ export function convertToPhoenixYaml(
   const nodeMap = new Map<string, Node<StateData>>();
   nodes.forEach(n => nodeMap.set(n.id, n));
 
+  // Exclude proxy nodes — they are graphics-only and have no semantic meaning
+  const stateOnlyNodes = nodes.filter(n => n.type !== 'proxyNode');
+
   // Identify top-level states and second-level states
-  const topLevelStates = nodes.filter(n => !n.parentId && n.type === 'stateNode');
+  const topLevelStates = stateOnlyNodes.filter(n => !n.parentId && n.type === 'stateNode');
   const topLevelIds = new Set(topLevelStates.map(n => n.id));
 
-  const secondLevelStates = nodes.filter(n => n.parentId && topLevelIds.has(n.parentId) && n.type === 'stateNode');
+  const secondLevelStates = stateOnlyNodes.filter(n => n.parentId && topLevelIds.has(n.parentId) && n.type === 'stateNode');
   const secondLevelIds = new Set(secondLevelStates.map(n => n.id));
 
   // Warn about decision nodes
@@ -594,7 +701,7 @@ export function convertToPhoenixYaml(
   });
 
   // Warn about states deeper than 2 levels
-  nodes.forEach(n => {
+  stateOnlyNodes.forEach(n => {
     if (n.type !== 'stateNode') return;
     if (!n.parentId) return; // top-level
     if (topLevelIds.has(n.parentId)) return; // second-level
@@ -632,14 +739,20 @@ export function convertToPhoenixYaml(
 
   // Helper: resolve target to "TopLevel secondLevel" format
   function resolvePhoenixTarget(targetId: string): string | null {
-    const targetNode = nodeMap.get(targetId);
+    let resolvedId = targetId;
+    // If target is a proxy node, resolve to its real target
+    const maybeProxy = nodeMap.get(resolvedId);
+    if (maybeProxy?.type === 'proxyNode') {
+      resolvedId = (maybeProxy.data as unknown as { targetId: string }).targetId || resolvedId;
+    }
+    const targetNode = nodeMap.get(resolvedId);
     if (!targetNode || targetNode.type !== 'stateNode') return null;
 
-    if (topLevelIds.has(targetId)) {
+    if (topLevelIds.has(resolvedId)) {
       // Target is a top-level state - just the name
       return targetNode.data.label;
     }
-    if (secondLevelIds.has(targetId)) {
+    if (secondLevelIds.has(resolvedId)) {
       const parent = nodeMap.get(targetNode.parentId!);
       if (parent) {
         return `${parent.data.label} ${targetNode.data.label}`;
@@ -943,6 +1056,82 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     processDecisions(doc.decisions, undefined, topLevelX, topLevelY);
   }
 
+  // Process proxy connectors
+  // Build a reverse map (nodeId → absolute path) for proxy label computation
+  const nodeIdToPathMap = new Map<string, string>();
+  pathToIdMap.forEach((nodeId, path) => nodeIdToPathMap.set(nodeId, path));
+
+  const proxyNameToNodeId = new Map<string, string>();
+  if (doc.connectors) {
+    let proxyX = topLevelX + horizontalGap;
+    Object.keys(doc.connectors).forEach(proxyName => {
+      const connectorData = doc.connectors![proxyName];
+      const nodeId = `node_${nodeIdCounter++}`;
+
+      let x = proxyX;
+      let y = topLevelY;
+      let width = 150;
+      let height = 40;
+      let parentNodeId: string | undefined;
+
+      if (connectorData.graphics) {
+        x = connectorData.graphics.position.x;
+        y = connectorData.graphics.position.y;
+        width = connectorData.graphics.size.width;
+        height = connectorData.graphics.size.height;
+        if (connectorData.graphics.parentId) {
+          parentNodeId = pathToIdMap.get(connectorData.graphics.parentId);
+        }
+      }
+
+      // Compute display label: relative from proxy's parent context, or absolute for root-level
+      const parentPath = parentNodeId ? (nodeIdToPathMap.get(parentNodeId) || '') : '';
+      const proxyDisplayLabel = computeProxyLabel(parentPath, connectorData.target);
+
+      const proxyNode: Node<StateData> = {
+        id: nodeId,
+        type: 'proxyNode',
+        position: { x, y },
+        data: {
+          label: proxyDisplayLabel,
+          // Stored in data using unknown fields; targetId resolved in second pass
+          name: proxyName,
+          targetId: '',
+          targetPath: connectorData.target,
+          broken: false,
+          history: false,
+          orthogonal: false,
+          entry: '',
+          exit: '',
+          do: '',
+        } as unknown as StateData,
+        style: { width, height },
+      };
+
+      if (parentNodeId) {
+        proxyNode.parentId = parentNodeId;
+        proxyNode.extent = 'parent';
+      }
+
+      nodes.push(proxyNode);
+      proxyNameToNodeId.set(proxyName, nodeId);
+      proxyX += width + horizontalGap;
+    });
+
+    // Second pass: resolve targetId for all proxy nodes
+    nodes.forEach(n => {
+      if (n.type === 'proxyNode') {
+        const data = n.data as unknown as { targetPath: string; targetId: string; broken: boolean };
+        const targetId = pathToIdMap.get(data.targetPath);
+        if (targetId) {
+          data.targetId = targetId;
+        } else {
+          data.broken = true;
+        }
+      }
+    });
+  }
+
   // Resolve a target path (possibly relative) to an absolute path
   function resolveTargetPath(target: string, sourcePath: string): string {
     // Absolute path (leading /)
@@ -961,6 +1150,10 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     }
 
     // Starts with ".." — go up from source
+    // Each ".." goes up one level from the sibling scope (parent level).
+    // So "../uncle" from A/B/C: sibling scope is B's children,
+    // one ".." goes to A's children → finds uncle at A level.
+    // ".." alone means parent state (special case).
     if (target.startsWith('..')) {
       const sourceParts = sourcePath.split('/');
       const targetSegments = target.split('/');
@@ -969,6 +1162,11 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
       while (i < targetSegments.length && targetSegments[i] === '..') {
         depth--;
         i++;
+      }
+      // If there's remaining path after ".." segments, subtract one extra level
+      // because ".." scope is relative to sibling scope (parent), not self
+      if (i < targetSegments.length) {
+        depth--;
       }
       if (depth < 0) depth = 0;
       const baseParts = sourceParts.slice(0, depth);
@@ -1046,7 +1244,12 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     if (stateData.transitions && sourceId) {
       stateData.transitions.forEach(transition => {
         if (!transition.to) return;
-        const targetId = resolveTransitionTarget(transition.to, sourcePath);
+        let targetId = resolveTransitionTarget(transition.to, sourcePath);
+        // If this transition was routed via a proxy, use the proxy node as the target
+        if (transition.graphics?.proxyId) {
+          const proxyNodeId = proxyNameToNodeId.get(transition.graphics.proxyId);
+          if (proxyNodeId) targetId = proxyNodeId;
+        }
         if (sourceId && targetId) {
           createEdgeFromTransition(sourceId, targetId, transition);
         }
@@ -1067,7 +1270,12 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
         transitions.forEach(transition => {
           if (!transition.to) return;
           // For decisions, use the parent state's path context for resolving relative paths
-          const targetId = resolveTransitionTarget(transition.to, sourcePath);
+          let targetId = resolveTransitionTarget(transition.to, sourcePath);
+          // If this transition was routed via a proxy, use the proxy node as the target
+          if (transition.graphics?.proxyId) {
+            const proxyNodeId = proxyNameToNodeId.get(transition.graphics.proxyId);
+            if (proxyNodeId) targetId = proxyNodeId;
+          }
           if (targetId) {
             createEdgeFromTransition(decisionId, targetId, transition);
           }
@@ -1111,7 +1319,11 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
       transitions.forEach(transition => {
         if (!transition.to) return;
         // Root-level decisions use empty string as source path context
-        const targetId = resolveTransitionTarget(transition.to, '');
+        let targetId = resolveTransitionTarget(transition.to, '');
+        if (transition.graphics?.proxyId) {
+          const proxyNodeId = proxyNameToNodeId.get(transition.graphics.proxyId);
+          if (proxyNodeId) targetId = proxyNodeId;
+        }
         if (targetId) {
           createEdgeFromTransition(decisionId, targetId, transition);
         }

@@ -1,5 +1,6 @@
 import React, { useCallback, useState, useEffect, useRef } from 'react';
-import { EdgeProps, useReactFlow, useStore, Position } from 'reactflow';
+import { EdgeProps, useStore, Position } from 'reactflow';
+import { useSetEdges, useLabelsVisible } from './EdgesContext';
 
 // Coordinate system transformation utilities
 // Local coords: (0,0) = source, (1,0) = target
@@ -20,6 +21,7 @@ interface SplineEdgeData {
   sourceIsAncestor?: boolean;  // true if source is ancestor of target
   targetIsAncestor?: boolean;  // true if target is ancestor of source
   warning?: boolean;           // true if this transition is unreachable (after a guardless transition)
+  anyEdgeSelected?: boolean;   // true if any edge in the graph is selected
 }
 
 // Transform from local (normalized) coordinates to absolute canvas coordinates
@@ -435,7 +437,8 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
   selected,
   data,
 }) => {
-  const { setEdges } = useReactFlow();
+  const setEdges = useSetEdges();
+  const showLabels = useLabelsVisible();
   const transform = useStore((state) => ({ x: state.transform[0], y: state.transform[1], zoom: state.transform[2] }));
 
   // No counter-scaling needed - viewport is locked at zoom=1 and edges are at screen coordinates
@@ -766,8 +769,12 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
     arrowPath += ' Z';
   }
 
+  // When any edge is selected, disable pointer-events on non-selected edges
+  // so reconnect handles on the selected edge are easy to grab.
+  const disablePointer = data?.anyEdgeSelected && !selected;
+
   return (
-    <g>
+    <g style={disablePointer ? { pointerEvents: 'none' } : undefined}>
       {/* Invisible wider path for easier clicking (uses full path to node edge) */}
       <path
         d={pathD}
@@ -821,7 +828,7 @@ const SplineEdge: React.FC<EdgeProps<SplineEdgeData>> = ({
       </defs>
 
       {/* Transition labels (guard + label), draggable along edge when selected */}
-      {(guardText || data?.label) && (
+      {showLabels && (guardText || data?.label) && (
         <g
           onMouseDown={handleLabelMouseDown}
           filter={`url(#label-bg-${id})`}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import { Node, Edge } from 'reactflow';
 import { convertToYaml, convertFromYaml, convertToPhoenixYaml, convertFromPhoenixYaml, MachineProperties, defaultMachineProperties } from '../yamlConverter';
-import { resetIdCounter, resetStateNameCounter } from '../utils/idCounters';
+import { resetIdCounter, resetStateNameCounter, resetProxyNameCounter } from '../utils/idCounters';
 
 export function useFileOperations(
   nodes: Node[],
@@ -60,6 +60,15 @@ export function useFileOperations(
           return max;
         }, 0);
         resetStateNameCounter(maxStateNum + 1);
+        // Update proxyNameCounter based on existing P# names
+        const maxProxyNum = loadedNodes.reduce((max, node) => {
+          if (node.type === 'proxyNode') {
+            const match = (node.data as unknown as { name: string }).name?.match(/^P(\d+)$/);
+            if (match) return Math.max(max, parseInt(match[1], 10));
+          }
+          return max;
+        }, 0);
+        resetProxyNameCounter(maxProxyNum + 1);
         setCurrentFilePath(result.filePath || null);
         clearUndoRedo();
       } catch (error) {
@@ -85,6 +94,7 @@ export function useFileOperations(
     setCurrentFilePath(null);
     resetIdCounter(1);
     resetStateNameCounter(1);
+    resetProxyNameCounter(1);
     clearUndoRedo();
   }, [nodes, setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo]);
 
@@ -151,6 +161,7 @@ export function useFileOperations(
           return max;
         }, 0);
         resetStateNameCounter(maxStateNum + 1);
+        resetProxyNameCounter(1); // Phoenix files have no proxy nodes
         setCurrentFilePath(null); // Phoenix file is not an .smb file
         clearUndoRedo();
       } catch (error) {

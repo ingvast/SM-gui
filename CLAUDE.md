@@ -90,6 +90,26 @@ Decision nodes are junction points for routing transitions based on guards:
 ```
 Decisions cannot have children, no entry/exit/do, no self-loops. They are referenced in YAML by `@name` (e.g., `to: @D1`). They do not appear in the State Tree sidebar.
 
+Proxy nodes are graphical stand-ins for real (distant) target states:
+```typescript
+{
+  id: string,
+  type: 'proxyNode',
+  position: { x, y },
+  parentId?: string,           // Optional parent state
+  extent?: 'parent',
+  data: {
+    name: string,              // Identifier: "P1", "P2", etc.
+    label: string,             // Display: "→ Parent/Child/Target"
+    targetId: string,          // Node ID of the real target state
+    targetPath: string,        // Full path: "Parent/Child/Target"
+    broken?: boolean,          // true if target was deleted
+  },
+  style: { width, height },
+}
+```
+Proxies have only target handles (cannot be transition sources). They do not appear in the State Tree. Transitions to proxies resolve to the real target on save/export. Multiple transitions can share one proxy.
+
 #### Edges
 Edges represent transitions with source/target node IDs and arrow markers.
 Edges connect states.
@@ -113,8 +133,12 @@ Cases when the connection is between an ancestor and descendant.
 
 - `n` - Enter "add node" mode (click to place new state)
 - `d` - Enter "add decision" mode (click to place decision circle; click inside a state to add as child)
+- `p` - Create proxy: select a target state, press P, then click on canvas (or inside a parent state) to place a proxy node pointing to it. Or select a transition, press P to create a proxy of its target and automatically retarget the transition to the new proxy.
 - `t` - Start transition from selected node (click target to complete), or recompute handles if a transition is selected
+- `Shift+T` - With a transition selected: enter retarget mode, click any node to set it as the new target
+- `Shift+S` - With a transition selected: enter re-source mode, click any state or decision to set it as the new source
 - `i` - Set initial state: select a child state, press I, then click in the parent to place the initial marker (small filled circle with arrow to the initial state)
+- `v` - Toggle visibility of transition guard/event labels
 - `z` - Zoom to fit selected state, or fit all states if nothing selected
 - `g` - Group: make all states visually inside the selected state into its children
 - `Shift+G` - Ungroup mode: move selected node out of its parent, then click additional nodes to move them out. Cursor changes to up-arrow.

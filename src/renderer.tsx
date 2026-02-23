@@ -37,21 +37,24 @@ import './index.css';
 import { useUndoRedo } from './useUndoRedo';
 import StateNode from './StateNode';
 import DecisionNode from './DecisionNode';
+import ProxyNode from './ProxyNode';
 import InitialMarker from './InitialMarker';
 import HistoryMarker from './HistoryMarker';
 import StateTree from './StateTree';
 import PropertiesPanel from './PropertiesPanel';
 import SplineEdge from './SplineEdge';
+import { EdgesProvider, LabelsVisibleProvider } from './EdgesContext';
 import MachinePropertiesDialog from './MachinePropertiesDialog';
 import SettingsDialog, { Settings } from './SettingsDialog';
-import { MachineProperties, defaultMachineProperties } from './yamlConverter';
+import { MachineProperties, defaultMachineProperties, computeProxyLabel } from './yamlConverter';
 import {
   useSemanticZoomStore,
   getAbsoluteNodeBounds,
   SEMANTIC_ZOOM_CONFIG,
 } from './semanticZoom';
-import { calculateNodeDepth, isAncestorOf, buildTreeData, getAllDescendants } from './utils/nodeUtils';
-import { getNextId, getNextStateName, getNextDecisionName } from './utils/idCounters';
+import { calculateNodeDepth, isAncestorOf, buildTreeData, getAllDescendants, computeNodePath } from './utils/nodeUtils';
+import { calculateBestHandles } from './utils/handleUtils';
+import { getNextId, getNextStateName, getNextDecisionName, getNextProxyName } from './utils/idCounters';
 import { useClipboard } from './hooks/useClipboard';
 import { useFileOperations } from './hooks/useFileOperations';
 import { useGrouping } from './hooks/useGrouping';
@@ -107,7 +110,7 @@ declare global {
   }
 }
 
-const nodeTypes = { stateNode: StateNode, decisionNode: DecisionNode, initialMarker: InitialMarker, historyMarker: HistoryMarker };
+const nodeTypes = { stateNode: StateNode, decisionNode: DecisionNode, proxyNode: ProxyNode, initialMarker: InitialMarker, historyMarker: HistoryMarker };
 const edgeTypes = { spline: SplineEdge };
 
 const initialNodes = [
@@ -587,6 +590,7 @@ const App = () => {
 
   // Filter edges: show if at least one endpoint is visible
   const transformedEdges = useMemo(() => {
+    const anyEdgeSelected = edges.some(e => e.selected);
     const regularEdges = edges
       .filter(edge => {
         return visibleNodeIds.has(edge.source) || visibleNodeIds.has(edge.target);
@@ -607,6 +611,7 @@ const App = () => {
             effectiveScale,
             sourceIsAncestor,  // true if source is ancestor of target
             targetIsAncestor,  // true if target is ancestor of source
+            anyEdgeSelected,
           },
         };
       });
@@ -930,10 +935,17 @@ const App = () => {
   // Grouping operations
   const { handleGroupStates, handleUngroupState } = useGrouping(nodes, setNodes, saveSnapshot);
 
+  const [showLabels, setShowLabels] = useState(true);
   const [isAddingNode, setIsAddingNode] = useState(false);
   const [isAddingDecision, setIsAddingDecision] = useState(false);
+  const [isAddingProxy, setIsAddingProxy] = useState(false);
+  const [proxyTargetId, setProxyTargetId] = useState<string | null>(null);
+  const [proxySourceEdgeId, setProxySourceEdgeId] = useState<string | null>(null);
   const [isAddingTransition, setIsAddingTransition] = useState(false);
   const [transitionSourceId, setTransitionSourceId] = useState<string | null>(null);
+  const [isRetargetingTransition, setIsRetargetingTransition] = useState(false);
+  const [isResourcingTransition, setIsResourcingTransition] = useState(false);
+  const [retargetEdgeId, setRetargetEdgeId] = useState<string | null>(null);
   const [focusGuard, setFocusGuard] = useState(false);
   const [focusName, setFocusName] = useState(false);
 
@@ -1025,6 +1037,16 @@ const App = () => {
             }
           }
         }
+        // Also remove proxy nodes whose targetId is being deleted
+        nodes.forEach(n => {
+          if (n.type === 'proxyNode') {
+            const proxyData = n.data as unknown as { targetId: string };
+            if (removeIds.has(proxyData.targetId) && !removeIds.has(n.id)) {
+              removeIds.add(n.id);
+              changes.push({ type: 'remove', id: n.id });
+            }
+          }
+        });
       }
       // Detect resize-from-left/top: nodes that have both position and dimensions changes
       const hasPositionChange = new Set<string>();
@@ -1203,7 +1225,7 @@ const App = () => {
 
   const onEdgesChangeWithSelection = useCallback(
     (changes) => {
-      const hasRemove = changes.some(c => c.type === 'remove');
+      const hasRemove = changes.some(c => c.type === 'remove' || c.type === 'reset');
       if (hasRemove) {
         saveSnapshot();
       }
@@ -1309,20 +1331,43 @@ const App = () => {
       }
     }
 
-    setNodes((nds) =>
-      nds.map((node) => {
-        if (node.id === nodeId) {
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              [propertyName]: newValue,
-            },
-          };
-        }
-        return node;
-      })
-    );
+    if (propertyName === 'label') {
+      const trimmedNewValue = (newValue as string).trim();
+      setNodes((nds) => {
+        // Apply the label change
+        const updatedNds = nds.map(n =>
+          n.id === nodeId ? { ...n, data: { ...n.data, label: trimmedNewValue } } : n
+        );
+        // Update all proxy nodes whose targetId matches
+        return updatedNds.map(n => {
+          if (n.type === 'proxyNode') {
+            const proxyData = n.data as unknown as { targetId: string };
+            if (proxyData.targetId === nodeId) {
+              const newPath = computeNodePath(nodeId, updatedNds);
+              const proxyParentPath = n.parentId ? computeNodePath(n.parentId, updatedNds) : '';
+              const relLabel = computeProxyLabel(proxyParentPath, newPath);
+              return { ...n, data: { ...n.data, targetPath: newPath, label: relLabel } as unknown as typeof n.data };
+            }
+          }
+          return n;
+        });
+      });
+    } else {
+      setNodes((nds) =>
+        nds.map((node) => {
+          if (node.id === nodeId) {
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                [propertyName]: newValue,
+              },
+            };
+          }
+          return node;
+        })
+      );
+    }
     return true;
   }, [nodes, setNodes, setRootHistory, setMachineProperties, saveSnapshot]);
 
@@ -1356,12 +1401,16 @@ const App = () => {
     handleGroupStates, handleUngroupState, saveSnapshot,
     handleCopyImage, handleExportPdf,
     nodes, edges,
-    isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory,
+    isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
+    isRetargetingTransition, isResourcingTransition,
     selectedMarkerId,
     setIsAddingNode, setIsAddingDecision, setIsAddingTransition, setTransitionSourceId,
     setIsUngroupingMode, setIsSettingInitial, setInitialTargetId, setIsSettingHistory,
+    setIsAddingProxy, setProxyTargetId, setProxySourceEdgeId,
+    setIsRetargetingTransition, setIsResourcingTransition, setRetargetEdgeId,
     setSelectedMarkerId, setEdges, setNodes, setRootHistory,
     setMachineProperties: setMachineProperties as unknown as (updater: (prev: unknown) => unknown) => void,
+    toggleShowLabels: () => setShowLabels(v => !v),
   });
 
   const onPaneClick = useCallback(
@@ -1430,7 +1479,60 @@ const App = () => {
         return;
       }
 
-      if (isAddingDecision) {
+      if (isAddingProxy && proxyTargetId) {
+        const targetNode = nodes.find(n => n.id === proxyTargetId);
+        if (!targetNode) {
+          setIsAddingProxy(false);
+          setProxyTargetId(null);
+          setProxySourceEdgeId(null);
+          return;
+        }
+
+        const rect = reactFlowWrapper.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        const screenX = event.clientX - rect.left;
+        const screenY = event.clientY - rect.top;
+        const worldX = (screenX - effectivePan.x) / effectiveScale;
+        const worldY = (screenY - effectivePan.y) / effectiveScale;
+
+        const targetPath = computeNodePath(proxyTargetId, nodes);
+        const proxyWidth = 150 / effectiveScale;
+        const proxyHeight = 40 / effectiveScale;
+
+        const newProxyId = getNextId();
+        const newProxy = {
+          id: newProxyId,
+          type: 'proxyNode',
+          position: { x: worldX, y: worldY },
+          data: {
+            name: getNextProxyName(),
+            targetId: proxyTargetId,
+            targetPath,
+            label: computeProxyLabel('', targetPath), // root-level: absolute path
+            broken: false,
+          } as unknown as typeof nodes[0]['data'],
+          style: { width: proxyWidth, height: proxyHeight },
+          selected: false,
+        };
+
+        saveSnapshot();
+        setNodes((nds) => [...nds, newProxy]);
+        if (proxySourceEdgeId) {
+          const sourceId = edges.find(e => e.id === proxySourceEdgeId)?.source ?? '';
+          const { sourceHandle, targetHandle } = calculateBestHandles(sourceId, newProxyId, [...nodes, newProxy]);
+          setEdges((eds) => eds.map(edge =>
+            edge.id === proxySourceEdgeId
+              ? { ...edge, target: newProxyId, sourceHandle, targetHandle }
+              : edge
+          ));
+          setProxySourceEdgeId(null);
+        }
+        setIsAddingProxy(false);
+        setProxyTargetId(null);
+        event.stopPropagation();
+        return;
+      } else if (isAddingDecision) {
         // Convert screen click position to world coordinates
         const rect = reactFlowWrapper.current?.getBoundingClientRect();
         if (!rect) return;
@@ -1492,7 +1594,7 @@ const App = () => {
         );
       }
     },
-    [isAddingNode, isAddingDecision, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setMachineProperties, setRootHistory, nodes, effectiveScale, effectivePan, viewportSize, saveSnapshot]
+    [isAddingNode, isAddingDecision, isAddingProxy, proxyTargetId, proxySourceEdgeId, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setMachineProperties, setRootHistory, nodes, edges, effectiveScale, effectivePan, viewportSize, saveSnapshot]
   );
 
   // Capture snapshot before drag begins
@@ -1617,6 +1719,48 @@ const App = () => {
         setSelectedTreeItem(null);
         setNodes((nds) => nds.map((n) => ({ ...n, selected: false })));
         setFocusGuard(true);
+        event.stopPropagation();
+        return;
+      }
+
+      // Handle retargeting a transition (Shift+T)
+      if (isRetargetingTransition && retargetEdgeId) {
+        saveSnapshot();
+        const { sourceHandle, targetHandle } = calculateBestHandles(
+          edges.find(e => e.id === retargetEdgeId)?.source ?? '',
+          node.id,
+          nodes,
+        );
+        setEdges((eds) => eds.map((edge) => {
+          if (edge.id === retargetEdgeId) {
+            return { ...edge, target: node.id, targetHandle, sourceHandle };
+          }
+          return edge;
+        }));
+        setIsRetargetingTransition(false);
+        setRetargetEdgeId(null);
+        event.stopPropagation();
+        return;
+      }
+
+      // Handle re-sourcing a transition (Shift+S)
+      if (isResourcingTransition && retargetEdgeId) {
+        // Proxy nodes cannot be sources
+        if (node.type === 'proxyNode') return;
+        saveSnapshot();
+        const { sourceHandle, targetHandle } = calculateBestHandles(
+          node.id,
+          edges.find(e => e.id === retargetEdgeId)?.target ?? '',
+          nodes,
+        );
+        setEdges((eds) => eds.map((edge) => {
+          if (edge.id === retargetEdgeId) {
+            return { ...edge, source: node.id, sourceHandle, targetHandle };
+          }
+          return edge;
+        }));
+        setIsResourcingTransition(false);
+        setRetargetEdgeId(null);
         event.stopPropagation();
         return;
       }
@@ -1884,8 +2028,84 @@ const App = () => {
         setIsAddingDecision(false);
         event.stopPropagation();
       }
+
+      // Handle proxy placement inside a parent state
+      if (isAddingProxy && proxyTargetId && node.type === 'stateNode') {
+        const targetNode = nodes.find(n => n.id === proxyTargetId);
+        if (!targetNode) {
+          setIsAddingProxy(false);
+          setProxyTargetId(null);
+          setProxySourceEdgeId(null);
+          return;
+        }
+
+        const rect = reactFlowWrapper.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        const screenX = event.clientX - rect.left;
+        const screenY = event.clientY - rect.top;
+        const worldClickX = (screenX - effectivePan.x) / effectiveScale;
+        const worldClickY = (screenY - effectivePan.y) / effectiveScale;
+
+        const parentBounds = getAbsoluteNodeBounds(node.id, nodes);
+        if (!parentBounds) return;
+
+        const targetPath = computeNodePath(proxyTargetId, nodes);
+        const proxyWidth = 150 / effectiveScale;
+        const proxyHeight = 40 / effectiveScale;
+
+        const newRelativePosition = {
+          x: worldClickX - parentBounds.x,
+          y: worldClickY - parentBounds.y,
+        };
+
+        // Clamp to parent bounds
+        const safePaddingX = Math.min(parentBounds.width * 0.05, Math.max(0, (parentBounds.width - proxyWidth) / 2));
+        const safePaddingY = Math.min(parentBounds.height * 0.05, Math.max(0, (parentBounds.height - proxyHeight) / 2));
+        if (safePaddingX > 0) {
+          newRelativePosition.x = Math.max(safePaddingX, Math.min(newRelativePosition.x, parentBounds.width - proxyWidth - safePaddingX));
+        }
+        if (safePaddingY > 0) {
+          newRelativePosition.y = Math.max(safePaddingY, Math.min(newRelativePosition.y, parentBounds.height - proxyHeight - safePaddingY));
+        }
+
+        const parentPath = computeNodePath(node.id, nodes);
+        const newProxyId = getNextId();
+        const newProxy = {
+          id: newProxyId,
+          type: 'proxyNode',
+          position: newRelativePosition,
+          parentId: node.id,
+          extent: 'parent',
+          data: {
+            name: getNextProxyName(),
+            targetId: proxyTargetId,
+            targetPath,
+            label: computeProxyLabel(parentPath, targetPath), // relative from parent context
+            broken: false,
+          } as unknown as typeof nodes[0]['data'],
+          style: { width: proxyWidth, height: proxyHeight },
+          selected: false,
+        };
+
+        saveSnapshot();
+        setNodes((nds) => [...nds, newProxy]);
+        if (proxySourceEdgeId) {
+          const sourceId = edges.find(e => e.id === proxySourceEdgeId)?.source ?? '';
+          const { sourceHandle, targetHandle } = calculateBestHandles(sourceId, newProxyId, [...nodes, newProxy]);
+          setEdges((eds) => eds.map(edge =>
+            edge.id === proxySourceEdgeId
+              ? { ...edge, target: newProxyId, sourceHandle, targetHandle }
+              : edge
+          ));
+          setProxySourceEdgeId(null);
+        }
+        setIsAddingProxy(false);
+        setProxyTargetId(null);
+        event.stopPropagation();
+      }
     },
-    [isAddingNode, isAddingDecision, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setSelectedTreeItem, nodes, effectiveScale, effectivePan, viewportSize, saveSnapshot]
+    [isAddingNode, isAddingDecision, isAddingProxy, proxyTargetId, proxySourceEdgeId, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, isRetargetingTransition, isResourcingTransition, retargetEdgeId, setNodes, setEdges, setSelectedTreeItem, nodes, edges, effectiveScale, effectivePan, viewportSize, saveSnapshot]
   );
 
   return (
@@ -2021,13 +2241,13 @@ const App = () => {
 
         <Box
           ref={reactFlowWrapper}
-          className={isAddingNode || isAddingDecision || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
+          className={isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
           sx={{
             flexGrow: 1,
             position: 'relative',
-            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingDecision || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair' : 'default'),
+            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair' : 'default'),
             '& *': {
-              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingDecision || isAddingTransition || isSettingInitial || isSettingHistory ? 'crosshair !important' : undefined),
+              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair !important' : undefined),
             },
           }}
           onMouseDown={handlePaneMouseDown}
@@ -2035,38 +2255,42 @@ const App = () => {
           onMouseUp={handlePaneMouseUp}
           onMouseLeave={handlePaneMouseUp}
         >
-          <ReactFlow
-            nodes={transformedNodes}
-            edges={transformedEdges}
-            onNodesChange={onNodesChangeWithSelection}
-            onEdgesChange={onEdgesChangeWithSelection}
-            onConnect={onConnect}
-            onReconnect={onReconnect}
-            onPaneClick={onPaneClick}
-            onNodeClick={onNodeClick}
-            onNodeDragStart={onNodeDragStart}
-            onNodeDrag={onNodeDrag}
-            onNodeDragStop={onNodeDragStop}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            isValidConnection={isValidConnection}
-            connectionRadius={40}
-            connectionMode={ConnectionMode.Loose}
-            edgesUpdatable={false}
-            reconnectRadius={10}
-            minZoom={1}
-            maxZoom={1}
-            zoomOnScroll={false}
-            zoomOnPinch={false}
-            zoomOnDoubleClick={false}
-            panOnDrag={false}
-            panOnScroll={false}
-            autoPanOnNodeDrag={false}
-            autoPanOnConnect={false}
-            elevateNodesOnSelect={false}
-            deleteKeyCode={['Backspace', 'Delete']}
-            proOptions={{ hideAttribution: true }}
-          />
+          <LabelsVisibleProvider value={showLabels}>
+          <EdgesProvider value={setEdges}>
+            <ReactFlow
+              nodes={transformedNodes}
+              edges={transformedEdges}
+              onNodesChange={onNodesChangeWithSelection}
+              onEdgesChange={onEdgesChangeWithSelection}
+              onConnect={onConnect}
+              onReconnect={onReconnect}
+              onPaneClick={onPaneClick}
+              onNodeClick={onNodeClick}
+              onNodeDragStart={onNodeDragStart}
+              onNodeDrag={onNodeDrag}
+              onNodeDragStop={onNodeDragStop}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              isValidConnection={isValidConnection}
+              connectionRadius={40}
+              connectionMode={ConnectionMode.Loose}
+              edgesUpdatable={false}
+              reconnectRadius={20}
+              minZoom={1}
+              maxZoom={1}
+              zoomOnScroll={false}
+              zoomOnPinch={false}
+              zoomOnDoubleClick={false}
+              panOnDrag={false}
+              panOnScroll={false}
+              autoPanOnNodeDrag={false}
+              autoPanOnConnect={false}
+              elevateNodesOnSelect={false}
+              deleteKeyCode={['Backspace', 'Delete']}
+              proOptions={{ hideAttribution: true }}
+            />
+          </EdgesProvider>
+          </LabelsVisibleProvider>
         </Box>
       </Box>
 
