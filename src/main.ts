@@ -45,6 +45,45 @@ if (started) {
   app.quit();
 }
 
+// Track a file to open once the renderer is ready
+let pendingFileToOpen: string | null = null;
+
+function sendFileToRenderer(win: BrowserWindow, filePath: string) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    win.webContents.send('open-with-file', { content, filePath });
+  } catch (error) {
+    console.error('Error reading file for open:', error);
+  }
+}
+
+// macOS: file double-clicked in Finder (fires before OR after ready)
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  if (app.isReady()) {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) {
+      sendFileToRenderer(win, filePath);
+    }
+  } else {
+    pendingFileToOpen = filePath;
+  }
+});
+
+// CLI argument: file path passed on startup (packaged binary, dev mode with -- flags, etc.)
+// Also covers macOS when invoked directly (not via Finder double-click which uses open-file event)
+{
+  const arg = process.argv.find(
+    (a, i) => i > 0 && (a.endsWith('.smb') || a.endsWith('.yaml') || a.endsWith('.yml'))
+  );
+  if (arg) {
+    const resolved = path.resolve(arg);
+    if (fs.existsSync(resolved)) {
+      pendingFileToOpen = resolved;
+    }
+  }
+}
+
 const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -244,6 +283,19 @@ ipcMain.handle('export-pdf', async (event, fileName: string) => {
     return { success: true, filePath };
   } catch (error) {
     return { success: false, error: (error as Error).message };
+  }
+});
+
+// Renderer calls this on startup to retrieve any file pending from double-click / CLI arg
+ipcMain.handle('get-startup-file', async () => {
+  if (!pendingFileToOpen) return null;
+  const filePath = pendingFileToOpen;
+  pendingFileToOpen = null;
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    return { content, filePath };
+  } catch (error) {
+    return null;
   }
 });
 

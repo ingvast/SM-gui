@@ -92,6 +92,8 @@ declare global {
       openFile: () => Promise<{ success: boolean; content?: string; filePath?: string; canceled?: boolean; error?: string }>;
       importPhoenix: () => Promise<{ success: boolean; content?: string; filePath?: string; canceled?: boolean; error?: string }>;
       onImportPhoenix: (callback: () => void) => () => void;
+      getStartupFile: () => Promise<{ content: string; filePath: string } | null>;
+      onOpenWithFile: (callback: (data: { content: string; filePath: string }) => void) => () => void;
     };
     settingsAPI: {
       get: () => Promise<Settings>;
@@ -174,6 +176,7 @@ const App = () => {
   const [rootHistory, setRootHistory] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [saveFlash, setSaveFlash] = useState(false);
+  const [shouldZoomToFit, setShouldZoomToFit] = useState(false);
 
   // Undo/Redo
   const { pushSnapshot, undo, redo, canUndo, canRedo, clear: clearUndoRedo } = useUndoRedo();
@@ -946,6 +949,14 @@ const App = () => {
     }
   }, [nodes, viewportSize, setFocusNode, startAnimation]);
 
+  // Zoom to fit all nodes after a file is loaded
+  useEffect(() => {
+    if (shouldZoomToFit && nodes.length > 0) {
+      setShouldZoomToFit(false);
+      handleSemanticZoomToSelected();
+    }
+  }, [shouldZoomToFit, nodes, handleSemanticZoomToSelected]);
+
   // Navigate up one level (Escape key)
   const handleNavigateUp = useCallback(() => {
     if (!focusNodeId) return;
@@ -1083,7 +1094,7 @@ const App = () => {
 
 
   const onSaved = useCallback(() => setIsDirty(false), []);
-  const onLoaded = useCallback(() => setIsDirty(false), []);
+  const onLoaded = useCallback(() => { setIsDirty(false); setShouldZoomToFit(true); }, []);
 
   // File operations
   const { handleSave, handleOpen, handleNew } = useFileOperations(

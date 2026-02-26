@@ -35,53 +35,48 @@ export function useFileOperations(
     }
   }, [nodes, edges, rootHistory, machineProperties, currentFilePath, setCurrentFilePath, onSaved]);
 
+  const loadFromContent = useCallback((content: string, filePath: string | null) => {
+    const { nodes: loadedNodes, edges: loadedEdges, rootHistory: loadedRootHistory, machineProperties: loadedMachineProperties } = convertFromYaml(content);
+    setNodes(loadedNodes);
+    setEdges(loadedEdges);
+    setRootHistory(loadedRootHistory);
+    setMachineProperties(loadedMachineProperties);
+    setSelectedTreeItem(null);
+    const maxId = loadedNodes.reduce((max, node) => {
+      const match = node.id.match(/node_(\d+)/);
+      return match ? Math.max(max, parseInt(match[1], 10)) : max;
+    }, 0);
+    resetIdCounter(maxId + 1);
+    const maxStateNum = loadedNodes.reduce((max, node) => {
+      const match = node.data.label.match(/^S(\d+)$/);
+      return match ? Math.max(max, parseInt(match[1], 10)) : max;
+    }, 0);
+    resetStateNameCounter(maxStateNum + 1);
+    const maxProxyNum = loadedNodes.reduce((max, node) => {
+      if (node.type === 'proxyNode') {
+        const match = (node.data as unknown as { name: string }).name?.match(/^P(\d+)$/);
+        if (match) return Math.max(max, parseInt(match[1], 10));
+      }
+      return max;
+    }, 0);
+    resetProxyNameCounter(maxProxyNum + 1);
+    setCurrentFilePath(filePath);
+    clearUndoRedo();
+    onLoaded?.();
+  }, [setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo, onLoaded]);
+
   const handleOpen = useCallback(async () => {
     const result = await window.fileAPI.openFile();
     if (result.success && result.content) {
       try {
-        const { nodes: loadedNodes, edges: loadedEdges, rootHistory: loadedRootHistory, machineProperties: loadedMachineProperties } = convertFromYaml(result.content);
-        setNodes(loadedNodes);
-        setEdges(loadedEdges);
-        setRootHistory(loadedRootHistory);
-        setMachineProperties(loadedMachineProperties);
-        setSelectedTreeItem(null);
-        // Update idCounter to avoid conflicts
-        const maxId = loadedNodes.reduce((max, node) => {
-          const match = node.id.match(/node_(\d+)/);
-          if (match) {
-            return Math.max(max, parseInt(match[1], 10));
-          }
-          return max;
-        }, 0);
-        resetIdCounter(maxId + 1);
-        // Update stateNameCounter based on existing S# names
-        const maxStateNum = loadedNodes.reduce((max, node) => {
-          const match = node.data.label.match(/^S(\d+)$/);
-          if (match) {
-            return Math.max(max, parseInt(match[1], 10));
-          }
-          return max;
-        }, 0);
-        resetStateNameCounter(maxStateNum + 1);
-        // Update proxyNameCounter based on existing P# names
-        const maxProxyNum = loadedNodes.reduce((max, node) => {
-          if (node.type === 'proxyNode') {
-            const match = (node.data as unknown as { name: string }).name?.match(/^P(\d+)$/);
-            if (match) return Math.max(max, parseInt(match[1], 10));
-          }
-          return max;
-        }, 0);
-        resetProxyNameCounter(maxProxyNum + 1);
-        setCurrentFilePath(result.filePath || null);
-        clearUndoRedo();
-        onLoaded?.();
+        loadFromContent(result.content, result.filePath || null);
       } catch (error) {
         alert('Error parsing YAML file: ' + (error as Error).message);
       }
     } else if (result.error) {
       alert('Error opening file: ' + result.error);
     }
-  }, [setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo, onLoaded]);
+  }, [loadFromContent]);
 
   const handleNew = useCallback(() => {
     if (nodes.length > 0) {
@@ -178,6 +173,31 @@ export function useFileOperations(
       alert('Error opening file: ' + result.error);
     }
   }, [setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo]);
+
+  // On startup, check if the app was launched with a file (double-click or CLI arg)
+  useEffect(() => {
+    window.fileAPI.getStartupFile().then((result) => {
+      if (result) {
+        try {
+          loadFromContent(result.content, result.filePath);
+        } catch (error) {
+          alert('Error parsing file: ' + (error as Error).message);
+        }
+      }
+    });
+  }, []);
+
+  // When the app is already running and a file is opened (macOS Finder double-click)
+  useEffect(() => {
+    const cleanup = window.fileAPI.onOpenWithFile((data) => {
+      try {
+        loadFromContent(data.content, data.filePath);
+      } catch (error) {
+        alert('Error parsing file: ' + (error as Error).message);
+      }
+    });
+    return cleanup;
+  }, [loadFromContent]);
 
   useEffect(() => {
     const cleanup = window.fileAPI.onExportPhoenix(handleExportPhoenix);

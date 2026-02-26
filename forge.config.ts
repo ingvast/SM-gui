@@ -11,6 +11,15 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     icon: 'asset/icon/icon',
+    fileAssociations: [
+      {
+        ext: 'smb',
+        name: 'State Machine Builder',
+        description: 'State Machine Builder file',
+        role: 'Editor',
+        mimeType: 'application/x-state-machine-builder',
+      },
+    ],
   },
   rebuildConfig: {},
   makers: [
