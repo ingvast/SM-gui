@@ -105,6 +105,7 @@ interface PropertiesPanelProps {
   onGuardFocused?: () => void;
   focusName?: boolean;
   onNameFocused?: () => void;
+  replaceVersion?: number;
 }
 
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
@@ -124,6 +125,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onGuardFocused,
   focusName,
   onNameFocused,
+  replaceVersion,
 }) => {
   const [tempName, setTempName] = useState('');
   const [tempEntry, setTempEntry] = useState('');
@@ -269,6 +271,25 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       setSelectedEdgeId(null);
     }
   }, [selectedNode]);
+
+  // Re-sync temp values when replaceVersion changes (search & replace updated the data)
+  const prevReplaceVersionRef = useRef(replaceVersion);
+  useEffect(() => {
+    if (replaceVersion !== prevReplaceVersionRef.current) {
+      prevReplaceVersionRef.current = replaceVersion;
+      if (selectedNode && selectedNode.data) {
+        setTempName(selectedNode.data.label || '');
+        setTempEntry((selectedNode.data.entry as string) || '');
+        setTempExit((selectedNode.data.exit as string) || '');
+        setTempDo((selectedNode.data.do as string) || '');
+        setTempAnnotation((selectedNode.data.annotation as string) || '');
+      }
+      if (selectedEdge) {
+        setTempGuard(selectedEdge.data?.guard || '');
+        setTempAction(selectedEdge.data?.action || '');
+      }
+    }
+  }, [replaceVersion, selectedNode, selectedEdge]);
 
   // Sync edge properties when selected edge changes
   useEffect(() => {
@@ -563,7 +584,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               onKeyDown={handleGuardKeyDown}
               placeholder="Guard condition..."
               inputRef={guardFieldRef}
-              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
+              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'guard', 'data-owner-id': selectedCanvasEdge.id, 'data-owner-kind': 'edge' } }}
             />
             <IconButton
               size="small"
@@ -594,7 +615,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               onBlur={handleActionBlur}
               onKeyDown={handleActionKeyDown}
               placeholder="Transition action..."
-              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
+              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'action', 'data-owner-id': selectedCanvasEdge.id, 'data-owner-kind': 'edge' } }}
             />
             <IconButton
               size="small"
@@ -669,6 +690,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           onKeyDown={handleNameKeyDown}
           disabled={selectedNode.id === '/'}
           inputRef={nameFieldRef}
+          slotProps={{ htmlInput: { 'data-field-name': 'label', 'data-owner-id': selectedNode.id, 'data-owner-kind': 'node' } }}
           sx={{ mb: 1 }}
         />
       )}
@@ -741,7 +763,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               onBlur={handleEntryBlur}
               onKeyDown={handleEntryKeyDown}
               placeholder="Entry action code..."
-              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
+              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'entry', 'data-owner-id': selectedNode.id, 'data-owner-kind': 'node' } }}
             />
             <IconButton
               size="small"
@@ -772,7 +794,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               onBlur={handleExitBlur}
               onKeyDown={handleExitKeyDown}
               placeholder="Exit action code..."
-              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
+              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'exit', 'data-owner-id': selectedNode.id, 'data-owner-kind': 'node' } }}
             />
             <IconButton
               size="small"
@@ -803,7 +825,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               onBlur={handleDoBlur}
               onKeyDown={handleDoKeyDown}
               placeholder="Activity code..."
-              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
+              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'do', 'data-owner-id': selectedNode.id, 'data-owner-kind': 'node' } }}
             />
             <IconButton
               size="small"
@@ -834,6 +856,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               onBlur={handleAnnotationBlur}
               placeholder="Annotation text..."
               disabled={selectedNode.id === '/'}
+              slotProps={{ htmlInput: { 'data-field-name': 'annotation', 'data-owner-id': selectedNode.id, 'data-owner-kind': 'node' } }}
             />
             <IconButton
               size="small"
@@ -984,7 +1007,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   onKeyDown={handleGuardKeyDown}
                   placeholder="Guard condition..."
                   inputRef={guardFieldRef}
-                  slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
+                  slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'guard', 'data-owner-id': selectedEdge.id, 'data-owner-kind': 'edge' } }}
                 />
                 <IconButton
                   size="small"
@@ -1015,7 +1038,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                   onBlur={handleActionBlur}
                   onKeyDown={handleActionKeyDown}
                   placeholder="Transition action..."
-                  slotProps={{ input: { sx: codeFieldStyle }, htmlInput: codeFieldInputProps }}
+                  slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'action', 'data-owner-id': selectedEdge.id, 'data-owner-kind': 'edge' } }}
                 />
                 <IconButton
                   size="small"

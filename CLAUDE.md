@@ -152,8 +152,16 @@ Cases when the connection is between an ancestor and descendant.
 - `Ctrl/Cmd + Shift + s` - Save as...
 - `Ctrl/Cmd + e` - Export to Phoenix
 - `Ctrl/Cmd + o` - Open
+- `Ctrl/Cmd + f` - Open search & replace panel (context-sensitive: field/selection/global scope)
 - `Ctrl/Cmd + z` - undo latest command
 - `Ctrl/Cmd + Shift+z` - redo latest undone command
+
+## Search & Replace Improvements (TODO)
+
+- Connect undo properly — each time Replace or Replace All is hit, an undo snapshot should be saved
+- Better information on where the match is — currently the match location is often hidden
+- A list showing all matches with context (which node/edge, which field, surrounding text)
+- Support regexp in search/replace, e.g. search for `s(\(.*\))` replace with `set(\1)`
 
 ## Build Configuration
 

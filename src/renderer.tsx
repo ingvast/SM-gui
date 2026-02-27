@@ -60,6 +60,8 @@ import { useFileOperations } from './hooks/useFileOperations';
 import { useGrouping } from './hooks/useGrouping';
 import { useEdgeOperations } from './hooks/useEdgeOperations';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useSearchReplace } from './hooks/useSearchReplace';
+import SearchReplacePanel from './SearchReplacePanel';
 import { copyImageToClipboard } from './utils/exportImage';
 
 const theme = createTheme({
@@ -1486,13 +1488,55 @@ const App = () => {
     }
   }, [viewportSize, currentFilePath]);
 
+  // Search & Replace
+  const searchSelectNode = useCallback((nodeId: string) => {
+    setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })));
+    setEdges((eds) => eds.map((e) => ({ ...e, selected: false })));
+    setSelectedTreeItem(nodeId);
+  }, [setNodes, setEdges]);
+
+  const searchSelectEdge = useCallback((edgeId: string) => {
+    setEdges((eds) => eds.map((e) => ({ ...e, selected: e.id === edgeId })));
+    setNodes((nds) => nds.map((n) => ({ ...n, selected: false })));
+    setSelectedTreeItem(edgeId);
+  }, [setNodes, setEdges]);
+
+  const searchZoomToNode = useCallback((nodeId: string) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+    const bounds = getAbsoluteNodeBounds(nodeId, nodes);
+    if (!bounds) return;
+    const padding = 0.1;
+    const scaleX = viewportSize.width * (1 - padding * 2) / bounds.width;
+    const scaleY = viewportSize.height * (1 - padding * 2) / bounds.height;
+    const targetZoom = Math.min(scaleX, scaleY, effectiveScale * 2); // don't zoom in too much
+    const centerX = bounds.x + bounds.width / 2;
+    const centerY = bounds.y + bounds.height / 2;
+    const targetPanX = viewportSize.width / 2 - centerX * targetZoom;
+    const targetPanY = viewportSize.height / 2 - centerY * targetZoom;
+    startAnimation(targetZoom, { x: targetPanX, y: targetPanY });
+  }, [nodes, viewportSize, effectiveScale, startAnimation]);
+
+  const search = useSearchReplace({
+    nodes, edges, machineProperties,
+    setNodes, setEdges,
+    setMachineProperties: setMachineProperties as unknown as (updater: (prev: MachineProperties) => MachineProperties) => void,
+    saveSnapshot,
+    selectNode: searchSelectNode,
+    selectEdge: searchSelectEdge,
+    zoomToNode: searchZoomToNode,
+  });
+
   // Keyboard shortcuts
   useKeyboardShortcuts({
     handleCopy, handlePaste, handleDuplicate, handleDuplicateWithExternalEdges, handleSave: handleSaveWithFlash, handleOpen,
     handleUndo, handleRedo, handleSemanticZoomToSelected, handleNavigateUp,
     handleGroupStates, handleUngroupState, saveSnapshot,
     handleCopyImage, handleExportPdf,
+    handleOpenSearch: search.openSearch,
+    handleCloseSearch: search.closeSearch,
     nodes, edges,
+    isSearchOpen: search.isOpen,
     isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
     isRetargetingTransition, isResourcingTransition,
     selectedMarkerId,
@@ -2337,6 +2381,7 @@ const App = () => {
               onGuardFocused={() => setFocusGuard(false)}
               focusName={focusName}
               onNameFocused={() => setFocusName(false)}
+              replaceVersion={search.replaceVersion}
             />
           </Box>
         </Paper>
@@ -2357,6 +2402,23 @@ const App = () => {
           onMouseUp={handlePaneMouseUp}
           onMouseLeave={handlePaneMouseUp}
         >
+          <SearchReplacePanel
+            isOpen={search.isOpen}
+            searchTerm={search.searchTerm}
+            setSearchTerm={search.setSearchTerm}
+            replaceTerm={search.replaceTerm}
+            setReplaceTerm={search.setReplaceTerm}
+            options={search.options}
+            setOptions={search.setOptions}
+            matchCount={search.matches.length}
+            currentMatchIndex={search.currentMatchIndex}
+            scopeLabel={search.scopeLabel}
+            onClose={search.closeSearch}
+            onNext={search.goToNext}
+            onPrev={search.goToPrev}
+            onReplace={search.replaceCurrent}
+            onReplaceAll={search.replaceAll}
+          />
           <LabelsVisibleProvider value={showLabels}>
           <EdgesProvider value={setEdges}>
             <ReactFlow

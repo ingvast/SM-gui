@@ -20,10 +20,13 @@ interface KeyboardShortcutsParams {
   handleCopyImage: () => Promise<void>;
   handleExportPdf: () => Promise<void>;
   toggleShowLabels: () => void;
+  handleOpenSearch: () => void;
+  handleCloseSearch: () => void;
 
   // State
   nodes: Node[];
   edges: Edge[];
+  isSearchOpen: boolean;
   isAddingDecision: boolean;
   isAddingTransition: boolean;
   isUngroupingMode: boolean;
@@ -62,7 +65,9 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
     handleUndo, handleRedo, handleSemanticZoomToSelected, handleNavigateUp,
     handleGroupStates, handleUngroupState, saveSnapshot,
     handleCopyImage, handleExportPdf, toggleShowLabels,
+    handleOpenSearch, handleCloseSearch,
     nodes, edges,
+    isSearchOpen,
     isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
     isRetargetingTransition, isResourcingTransition,
     selectedMarkerId,
@@ -84,6 +89,13 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
       const isModifierPressed = isMac ? event.metaKey : event.ctrlKey;
+
+      // Ctrl/Cmd+F: open search panel (works even in text inputs)
+      if (isModifierPressed && event.key === 'f') {
+        event.preventDefault();
+        handleOpenSearch();
+        return;
+      }
 
       if (isInTextInput && event.key !== 'Escape') {
         return;
@@ -159,6 +171,9 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
           setIsResourcingTransition(true);
           setRetargetEdgeId(selectedEdge.id);
         }
+      } else if (event.key === 'Escape' && isSearchOpen) {
+        event.preventDefault();
+        handleCloseSearch();
       } else if (event.key === 'Escape' && isRetargetingTransition) {
         event.preventDefault();
         setIsRetargetingTransition(false);
@@ -300,8 +315,9 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
     handleCopy, handlePaste, handleDuplicate, handleDuplicateWithExternalEdges, handleSave, handleOpen,
     handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState,
     handleUndo, handleRedo, saveSnapshot, handleCopyImage, handleExportPdf, toggleShowLabels,
+    handleOpenSearch, handleCloseSearch,
     setIsAddingNode, setIsAddingDecision, isAddingDecision,
-    nodes, edges, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
+    nodes, edges, isSearchOpen, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
     isRetargetingTransition, isResourcingTransition,
     selectedMarkerId, setEdges, setRootHistory, setMachineProperties, setNodes,
     setIsAddingTransition, setTransitionSourceId, setIsUngroupingMode,
