@@ -53,7 +53,7 @@ export const useSemanticZoomStore = create<SemanticZoomState>((set, get) => ({
 
   adjustZoom: (delta, centerX, centerY) => {
     const state = get();
-    const newZoom = Math.max(0.01, state.zoomLevel * (1 + delta));
+    const newZoom = Math.max(0.01, state.zoomLevel * Math.exp(delta));
 
     // If center point provided, adjust pan to keep that point fixed
     if (centerX !== undefined && centerY !== undefined) {
