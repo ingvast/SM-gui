@@ -214,5 +214,21 @@ export function useFileOperations(
     return cleanup;
   }, [handleImportPhoenix]);
 
+  const handleExportSourceCode = useCallback(async () => {
+    if (!currentFilePath) {
+      alert('Please save the file before exporting to source code.');
+      return;
+    }
+    const result = await window.fileAPI.exportSourceCode(currentFilePath);
+    if (result.error) {
+      alert('Error exporting to source code: ' + result.error);
+    }
+  }, [currentFilePath]);
+
+  useEffect(() => {
+    const cleanup = window.fileAPI.onExportSourceCode(handleExportSourceCode);
+    return cleanup;
+  }, [handleExportSourceCode]);
+
   return { handleSave, handleOpen, handleNew, handleExportPhoenix, handleSaveAs, handleImportPhoenix };
 }

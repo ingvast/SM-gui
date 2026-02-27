@@ -103,8 +103,10 @@ const createWindow = () => {
     );
   }
 
-  // Open the DevTools.
-  mainWindow.webContents.openDevTools();
+  // Open the DevTools in dev mode only.
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    mainWindow.webContents.openDevTools();
+  }
 };
 
 // This method will be called when Electron has finished
@@ -150,6 +152,16 @@ app.on('ready', () => {
             const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
             if (win) {
               win.webContents.send('import-phoenix');
+            }
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Export to source code',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+            if (win) {
+              win.webContents.send('export-source-code');
             }
           },
         },
@@ -284,6 +296,49 @@ ipcMain.handle('export-pdf', async (event, fileName: string) => {
   } catch (error) {
     return { success: false, error: (error as Error).message };
   }
+});
+
+ipcMain.handle('export-source-code', async (_event, smbFilePath: string) => {
+  const defaultOutputPath = smbFilePath.replace(/\.(smb|yaml|yml)$/i, '');
+  const { canceled, filePath: outputPath } = await dialog.showSaveDialog({
+    defaultPath: defaultOutputPath,
+    title: 'Export to source code',
+    buttonLabel: 'Export',
+    message: 'Choose output file path (without extension)',
+  });
+
+  if (canceled || !outputPath) {
+    return { success: false, canceled: true };
+  }
+
+  return new Promise((resolve) => {
+    const q = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
+    const child = spawn(`sm-compiler -o ${q(outputPath)} ${q(smbFilePath)}`, {
+      shell: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    } as Parameters<typeof spawn>[1]);
+
+    let stderr = '';
+    child.stderr?.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') {
+        resolve({ success: false, error: 'sm-compiler not found on PATH. Please install it first.' });
+      } else {
+        resolve({ success: false, error: error.message });
+      }
+    });
+
+    child.on('close', (code: number) => {
+      if (code === 0) {
+        resolve({ success: true, outputPath });
+      } else {
+        resolve({ success: false, error: `sm-compiler failed (exit code ${code}):\n${stderr}` });
+      }
+    });
+  });
 });
 
 // Renderer calls this on startup to retrieve any file pending from double-click / CLI arg

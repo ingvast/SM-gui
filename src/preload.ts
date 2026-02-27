@@ -14,6 +14,8 @@ export interface FileAPI {
   onImportPhoenix: (callback: () => void) => () => void;
   getStartupFile: () => Promise<{ content: string; filePath: string } | null>;
   onOpenWithFile: (callback: (data: { content: string; filePath: string }) => void) => () => void;
+  onExportSourceCode: (callback: () => void) => () => void;
+  exportSourceCode: (smbFilePath: string) => Promise<{ success: boolean; outputPath?: string; canceled?: boolean; error?: string }>;
 }
 
 export interface Settings {
@@ -65,6 +67,12 @@ contextBridge.exposeInMainWorld('fileAPI', {
     ipcRenderer.on('open-with-file', handler);
     return () => { ipcRenderer.removeListener('open-with-file', handler); };
   },
+  onExportSourceCode: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('export-source-code', handler);
+    return () => { ipcRenderer.removeListener('export-source-code', handler); };
+  },
+  exportSourceCode: (smbFilePath: string) => ipcRenderer.invoke('export-source-code', smbFilePath),
 } as FileAPI);
 
 contextBridge.exposeInMainWorld('settingsAPI', {
