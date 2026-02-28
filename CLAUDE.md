@@ -15,7 +15,11 @@ npm run package    # Package the application
 npm run make       # Create distributable packages
 ```
 
-No test framework is configured yet.
+**Vitest** + **React Testing Library** are configured. Run with `npm test` (once) or `npm run test:watch` (TDD watch mode).
+
+- Co-locate test files with source: `src/yamlConverter.test.ts` lives next to `src/yamlConverter.ts`
+- `src/test/setup.ts` — global jest-dom matchers; `src/test/smoke.test.ts` — baseline sanity test
+- `npm run test:coverage` — V8 coverage report
 
 ## Tech Stack
 
