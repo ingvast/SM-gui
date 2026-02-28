@@ -177,6 +177,7 @@ const App = () => {
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
   const [rootHistory, setRootHistory] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [saveFlash, setSaveFlash] = useState(false);
   const [shouldZoomToFit, setShouldZoomToFit] = useState(false);
 
@@ -280,6 +281,27 @@ const App = () => {
 
   // Transform nodes to screen coordinates based on semantic zoom
   const transformedNodes = useMemo(() => {
+    // Compute DFS preorder order (matches state tree sidebar list order)
+    // Children inherit a higher z-index than their parent, and later siblings
+    // are drawn on top of earlier siblings' entire subtrees.
+    const dfsOrder = new Map<string, number>();
+    {
+      let counter = 0;
+      const childrenByParent = new Map<string | undefined, string[]>();
+      for (const node of nodes) {
+        const key = node.parentId;
+        if (!childrenByParent.has(key)) childrenByParent.set(key, []);
+        childrenByParent.get(key)!.push(node.id);
+      }
+      const visit = (parentId: string | undefined) => {
+        for (const id of (childrenByParent.get(parentId) || [])) {
+          dfsOrder.set(id, counter++);
+          visit(id);
+        }
+      };
+      visit(undefined);
+    }
+
     // First pass: compute transforms and visibility for all nodes
     const nodeTransforms = new Map<string, {
       screenX: number;
@@ -400,15 +422,17 @@ const App = () => {
       const shouldInclude = intrinsicallyVisible.has(node.id) || connectedToVisible.has(node.id);
       if (!shouldInclude) return null;
 
-      const depth = calculateNodeDepth(node.id, nodes);
       const mins = minScreenDims.get(node.id);
+      const dfsIdx = dfsOrder.get(node.id) ?? 0;
+      const isDragging = draggingNodeId !== null &&
+        (node.id === draggingNodeId || isAncestorOf(draggingNodeId, node.id, nodes));
 
       return {
         ...node,
         parentId: undefined,
         extent: undefined,
         position: { x: t.screenX, y: t.screenY },
-        zIndex: 1000 + depth * 10,
+        zIndex: isDragging ? (5000 + dfsIdx) : (1000 + dfsIdx),
         style: {
           ...node.style,
           width: t.screenWidth,
@@ -427,12 +451,8 @@ const App = () => {
       };
     }).filter(Boolean) as typeof nodes;
 
-    // Sort by depth so children render after (on top of) parents
-    result.sort((a, b) => {
-      const depthA = calculateNodeDepth(a.id, nodes);
-      const depthB = calculateNodeDepth(b.id, nodes);
-      return depthA - depthB;
-    });
+    // Sort by DFS preorder so DOM order matches tree order (z-index does the actual stacking)
+    result.sort((a, b) => (dfsOrder.get(a.id) ?? 0) - (dfsOrder.get(b.id) ?? 0));
 
     // Add initial marker nodes for parents that have initial set
     const initialMarkers: typeof nodes = [];
@@ -604,7 +624,7 @@ const App = () => {
     }
 
     return [...result, ...initialMarkers, ...historyMarkers];
-  }, [nodes, edges, effectiveScale, effectivePan, viewportSize, machineProperties, draggingMarkerId, draggingMarkerPos, selectedMarkerId]);
+  }, [nodes, edges, effectiveScale, effectivePan, viewportSize, machineProperties, draggingMarkerId, draggingMarkerPos, selectedMarkerId, draggingNodeId]);
 
   // Build a set of visible node IDs for edge filtering
   const visibleNodeIds = useMemo(() => {
@@ -624,9 +644,12 @@ const App = () => {
         // targetIsAncestor: target is an ancestor of source (target is parent/grandparent/etc of source)
         const sourceIsAncestor = isAncestorOf(edge.source, edge.target, nodes);
         const targetIsAncestor = isAncestorOf(edge.target, edge.source, nodes);
+        const sourceDepth = calculateNodeDepth(edge.source, nodes);
+        const targetDepth = calculateNodeDepth(edge.target, nodes);
 
         return {
           ...edge,
+          zIndex: 1000 + Math.max(sourceDepth, targetDepth) * 10 + 5,
           // Only allow reconnecting selected edges (avoids ambiguity when multiple edges share a handle)
           reconnectable: edge.selected ? true : undefined,
           data: {
@@ -720,6 +743,7 @@ const App = () => {
               sourceHandle,
               targetHandle,
               type: 'spline',
+              zIndex: 2500,
               data: {
                 controlPoints: [],
                 effectiveScale,
@@ -780,6 +804,7 @@ const App = () => {
             sourceHandle,
             targetHandle,
             type: 'spline',
+            zIndex: 2500,
             data: {
               controlPoints: [],
               effectiveScale,
@@ -1380,6 +1405,21 @@ const App = () => {
     }
   }, [setNodes, setEdges]);
 
+  const handleTreeReorder = useCallback((draggedId: string, targetId: string, insertBefore: boolean) => {
+    saveSnapshot();
+    setNodes(prevNodes => {
+      const dragged = prevNodes.find(n => n.id === draggedId);
+      if (!dragged) return prevNodes;
+      const withoutDragged = prevNodes.filter(n => n.id !== draggedId);
+      const targetIndex = withoutDragged.findIndex(n => n.id === targetId);
+      if (targetIndex === -1) return prevNodes;
+      const newNodes = [...withoutDragged];
+      newNodes.splice(insertBefore ? targetIndex : targetIndex + 1, 0, dragged);
+      return newNodes;
+    });
+    setIsDirty(true);
+  }, [saveSnapshot, setNodes, setIsDirty]);
+
   const handlePropertyChange = useCallback((nodeId, propertyName, newValue) => {
     saveSnapshot();
     if (nodeId === '/') {
@@ -1770,8 +1810,11 @@ const App = () => {
 
   // Capture snapshot before drag begins
   const onNodeDragStart = useCallback(
-    () => {
+    (event: React.MouseEvent, node: Node) => {
       dragStartSnapshot.current = { nodes, edges, machineProperties, rootHistory };
+      if (!node.id.startsWith('initial-marker') && !node.id.startsWith('history-marker')) {
+        setDraggingNodeId(node.id);
+      }
     },
     [nodes, edges, machineProperties, rootHistory]
   );
@@ -1790,6 +1833,7 @@ const App = () => {
   // Handle drag stop - push pre-drag snapshot for undo
   const onNodeDragStop = useCallback(
     (event, node) => {
+      setDraggingNodeId(null);
       // Push the pre-drag snapshot for undo and mark dirty
       if (dragStartSnapshot.current) {
         pushSnapshot(dragStartSnapshot.current);
@@ -2389,7 +2433,7 @@ const App = () => {
             <Typography variant="subtitle2" color="text.secondary" gutterBottom>
               State Tree
             </Typography>
-            <StateTree treeData={treeData} onSelect={handleTreeSelect} selectedItemId={selectedTreeItem} />
+            <StateTree treeData={treeData} onSelect={handleTreeSelect} selectedItemId={selectedTreeItem} onReorder={handleTreeReorder} />
           </Box>
 
           <Divider />
