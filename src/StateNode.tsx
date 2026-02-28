@@ -167,7 +167,7 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
         const badgeDiameter = 16;
         const w = data.screenWidth ?? Infinity;
         const h = data.screenHeight ?? Infinity;
-        return badgeDiameter < 0.3 * w && badgeDiameter < 0.3 * h;
+        return badgeDiameter < 0.7 * w && badgeDiameter < 0.7 * h;
       })() && (
         <div className="proxy-target-badge" title="This state has proxy references"
           style={{ borderColor, color: borderColor }}>

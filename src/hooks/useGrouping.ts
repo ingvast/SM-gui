@@ -44,10 +44,17 @@ export function useGrouping(
       return;
     }
 
+    // Only reparent top-level nodes — skip nodes whose parent is already being grouped
+    const nodesToGroupSet = new Set(nodesToGroup);
+    const topLevelNodesToGroup = nodesToGroup.filter((id) => {
+      const node = nodes.find(n => n.id === id);
+      return !node?.parentId || !nodesToGroupSet.has(node.parentId);
+    });
+
     saveSnapshot();
     setNodes((nds) =>
       nds.map((node) => {
-        if (nodesToGroup.includes(node.id)) {
+        if (topLevelNodesToGroup.includes(node.id)) {
           const nodeBounds = getAbsoluteNodeBounds(node.id, nds);
           if (!nodeBounds) return node;
 
@@ -65,7 +72,7 @@ export function useGrouping(
       })
     );
 
-    console.log(`Grouped ${nodesToGroup.length} state(s) into ${selectedNode.data.label}.`);
+    console.log(`Grouped ${topLevelNodesToGroup.length} state(s) into ${selectedNode.data.label}.`);
   }, [nodes, setNodes, saveSnapshot]);
 
   const handleUngroupState = useCallback((nodeId: string) => {

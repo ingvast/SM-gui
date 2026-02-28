@@ -814,14 +814,14 @@ const App = () => {
       const rect = wrapper.getBoundingClientRect();
       if (event.ctrlKey) {
         // Pinch gesture (Mac trackpad) or Ctrl+scroll → zoom
-        const delta = -event.deltaY * 0.005;
+        const delta = -event.deltaY * 0.00125;
         adjustZoom(delta, event.clientX - rect.left, event.clientY - rect.top);
       } else if (event.shiftKey) {
         // Shift+scroll → horizontal pan
-        adjustPan(-event.deltaY, 0);
+        adjustPan(-event.deltaY * 0.5, 0);
       } else {
         // Two-finger scroll (Mac trackpad) or plain scroll wheel → pan
-        adjustPan(-event.deltaX, -event.deltaY);
+        adjustPan(-event.deltaX * 0.5, -event.deltaY * 0.5);
       }
     };
 
