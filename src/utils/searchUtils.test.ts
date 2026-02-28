@@ -5,6 +5,9 @@ import {
   findMatchesInField,
   getMachineFieldValue,
   setMachineFieldValue,
+  normalizeReplaceTerm,
+  getMatchContext,
+  getMatchLine,
 } from './searchUtils';
 import { defaultMachineProperties } from '../yamlConverter';
 
@@ -173,5 +176,189 @@ describe('setMachineFieldValue', () => {
     const mp = { ...defaultMachineProperties, includes: '#include <stdio.h>' };
     const updated = setMachineFieldValue(mp, 'context', 'int z;');
     expect(updated.includes).toBe('#include <stdio.h>');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildRegex — isRegex mode
+// ---------------------------------------------------------------------------
+
+describe('buildRegex with isRegex mode', () => {
+  const regexOpts = { caseSensitive: false, wholeWord: false, isRegex: true };
+
+  it('treats the term as a raw regex pattern (dot matches any char)', () => {
+    // Global-flag regex is stateful, so use a fresh instance per assertion
+    expect(buildRegex('a.b', regexOpts)!.test('axb')).toBe(true);  // . matches x
+    expect(buildRegex('a.b', regexOpts)!.test('a.b')).toBe(true);  // . also matches literal dot
+  });
+
+  it('returns null for an invalid regex', () => {
+    expect(buildRegex('(unclosed', regexOpts)).toBeNull();
+    expect(buildRegex('[bad', regexOpts)).toBeNull();
+  });
+
+  it('supports capture groups', () => {
+    const re = buildRegex('(foo)', regexOpts)!;
+    expect(re).not.toBeNull();
+    expect(re.test('foo')).toBe(true);
+  });
+
+  it('has the global flag set', () => {
+    const re = buildRegex('\\d+', regexOpts)!;
+    expect(re.flags).toContain('g');
+  });
+
+  it('is case-insensitive when caseSensitive is false', () => {
+    const re = buildRegex('FOO', regexOpts)!;
+    expect(re.test('foo')).toBe(true);
+  });
+
+  it('is case-sensitive when caseSensitive is true', () => {
+    const re = buildRegex('FOO', { ...regexOpts, caseSensitive: true })!;
+    expect(re.test('foo')).toBe(false);
+    expect(re.test('FOO')).toBe(true);
+  });
+
+  it('does not apply word-boundary wrapping even when wholeWord is set', () => {
+    // wholeWord is ignored in regex mode — user controls the pattern
+    const re = buildRegex('foo', { ...regexOpts, wholeWord: true })!;
+    expect(re).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findMatchesInField — zero-length match protection
+// ---------------------------------------------------------------------------
+
+describe('findMatchesInField zero-length match protection', () => {
+  it('does not hang on a zero-width match pattern', () => {
+    const re = buildRegex('x*', { caseSensitive: false, wholeWord: false, isRegex: true })!;
+    // x* can match empty string; findMatchesInField must not loop forever
+    const matches = findMatchesInField('abc', re, 'n1', 'node', 'label');
+    // Should return finite number of matches and complete
+    expect(Array.isArray(matches)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeReplaceTerm
+// ---------------------------------------------------------------------------
+
+describe('normalizeReplaceTerm', () => {
+  it('converts \\1 to $1', () => {
+    expect(normalizeReplaceTerm('set(\\1)')).toBe('set($1)');
+  });
+
+  it('converts multiple back-references', () => {
+    expect(normalizeReplaceTerm('\\1-\\2')).toBe('$1-$2');
+  });
+
+  it('leaves plain text unchanged', () => {
+    expect(normalizeReplaceTerm('hello')).toBe('hello');
+  });
+
+  it('leaves $1 style references unchanged', () => {
+    expect(normalizeReplaceTerm('set($1)')).toBe('set($1)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getMatchContext
+// ---------------------------------------------------------------------------
+
+describe('getMatchContext', () => {
+  it('returns correct before/match/after for short text', () => {
+    const result = getMatchContext('hello world', 6, 11);
+    expect(result.before).toBe('hello ');
+    expect(result.matchText).toBe('world');
+    expect(result.after).toBe('');
+  });
+
+  it('adds leading ellipsis when text before match is long', () => {
+    const longBefore = 'a'.repeat(30) + 'MATCH' + 'b'.repeat(5);
+    const result = getMatchContext(longBefore, 30, 35);
+    expect(result.before.startsWith('\u2026')).toBe(true);
+    expect(result.matchText).toBe('MATCH');
+  });
+
+  it('adds trailing ellipsis when text after match is long', () => {
+    const longAfter = 'pre' + 'MATCH' + 'z'.repeat(30);
+    const result = getMatchContext(longAfter, 3, 8);
+    expect(result.after.endsWith('\u2026')).toBe(true);
+  });
+
+  it('does not add ellipsis when context fits within limit', () => {
+    const result = getMatchContext('ab MATCH cd', 3, 8);
+    expect(result.before).toBe('ab ');
+    expect(result.after).toBe(' cd');
+    expect(result.before.includes('\u2026')).toBe(false);
+    expect(result.after.includes('\u2026')).toBe(false);
+  });
+
+  it('handles match at start of string', () => {
+    const result = getMatchContext('MATCH rest', 0, 5);
+    expect(result.before).toBe('');
+    expect(result.matchText).toBe('MATCH');
+    expect(result.after).toBe(' rest');
+  });
+
+  it('handles match at end of string', () => {
+    const result = getMatchContext('start MATCH', 6, 11);
+    expect(result.before).toBe('start ');
+    expect(result.matchText).toBe('MATCH');
+    expect(result.after).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getMatchLine
+// ---------------------------------------------------------------------------
+
+describe('getMatchLine', () => {
+  it('returns the full single-line text when there are no newlines', () => {
+    const result = getMatchLine('foo MATCH bar', 4, 9);
+    expect(result.before).toBe('foo ');
+    expect(result.matchText).toBe('MATCH');
+    expect(result.after).toBe(' bar');
+  });
+
+  it('extracts only the line containing the match from multi-line text', () => {
+    const text = 'line one\nfoo MATCH bar\nline three';
+    const start = text.indexOf('MATCH');
+    const end = start + 5;
+    const result = getMatchLine(text, start, end);
+    expect(result.before).toBe('foo ');
+    expect(result.matchText).toBe('MATCH');
+    expect(result.after).toBe(' bar');
+  });
+
+  it('handles match at the start of a line', () => {
+    const text = 'first\nMATCH rest\nlast';
+    const start = 6;
+    const end = 11;
+    const result = getMatchLine(text, start, end);
+    expect(result.before).toBe('');
+    expect(result.matchText).toBe('MATCH');
+    expect(result.after).toBe(' rest');
+  });
+
+  it('handles match on the last line (no trailing newline)', () => {
+    const text = 'first\nsecond MATCH';
+    const start = text.indexOf('MATCH');
+    const end = start + 5;
+    const result = getMatchLine(text, start, end);
+    expect(result.before).toBe('second ');
+    expect(result.matchText).toBe('MATCH');
+    expect(result.after).toBe('');
+  });
+
+  it('does not add ellipsis (unlike getMatchContext)', () => {
+    const longLine = 'a'.repeat(100) + 'MATCH' + 'b'.repeat(100);
+    const start = 100;
+    const end = 105;
+    const result = getMatchLine(longLine, start, end);
+    expect(result.before).toBe('a'.repeat(100));
+    expect(result.after).toBe('b'.repeat(100));
+    expect(result.before.includes('\u2026')).toBe(false);
   });
 });

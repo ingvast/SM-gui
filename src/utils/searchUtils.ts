@@ -7,9 +7,13 @@ export function escapeRegex(s: string): string {
 
 export function buildRegex(term: string, opts: SearchOptions): RegExp | null {
   if (!term) return null;
-  let pattern = escapeRegex(term);
-  if (opts.wholeWord) pattern = `\\b${pattern}\\b`;
-  return new RegExp(pattern, opts.caseSensitive ? 'g' : 'gi');
+  try {
+    let pattern = opts.isRegex ? term : escapeRegex(term);
+    if (!opts.isRegex && opts.wholeWord) pattern = `\\b${pattern}\\b`;
+    return new RegExp(pattern, opts.caseSensitive ? 'g' : 'gi');
+  } catch {
+    return null; // Invalid regex pattern
+  }
 }
 
 export function findMatchesInField(
@@ -24,6 +28,7 @@ export function findMatchesInField(
   regex.lastIndex = 0;
   while ((m = regex.exec(text)) !== null) {
     matches.push({ ownerId, ownerKind, fieldName, startIndex: m.index, endIndex: m.index + m[0].length });
+    if (m[0].length === 0) regex.lastIndex++; // prevent infinite loop on zero-width matches
   }
   return matches;
 }
@@ -42,4 +47,42 @@ export function setMachineFieldValue(mp: MachineProperties, field: string, value
     return { ...mp, hooks: { ...mp.hooks, [key]: value } };
   }
   return { ...mp, [field]: value };
+}
+
+/** Normalize \1 → $1 etc. in a replacement string for use with String.replace() */
+export function normalizeReplaceTerm(term: string): string {
+  return term.replace(/\\(\d)/g, '$$$1');
+}
+
+const CONTEXT_CHARS = 25;
+
+export function getMatchContext(
+  text: string,
+  startIndex: number,
+  endIndex: number,
+): { before: string; matchText: string; after: string } {
+  const rawBefore = text.substring(Math.max(0, startIndex - CONTEXT_CHARS), startIndex);
+  const matchText = text.substring(startIndex, endIndex);
+  const rawAfter = text.substring(endIndex, Math.min(text.length, endIndex + CONTEXT_CHARS));
+  return {
+    before: startIndex > CONTEXT_CHARS ? '\u2026' + rawBefore : rawBefore,
+    matchText,
+    after: endIndex + CONTEXT_CHARS < text.length ? rawAfter + '\u2026' : rawAfter,
+  };
+}
+
+/** Return the full line (up to the nearest newlines) that contains the match. */
+export function getMatchLine(
+  text: string,
+  startIndex: number,
+  endIndex: number,
+): { before: string; matchText: string; after: string } {
+  const lineStart = text.lastIndexOf('\n', startIndex - 1) + 1;
+  const lineEndRaw = text.indexOf('\n', endIndex);
+  const lineEnd = lineEndRaw === -1 ? text.length : lineEndRaw;
+  return {
+    before: text.substring(lineStart, startIndex),
+    matchText: text.substring(startIndex, endIndex),
+    after: text.substring(endIndex, lineEnd),
+  };
 }

@@ -1501,21 +1501,55 @@ const App = () => {
     setSelectedTreeItem(edgeId);
   }, [setNodes, setEdges]);
 
-  const searchZoomToNode = useCallback((nodeId: string) => {
-    const node = nodes.find(n => n.id === nodeId);
-    if (!node) return;
-    const bounds = getAbsoluteNodeBounds(nodeId, nodes);
-    if (!bounds) return;
-    const padding = 0.1;
-    const scaleX = viewportSize.width * (1 - padding * 2) / bounds.width;
-    const scaleY = viewportSize.height * (1 - padding * 2) / bounds.height;
-    const targetZoom = Math.min(scaleX, scaleY, effectiveScale * 2); // don't zoom in too much
+  // Shared zoom helper: animate to show a world-space bounding box
+  const zoomToBounds = useCallback((
+    bounds: { x: number; y: number; width: number; height: number },
+    style: 'fill30' | 'fit',
+  ) => {
+    let targetZoom: number;
+    if (style === 'fill30') {
+      // Node's longest side fills ~30% of the screen's longest dimension
+      const nodeMaxDim = Math.max(bounds.width, bounds.height);
+      const screenMaxDim = Math.max(viewportSize.width, viewportSize.height);
+      targetZoom = (0.30 * screenMaxDim) / nodeMaxDim;
+    } else {
+      // Fit both nodes inside the viewport with 10% padding
+      const padding = 0.1;
+      const scaleX = viewportSize.width * (1 - padding * 2) / bounds.width;
+      const scaleY = viewportSize.height * (1 - padding * 2) / bounds.height;
+      targetZoom = Math.min(scaleX, scaleY);
+    }
     const centerX = bounds.x + bounds.width / 2;
     const centerY = bounds.y + bounds.height / 2;
     const targetPanX = viewportSize.width / 2 - centerX * targetZoom;
     const targetPanY = viewportSize.height / 2 - centerY * targetZoom;
     startAnimation(targetZoom, { x: targetPanX, y: targetPanY });
-  }, [nodes, viewportSize, effectiveScale, startAnimation]);
+  }, [viewportSize, startAnimation]);
+
+  const searchZoomToNode = useCallback((nodeId: string) => {
+    const bounds = getAbsoluteNodeBounds(nodeId, nodes);
+    if (!bounds) return;
+    zoomToBounds(bounds, 'fill30');
+  }, [nodes, zoomToBounds]);
+
+  const searchZoomToEdge = useCallback((edgeId: string) => {
+    const edge = edges.find(e => e.id === edgeId);
+    if (!edge) return;
+    const srcBounds = getAbsoluteNodeBounds(edge.source, nodes);
+    const tgtBounds = getAbsoluteNodeBounds(edge.target, nodes);
+    if (!srcBounds && !tgtBounds) return;
+    // Self-loop or only one endpoint found: use single-node zoom
+    if (!srcBounds || !tgtBounds || edge.source === edge.target) {
+      zoomToBounds((srcBounds ?? tgtBounds)!, 'fill30');
+      return;
+    }
+    // Union bounding box covering both nodes
+    const minX = Math.min(srcBounds.x, tgtBounds.x);
+    const minY = Math.min(srcBounds.y, tgtBounds.y);
+    const maxX = Math.max(srcBounds.x + srcBounds.width, tgtBounds.x + tgtBounds.width);
+    const maxY = Math.max(srcBounds.y + srcBounds.height, tgtBounds.y + tgtBounds.height);
+    zoomToBounds({ x: minX, y: minY, width: maxX - minX, height: maxY - minY }, 'fit');
+  }, [edges, nodes, zoomToBounds]);
 
   const search = useSearchReplace({
     nodes, edges, machineProperties,
@@ -1525,6 +1559,7 @@ const App = () => {
     selectNode: searchSelectNode,
     selectEdge: searchSelectEdge,
     zoomToNode: searchZoomToNode,
+    zoomToEdge: searchZoomToEdge,
   });
 
   // Keyboard shortcuts
@@ -2413,11 +2448,14 @@ const App = () => {
             matchCount={search.matches.length}
             currentMatchIndex={search.currentMatchIndex}
             scopeLabel={search.scopeLabel}
+            matchDisplays={search.matchDisplays}
+            regexError={search.regexError}
             onClose={search.closeSearch}
             onNext={search.goToNext}
             onPrev={search.goToPrev}
             onReplace={search.replaceCurrent}
             onReplaceAll={search.replaceAll}
+            onNavigateToMatch={search.navigateToMatchByIndex}
           />
           <LabelsVisibleProvider value={showLabels}>
           <EdgesProvider value={setEdges}>
