@@ -2,6 +2,12 @@ import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { Node, Edge } from 'reactflow';
 import { MachineProperties } from '../yamlConverter';
 import { getAllDescendants } from '../utils/nodeUtils';
+import {
+  buildRegex,
+  findMatchesInField,
+  getMachineFieldValue,
+  setMachineFieldValue,
+} from '../utils/searchUtils';
 
 // --- Types ---
 
@@ -36,35 +42,6 @@ export interface UseSearchReplaceParams {
   zoomToNode: (nodeId: string) => void;
 }
 
-// --- Helpers ---
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function buildRegex(term: string, opts: SearchOptions): RegExp | null {
-  if (!term) return null;
-  let pattern = escapeRegex(term);
-  if (opts.wholeWord) pattern = `\\b${pattern}\\b`;
-  return new RegExp(pattern, opts.caseSensitive ? 'g' : 'gi');
-}
-
-function findMatchesInField(
-  text: string,
-  regex: RegExp,
-  ownerId: string,
-  ownerKind: 'node' | 'edge' | 'machine',
-  fieldName: string,
-): SearchMatch[] {
-  const matches: SearchMatch[] = [];
-  let m: RegExpExecArray | null;
-  regex.lastIndex = 0;
-  while ((m = regex.exec(text)) !== null) {
-    matches.push({ ownerId, ownerKind, fieldName, startIndex: m.index, endIndex: m.index + m[0].length });
-  }
-  return matches;
-}
-
 // Node fields to search
 const NODE_FIELDS = ['label', 'entry', 'exit', 'do', 'annotation'] as const;
 // Edge fields to search
@@ -72,22 +49,6 @@ const EDGE_FIELDS = ['guard', 'action'] as const;
 // Machine properties fields to search (skip language/settings)
 const MACHINE_FIELDS = ['includes', 'context', 'context_init', 'entry', 'exit', 'do'] as const;
 const MACHINE_HOOK_FIELDS = ['hooks.entry', 'hooks.exit', 'hooks.do', 'hooks.transition'] as const;
-
-function getMachineFieldValue(mp: MachineProperties, field: string): string {
-  if (field.startsWith('hooks.')) {
-    const key = field.split('.')[1] as keyof MachineProperties['hooks'];
-    return mp.hooks[key] || '';
-  }
-  return (mp as Record<string, unknown>)[field] as string || '';
-}
-
-function setMachineFieldValue(mp: MachineProperties, field: string, value: string): MachineProperties {
-  if (field.startsWith('hooks.')) {
-    const key = field.split('.')[1] as keyof MachineProperties['hooks'];
-    return { ...mp, hooks: { ...mp.hooks, [key]: value } };
-  }
-  return { ...mp, [field]: value };
-}
 
 // --- Hook ---
 

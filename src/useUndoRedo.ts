@@ -13,7 +13,7 @@ const MAX_STACK_SIZE = 50;
 
 // ReactFlow requires parent nodes to appear before their children in the array.
 // Without this, restoring a snapshot can silently break parent-child relationships.
-function sortParentsFirst(nodes: Node[]): Node[] {
+export function sortParentsFirst(nodes: Node[]): Node[] {
   const idSet = new Set(nodes.map(n => n.id));
   const roots: Node[] = [];
   const childrenOf = new Map<string, Node[]>();
