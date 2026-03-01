@@ -126,7 +126,7 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
           }));
         }
         setSelectedMarkerId(null);
-      } else if (event.key === 'n' && !isModifierPressed) {
+      } else if (event.key === 's' && !isModifierPressed && !event.shiftKey) {
         event.preventDefault();
         setIsAddingNode(true);
       } else if (event.key === 'd' && !isModifierPressed) {

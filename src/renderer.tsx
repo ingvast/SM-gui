@@ -172,6 +172,14 @@ const App = () => {
   const [viewportSize, setViewportSize] = useState({ width: 800, height: 600 });
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
+  // Drag-to-create state refs
+  const nodeCreateDragStart = useRef<{ x: number; y: number } | null>(null);
+  const nodeCreateDragIsDragging = useRef(false);
+  const suppressNextPaneClick = useRef(false);
+  const isAddingNodeRef = useRef(false); // mirrors isAddingNode, usable in stable callbacks
+  const [nodeCreateDragRect, setNodeCreateDragRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [pendingNodeCreate, setPendingNodeCreate] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
+
   // Machine properties (needs to be before transformedNodes useMemo)
   const [machineProperties, setMachineProperties] = useState<MachineProperties>(defaultMachineProperties);
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
@@ -900,14 +908,41 @@ const App = () => {
     if (target.closest('.react-flow__node') || target.closest('.react-flow__edge') || target.closest('.react-flow__handle') || target.closest('.react-flow__edgeupdater')) {
       return;
     }
-    // Left mouse button on pane starts panning
-    if (event.button === 0) {
-      isPanning.current = true;
-      lastPanPos.current = { x: event.clientX, y: event.clientY };
+    if (event.button !== 0) return;
+    if (isAddingNodeRef.current) {
+      // Begin drag-to-size for new state
+      nodeCreateDragStart.current = { x: event.clientX, y: event.clientY };
+      nodeCreateDragIsDragging.current = false;
+      return;
     }
+    isPanning.current = true;
+    lastPanPos.current = { x: event.clientX, y: event.clientY };
   }, []);
 
   const handlePaneMouseMove = useCallback((event: React.MouseEvent) => {
+    if (nodeCreateDragStart.current) {
+      const dx = event.clientX - nodeCreateDragStart.current.x;
+      const dy = event.clientY - nodeCreateDragStart.current.y;
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+        nodeCreateDragIsDragging.current = true;
+      }
+      if (nodeCreateDragIsDragging.current) {
+        const wrapperRect = reactFlowWrapper.current?.getBoundingClientRect();
+        if (wrapperRect) {
+          const startRelX = nodeCreateDragStart.current.x - wrapperRect.left;
+          const startRelY = nodeCreateDragStart.current.y - wrapperRect.top;
+          const curRelX = event.clientX - wrapperRect.left;
+          const curRelY = event.clientY - wrapperRect.top;
+          setNodeCreateDragRect({
+            x: Math.min(startRelX, curRelX),
+            y: Math.min(startRelY, curRelY),
+            w: Math.abs(curRelX - startRelX),
+            h: Math.abs(curRelY - startRelY),
+          });
+        }
+      }
+      return;
+    }
     if (isPanning.current) {
       const deltaX = event.clientX - lastPanPos.current.x;
       const deltaY = event.clientY - lastPanPos.current.y;
@@ -916,7 +951,33 @@ const App = () => {
     }
   }, [adjustPan]);
 
-  const handlePaneMouseUp = useCallback(() => {
+  const cancelNodeCreateDrag = useCallback(() => {
+    nodeCreateDragStart.current = null;
+    nodeCreateDragIsDragging.current = false;
+    setNodeCreateDragRect(null);
+    isPanning.current = false;
+  }, []);
+
+  const handlePaneMouseUp = useCallback((event: React.MouseEvent) => {
+    if (nodeCreateDragStart.current) {
+      if (nodeCreateDragIsDragging.current) {
+        const MIN_SIZE = 20;
+        const dx = Math.abs(event.clientX - nodeCreateDragStart.current.x);
+        const dy = Math.abs(event.clientY - nodeCreateDragStart.current.y);
+        if (dx > MIN_SIZE && dy > MIN_SIZE) {
+          setPendingNodeCreate({
+            startX: nodeCreateDragStart.current.x,
+            startY: nodeCreateDragStart.current.y,
+            endX: event.clientX,
+            endY: event.clientY,
+          });
+          suppressNextPaneClick.current = true;
+        }
+      }
+      nodeCreateDragStart.current = null;
+      nodeCreateDragIsDragging.current = false;
+      setNodeCreateDragRect(null);
+    }
     isPanning.current = false;
   }, []);
 
@@ -1046,6 +1107,7 @@ const App = () => {
 
   const [showLabels, setShowLabels] = useState(true);
   const [isAddingNode, setIsAddingNode] = useState(false);
+  useEffect(() => { isAddingNodeRef.current = isAddingNode; }, [isAddingNode]);
   const [isAddingDecision, setIsAddingDecision] = useState(false);
   const [isAddingProxy, setIsAddingProxy] = useState(false);
   const [proxyTargetId, setProxyTargetId] = useState<string | null>(null);
@@ -1087,6 +1149,37 @@ const App = () => {
     defaultShowAnnotation: false,
   });
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+
+  // Handle drag-to-create node completion (runs after all deps are available)
+  useEffect(() => {
+    if (!pendingNodeCreate) return;
+    const rect = reactFlowWrapper.current?.getBoundingClientRect();
+    if (!rect) return;
+    const { startX, startY, endX, endY } = pendingNodeCreate;
+    const screenLeft = Math.min(startX, endX) - rect.left;
+    const screenTop = Math.min(startY, endY) - rect.top;
+    const screenW = Math.abs(endX - startX);
+    const screenH = Math.abs(endY - startY);
+    const worldX = (screenLeft - effectivePan.x) / effectiveScale;
+    const worldY = (screenTop - effectivePan.y) / effectiveScale;
+    const worldW = screenW / effectiveScale;
+    const worldH = screenH / effectiveScale;
+    const newNode = {
+      id: getNextId(),
+      type: 'stateNode',
+      position: { x: worldX, y: worldY },
+      data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '', showEntry: settings.defaultShowEntry, showExit: settings.defaultShowExit, showDo: settings.defaultShowDo, showAnnotation: settings.defaultShowAnnotation },
+      style: { width: worldW, height: worldH },
+      selected: true,
+    };
+    saveSnapshot();
+    setNodes((nds) => nds.map((n) => ({ ...n, selected: false })).concat(newNode));
+    setSelectedTreeItem(newNode.id);
+    setIsAddingNode(false);
+    setFocusName(true);
+    setPendingNodeCreate(null);
+  }, [pendingNodeCreate]); // intentional: reads latest values from closure at effect run time
+
   // Clipboard operations
   const { handleCopy, handlePaste, handleDuplicate: handleDuplicateBase, handleDuplicateWithExternalEdges: handleDuplicateWithExternalEdgesBase } = useClipboard(nodes, edges, setNodes, setEdges, setSelectedTreeItem, saveSnapshot);
 
@@ -1630,6 +1723,11 @@ const App = () => {
 
   const onPaneClick = useCallback(
     (event) => {
+      // Suppress click that follows a drag-to-create gesture
+      if (suppressNextPaneClick.current) {
+        suppressNextPaneClick.current = false;
+        return;
+      }
       // Handle setting root initial state (for top-level states)
       if (isSettingInitial && initialTargetId) {
         const targetNode = nodes.find(n => n.id === initialTargetId);
@@ -2483,8 +2581,24 @@ const App = () => {
           onMouseDown={handlePaneMouseDown}
           onMouseMove={handlePaneMouseMove}
           onMouseUp={handlePaneMouseUp}
-          onMouseLeave={handlePaneMouseUp}
+          onMouseLeave={cancelNodeCreateDrag}
         >
+          {nodeCreateDragRect && (
+            <div
+              style={{
+                position: 'absolute',
+                left: nodeCreateDragRect.x,
+                top: nodeCreateDragRect.y,
+                width: nodeCreateDragRect.w,
+                height: nodeCreateDragRect.h,
+                border: '2px dashed #1976d2',
+                background: 'rgba(25, 118, 210, 0.08)',
+                pointerEvents: 'none',
+                zIndex: 1000,
+                boxSizing: 'border-box',
+              }}
+            />
+          )}
           <SearchReplacePanel
             isOpen={search.isOpen}
             searchTerm={search.searchTerm}

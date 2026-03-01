@@ -135,7 +135,7 @@ Cases when the connection is between an ancestor and descendant.
 
 ### Keyboard Shortcuts
 
-- `n` - Enter "add node" mode (click to place new state)
+- `s` - Enter "add state" mode (click to place a fixed-size state, or drag to define the size)
 - `d` - Enter "add decision" mode (click to place decision circle; click inside a state to add as child)
 - `p` - Create proxy: select a target state, press P, then click on canvas (or inside a parent state) to place a proxy node pointing to it. Or select a transition, press P to create a proxy of its target and automatically retarget the transition to the new proxy.
 - `t` - Start transition from selected node (click target to complete), or recompute handles if a transition is selected
