@@ -17,50 +17,8 @@ import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import { CodeEditorDialog } from './CodeEditorDialog';
+import CodeEditor, { CodeEditorHandle } from './CodeEditor';
 
-const codeFieldStyle = {
-  fontFamily: '"Consolas", "Monaco", "Courier New", monospace',
-  fontSize: '0.85rem',
-};
-
-const codeFieldInputProps = {
-  style: {
-    whiteSpace: 'pre',
-    overflowX: 'auto',
-    overflowWrap: 'normal',
-    wordBreak: 'keep-all',
-  },
-};
-
-// Helper to handle Tab key in code fields - inserts spaces to align to next tab stop
-const handleCodeFieldTab = (
-  event: React.KeyboardEvent,
-  value: string,
-  setValue: (v: string) => void,
-  tabWidth: number
-) => {
-  if (event.key === 'Tab') {
-    event.preventDefault();
-    const target = event.target as HTMLTextAreaElement;
-    const start = target.selectionStart;
-    const end = target.selectionEnd;
-
-    // Find the start of the current line to calculate column position
-    const textBeforeCursor = value.substring(0, start);
-    const lastNewlineIndex = textBeforeCursor.lastIndexOf('\n');
-    const currentColumn = start - (lastNewlineIndex + 1);
-
-    // Calculate spaces needed to reach next tab stop
-    const spacesToAdd = tabWidth - (currentColumn % tabWidth);
-    const spaces = ' '.repeat(spacesToAdd);
-
-    const newValue = value.substring(0, start) + spaces + value.substring(end);
-    setValue(newValue);
-    setTimeout(() => {
-      target.selectionStart = target.selectionEnd = start + spacesToAdd;
-    }, 0);
-  }
-};
 
 interface Edge {
   id: string;
@@ -141,7 +99,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const [tempGuard, setTempGuard] = useState('');
   const [tempAction, setTempAction] = useState('');
   const [activeTab, setActiveTab] = useState(0);
-  const guardFieldRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
+  const guardFieldRef = useRef<CodeEditorHandle | null>(null);
   const nameFieldRef = useRef<HTMLInputElement | null>(null);
 
   // Get node label by id (plain name, used for source display and non-transition contexts)
@@ -352,34 +310,25 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     }
   };
 
-  const handleEntryChangeLocal = (event: React.ChangeEvent<HTMLInputElement>) => setTempEntry(event.target.value);
-  const handleEntryBlur = () => {
-    if (selectedNode && tempEntry !== (selectedNode.data.entry as string)) {
-      onPropertyChange(selectedNode.id, 'entry', tempEntry);
+  const handleEntryBlur = (currentVal: string) => {
+    setTempEntry(currentVal);
+    if (selectedNode && currentVal !== (selectedNode.data.entry as string)) {
+      onPropertyChange(selectedNode.id, 'entry', currentVal);
     }
-  };
-  const handleEntryKeyDown = (event: React.KeyboardEvent) => {
-    handleCodeFieldTab(event, tempEntry, setTempEntry, settings.tabWidth);
   };
 
-  const handleExitChangeLocal = (event: React.ChangeEvent<HTMLInputElement>) => setTempExit(event.target.value);
-  const handleExitBlur = () => {
-    if (selectedNode && tempExit !== (selectedNode.data.exit as string)) {
-      onPropertyChange(selectedNode.id, 'exit', tempExit);
+  const handleExitBlur = (currentVal: string) => {
+    setTempExit(currentVal);
+    if (selectedNode && currentVal !== (selectedNode.data.exit as string)) {
+      onPropertyChange(selectedNode.id, 'exit', currentVal);
     }
-  };
-  const handleExitKeyDown = (event: React.KeyboardEvent) => {
-    handleCodeFieldTab(event, tempExit, setTempExit, settings.tabWidth);
   };
 
-  const handleDoChangeLocal = (event: React.ChangeEvent<HTMLInputElement>) => setTempDo(event.target.value);
-  const handleDoBlur = () => {
-    if (selectedNode && tempDo !== (selectedNode.data.do as string)) {
-      onPropertyChange(selectedNode.id, 'do', tempDo);
+  const handleDoBlur = (currentVal: string) => {
+    setTempDo(currentVal);
+    if (selectedNode && currentVal !== (selectedNode.data.do as string)) {
+      onPropertyChange(selectedNode.id, 'do', currentVal);
     }
-  };
-  const handleDoKeyDown = (event: React.KeyboardEvent) => {
-    handleCodeFieldTab(event, tempDo, setTempDo, settings.tabWidth);
   };
 
   const handleAnnotationChangeLocal = (event: React.ChangeEvent<HTMLInputElement>) => setTempAnnotation(event.target.value);
@@ -418,26 +367,20 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   };
 
   // Edge property handlers
-  const handleGuardChangeLocal = (event: React.ChangeEvent<HTMLInputElement>) => setTempGuard(event.target.value);
-  const handleGuardBlur = () => {
+  const handleGuardBlur = (currentVal: string) => {
+    setTempGuard(currentVal);
     const edgeId = selectedCanvasEdge?.id || selectedEdgeId;
-    if (edgeId && tempGuard !== (selectedEdge?.data?.guard || '')) {
-      onEdgePropertyChange(edgeId, 'guard', tempGuard);
+    if (edgeId && currentVal !== (selectedEdge?.data?.guard || '')) {
+      onEdgePropertyChange(edgeId, 'guard', currentVal);
     }
-  };
-  const handleGuardKeyDown = (event: React.KeyboardEvent) => {
-    handleCodeFieldTab(event, tempGuard, setTempGuard, settings.tabWidth);
   };
 
-  const handleActionChangeLocal = (event: React.ChangeEvent<HTMLInputElement>) => setTempAction(event.target.value);
-  const handleActionBlur = () => {
+  const handleActionBlur = (currentVal: string) => {
+    setTempAction(currentVal);
     const edgeId = selectedCanvasEdge?.id || selectedEdgeId;
-    if (edgeId && tempAction !== (selectedEdge?.data?.action || '')) {
-      onEdgePropertyChange(edgeId, 'action', tempAction);
+    if (edgeId && currentVal !== (selectedEdge?.data?.action || '')) {
+      onEdgePropertyChange(edgeId, 'action', currentVal);
     }
-  };
-  const handleActionKeyDown = (event: React.KeyboardEvent) => {
-    handleCodeFieldTab(event, tempAction, setTempAction, settings.tabWidth);
   };
 
   // Handle expand button click - either open external editor or built-in dialog
@@ -572,19 +515,14 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </Typography>
 
           <Box sx={{ position: 'relative', mb: 1 }}>
-            <TextField
-              label="Guard"
-              size="small"
-              fullWidth
-              multiline
-              rows={2}
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.25 }}>Guard</Typography>
+            <CodeEditor
+              ref={guardFieldRef}
               value={tempGuard}
-              onChange={handleGuardChangeLocal}
+              onChange={setTempGuard}
               onBlur={handleGuardBlur}
-              onKeyDown={handleGuardKeyDown}
+              language={language}
               placeholder="Guard condition..."
-              inputRef={guardFieldRef}
-              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'guard', 'data-owner-id': selectedCanvasEdge.id, 'data-owner-kind': 'edge' } }}
             />
             <IconButton
               size="small"
@@ -604,18 +542,13 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </Box>
 
           <Box sx={{ position: 'relative' }}>
-            <TextField
-              label="Action"
-              size="small"
-              fullWidth
-              multiline
-              rows={2}
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.25 }}>Action</Typography>
+            <CodeEditor
               value={tempAction}
-              onChange={handleActionChangeLocal}
+              onChange={setTempAction}
               onBlur={handleActionBlur}
-              onKeyDown={handleActionKeyDown}
+              language={language}
               placeholder="Transition action..."
-              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'action', 'data-owner-id': selectedCanvasEdge.id, 'data-owner-kind': 'edge' } }}
             />
             <IconButton
               size="small"
@@ -641,6 +574,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           onSave={handleDialogSave}
           value={getDialogValue()}
           title={getDialogTitle()}
+          language={language}
           onOpenExternal={settings.editorPreference !== 'builtin' ? handleOpenExternalFromDialog : undefined}
           tabWidth={settings.tabWidth}
         />
@@ -752,18 +686,13 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </Box>
 
           <Box sx={{ position: 'relative' }}>
-            <TextField
-              label="Entry"
-              size="small"
-              fullWidth
-              multiline
-              rows={3}
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.25 }}>Entry</Typography>
+            <CodeEditor
               value={tempEntry}
-              onChange={handleEntryChangeLocal}
+              onChange={setTempEntry}
               onBlur={handleEntryBlur}
-              onKeyDown={handleEntryKeyDown}
+              language={language}
               placeholder="Entry action code..."
-              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'entry', 'data-owner-id': selectedNode.id, 'data-owner-kind': 'node' } }}
             />
             <IconButton
               size="small"
@@ -783,18 +712,13 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </Box>
 
           <Box sx={{ position: 'relative' }}>
-            <TextField
-              label="Exit"
-              size="small"
-              fullWidth
-              multiline
-              rows={3}
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.25 }}>Exit</Typography>
+            <CodeEditor
               value={tempExit}
-              onChange={handleExitChangeLocal}
+              onChange={setTempExit}
               onBlur={handleExitBlur}
-              onKeyDown={handleExitKeyDown}
+              language={language}
               placeholder="Exit action code..."
-              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'exit', 'data-owner-id': selectedNode.id, 'data-owner-kind': 'node' } }}
             />
             <IconButton
               size="small"
@@ -814,18 +738,13 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           </Box>
 
           <Box sx={{ position: 'relative' }}>
-            <TextField
-              label="Do"
-              size="small"
-              fullWidth
-              multiline
-              rows={3}
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.25 }}>Do</Typography>
+            <CodeEditor
               value={tempDo}
-              onChange={handleDoChangeLocal}
+              onChange={setTempDo}
               onBlur={handleDoBlur}
-              onKeyDown={handleDoKeyDown}
+              language={language}
               placeholder="Activity code..."
-              slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'do', 'data-owner-id': selectedNode.id, 'data-owner-kind': 'node' } }}
             />
             <IconButton
               size="small"
@@ -995,19 +914,14 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               </Typography>
 
               <Box sx={{ position: 'relative', mb: 1 }}>
-                <TextField
-                  label="Guard"
-                  size="small"
-                  fullWidth
-                  multiline
-                  rows={2}
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.25 }}>Guard</Typography>
+                <CodeEditor
+                  ref={guardFieldRef}
                   value={tempGuard}
-                  onChange={handleGuardChangeLocal}
+                  onChange={setTempGuard}
                   onBlur={handleGuardBlur}
-                  onKeyDown={handleGuardKeyDown}
+                  language={language}
                   placeholder="Guard condition..."
-                  inputRef={guardFieldRef}
-                  slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'guard', 'data-owner-id': selectedEdge.id, 'data-owner-kind': 'edge' } }}
                 />
                 <IconButton
                   size="small"
@@ -1027,18 +941,13 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               </Box>
 
               <Box sx={{ position: 'relative' }}>
-                <TextField
-                  label="Action"
-                  size="small"
-                  fullWidth
-                  multiline
-                  rows={2}
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.25 }}>Action</Typography>
+                <CodeEditor
                   value={tempAction}
-                  onChange={handleActionChangeLocal}
+                  onChange={setTempAction}
                   onBlur={handleActionBlur}
-                  onKeyDown={handleActionKeyDown}
+                  language={language}
                   placeholder="Transition action..."
-                  slotProps={{ input: { sx: codeFieldStyle }, htmlInput: { ...codeFieldInputProps, 'data-field-name': 'action', 'data-owner-id': selectedEdge.id, 'data-owner-kind': 'edge' } }}
                 />
                 <IconButton
                   size="small"
@@ -1067,6 +976,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         onSave={handleDialogSave}
         value={getDialogValue()}
         title={getDialogTitle()}
+        language={language}
         onOpenExternal={settings.editorPreference !== 'builtin' ? handleOpenExternalFromDialog : undefined}
         tabWidth={settings.tabWidth}
       />

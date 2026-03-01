@@ -2,6 +2,15 @@ import { useCallback, useEffect } from 'react';
 import { Node, Edge } from 'reactflow';
 import { convertToYaml, convertFromYaml, convertToPhoenixYaml, convertFromPhoenixYaml, MachineProperties, defaultMachineProperties } from '../yamlConverter';
 import { resetIdCounter, resetStateNameCounter, resetProxyNameCounter } from '../utils/idCounters';
+import { findSyntaxErrors } from '../utils/syntaxCheck';
+
+function confirmDespiteErrors(locations: string[]): boolean {
+  const header = locations.length === 1
+    ? '1 code field has syntax errors:'
+    : `${locations.length} code fields have syntax errors:`;
+  const body = locations.map(l => `  \u2022 ${l}`).join('\n');
+  return window.confirm(`${header}\n\n${body}\n\nProceed anyway?`);
+}
 
 export function useFileOperations(
   nodes: Node[],
@@ -20,6 +29,8 @@ export function useFileOperations(
   onLoaded?: () => void,
 ) {
   const handleSave = useCallback(async () => {
+    const syntaxErrorLocations = findSyntaxErrors(nodes, edges, machineProperties);
+    if (syntaxErrorLocations.length > 0 && !confirmDespiteErrors(syntaxErrorLocations)) return;
     const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, true, machineProperties);
     let result;
     if (currentFilePath) {
@@ -99,6 +110,8 @@ export function useFileOperations(
   }, [nodes, setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo, onLoaded]);
 
   const handleSaveAs = useCallback(async () => {
+    const syntaxErrorLocations = findSyntaxErrors(nodes, edges, machineProperties);
+    if (syntaxErrorLocations.length > 0 && !confirmDespiteErrors(syntaxErrorLocations)) return;
     const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, true, machineProperties);
     const defaultName = currentFilePath
       ? currentFilePath.replace(/^.*[\\/]/, '')
@@ -113,6 +126,8 @@ export function useFileOperations(
   }, [nodes, edges, rootHistory, machineProperties, currentFilePath, setCurrentFilePath, onSaved]);
 
   const handleExportPhoenix = useCallback(async () => {
+    const syntaxErrorLocations = findSyntaxErrors(nodes, edges, machineProperties);
+    if (syntaxErrorLocations.length > 0 && !confirmDespiteErrors(syntaxErrorLocations)) return;
     const { yaml: phoenixYaml, warnings } = convertToPhoenixYaml(
       nodes as Node<{ label: string; history: boolean; orthogonal: boolean; entry: string; exit: string; do: string }>[],
       edges,

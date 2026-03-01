@@ -5,24 +5,10 @@ import {
   DialogContent,
   DialogActions,
   Button,
-  TextField,
   Box,
 } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-
-const codeFieldStyle = {
-  fontFamily: '"Consolas", "Monaco", "Courier New", monospace',
-  fontSize: '0.9rem',
-};
-
-const codeFieldInputProps = {
-  style: {
-    whiteSpace: 'pre',
-    overflowX: 'auto',
-    overflowWrap: 'normal',
-    wordBreak: 'keep-all',
-  },
-};
+import CodeEditor from './CodeEditor';
 
 interface CodeEditorDialogProps {
   open: boolean;
@@ -30,6 +16,7 @@ interface CodeEditorDialogProps {
   onSave: (value: string) => void;
   value: string;
   title: string;
+  language?: string;
   onOpenExternal?: (value: string) => Promise<string | null>;
   tabWidth?: number;
 }
@@ -40,8 +27,8 @@ export const CodeEditorDialog: React.FC<CodeEditorDialogProps> = ({
   onSave,
   value,
   title,
+  language = '',
   onOpenExternal,
-  tabWidth = 4,
 }) => {
   const [tempValue, setTempValue] = useState(value);
 
@@ -65,33 +52,6 @@ export const CodeEditorDialog: React.FC<CodeEditorDialogProps> = ({
     }
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Escape') {
-      onClose();
-    } else if (event.key === 'Tab') {
-      event.preventDefault();
-      const target = event.target as HTMLTextAreaElement;
-      const start = target.selectionStart;
-      const end = target.selectionEnd;
-
-      // Find the start of the current line to calculate column position
-      const textBeforeCursor = tempValue.substring(0, start);
-      const lastNewlineIndex = textBeforeCursor.lastIndexOf('\n');
-      const currentColumn = start - (lastNewlineIndex + 1);
-
-      // Calculate spaces needed to reach next tab stop
-      const spacesToAdd = tabWidth - (currentColumn % tabWidth);
-      const spaces = ' '.repeat(spacesToAdd);
-
-      const newValue = tempValue.substring(0, start) + spaces + tempValue.substring(end);
-      setTempValue(newValue);
-      // Set cursor position after the inserted spaces
-      setTimeout(() => {
-        target.selectionStart = target.selectionEnd = start + spacesToAdd;
-      }, 0);
-    }
-  };
-
   return (
     <Dialog
       open={open}
@@ -104,26 +64,15 @@ export const CodeEditorDialog: React.FC<CodeEditorDialogProps> = ({
     >
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
-        <TextField
-          autoFocus
-          fullWidth
-          multiline
-          rows={20}
-          value={tempValue}
-          onChange={(e) => setTempValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Enter code..."
-          slotProps={{
-            input: {
-              sx: {
-                ...codeFieldStyle,
-                minWidth: '720px',
-              },
-            },
-            htmlInput: codeFieldInputProps,
-          }}
-          sx={{ mt: 1 }}
-        />
+        <Box sx={{ mt: 1, minWidth: '720px' }}>
+          <CodeEditor
+            value={tempValue}
+            onChange={setTempValue}
+            language={language}
+            minLines={20}
+            placeholder="Enter code..."
+          />
+        </Box>
       </DialogContent>
       <DialogActions>
         <Box sx={{ flexGrow: 1, display: 'flex', justifyContent: 'flex-start' }}>
