@@ -11,15 +11,27 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     icon: 'asset/icon/icon',
-    fileAssociations: [
-      {
-        ext: 'smb',
-        name: 'State Machine Builder',
-        description: 'State Machine Builder file',
-        role: 'Editor',
-        mimeType: 'application/x-state-machine-builder',
-      },
-    ],
+    extendInfo: {
+      CFBundleDocumentTypes: [
+        {
+          CFBundleTypeExtensions: ['smb'],
+          CFBundleTypeName: 'State Machine Builder',
+          CFBundleTypeRole: 'Editor',
+          LSHandlerRank: 'Owner',
+        },
+      ],
+      UTExportedTypeDeclarations: [
+        {
+          UTTypeIdentifier: 'com.electron.sm-builder.smb',
+          UTTypeConformsTo: ['public.data', 'public.content'],
+          UTTypeDescription: 'State Machine Builder',
+          UTTypeTagSpecification: {
+            'public.filename-extension': ['smb'],
+            'public.mime-type': 'application/x-state-machine-builder',
+          },
+        },
+      ],
+    },
   },
   rebuildConfig: {},
   makers: [
