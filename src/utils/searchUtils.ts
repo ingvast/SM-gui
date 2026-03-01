@@ -27,8 +27,8 @@ export function findMatchesInField(
   let m: RegExpExecArray | null;
   regex.lastIndex = 0;
   while ((m = regex.exec(text)) !== null) {
+    if (m[0].length === 0) { regex.lastIndex++; continue; } // skip zero-width matches
     matches.push({ ownerId, ownerKind, fieldName, startIndex: m.index, endIndex: m.index + m[0].length });
-    if (m[0].length === 0) regex.lastIndex++; // prevent infinite loop on zero-width matches
   }
   return matches;
 }

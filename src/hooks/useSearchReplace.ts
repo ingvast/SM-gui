@@ -39,6 +39,7 @@ export interface SearchOptions {
   caseSensitive: boolean;
   wholeWord: boolean;
   isRegex?: boolean;
+  fieldFilter?: string[] | null; // null/undefined = all fields; array = whitelist of field names
 }
 
 export interface UseSearchReplaceParams {
@@ -154,15 +155,20 @@ export function useSearchReplace(params: UseSearchReplaceParams) {
     if (!regex) return [];
 
     const result: SearchMatch[] = [];
+    const ff = options.fieldFilter ?? null;
+    const fieldOk = (f: string) => !ff || ff.includes(f);
 
     const searchNode = (node: Node) => {
       if (node.type === 'decisionNode' || node.type === 'proxyNode') {
         // Only search label for decision/proxy
-        const label = (node.data.label as string) || '';
-        if (label) result.push(...findMatchesInField(label, regex, node.id, 'node', 'label'));
+        if (fieldOk('label')) {
+          const label = (node.data.label as string) || '';
+          if (label) result.push(...findMatchesInField(label, regex, node.id, 'node', 'label'));
+        }
         return;
       }
       for (const field of NODE_FIELDS) {
+        if (!fieldOk(field)) continue;
         const val = (node.data[field] as string) || '';
         if (val) result.push(...findMatchesInField(val, regex, node.id, 'node', field));
       }
@@ -170,6 +176,7 @@ export function useSearchReplace(params: UseSearchReplaceParams) {
 
     const searchEdge = (edge: Edge) => {
       for (const field of EDGE_FIELDS) {
+        if (!fieldOk(field)) continue;
         const val = (edge.data?.[field] as string) || '';
         if (val) result.push(...findMatchesInField(val, regex, edge.id, 'edge', field));
       }
@@ -177,10 +184,12 @@ export function useSearchReplace(params: UseSearchReplaceParams) {
 
     const searchMachine = () => {
       for (const field of MACHINE_FIELDS) {
+        if (!fieldOk(field)) continue;
         const val = getMachineFieldValue(machineProperties, field);
         if (val) result.push(...findMatchesInField(val, regex, 'machine', 'machine', field));
       }
       for (const field of MACHINE_HOOK_FIELDS) {
+        if (!fieldOk(field)) continue;
         const val = getMachineFieldValue(machineProperties, field);
         if (val) result.push(...findMatchesInField(val, regex, 'machine', 'machine', field));
       }
