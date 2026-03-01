@@ -1166,6 +1166,10 @@ const App = () => {
             }
           }
         });
+        // Remove edges connected to any cascade-deleted node (descendants + proxies).
+        // ReactFlow only cleans up edges for the originally-selected nodes; cascade
+        // additions are not covered by its built-in edge cleanup.
+        setEdges(eds => eds.filter(e => !removeIds.has(e.source) && !removeIds.has(e.target)));
       }
       // Detect resize-from-left/top: nodes that have both position and dimensions changes
       const hasPositionChange = new Set<string>();
@@ -1339,7 +1343,7 @@ const App = () => {
         }
       });
     },
-    [onNodesChange, selectedTreeItem, nodes, effectiveScale, effectivePan, setRootHistory, setMachineProperties, saveSnapshot]
+    [onNodesChange, selectedTreeItem, nodes, edges, effectiveScale, effectivePan, setRootHistory, setMachineProperties, setEdges, saveSnapshot]
   );
 
   const onEdgesChangeWithSelection = useCallback(
