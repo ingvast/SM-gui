@@ -22,6 +22,9 @@ import {
   Typography,
   Divider,
   Tooltip,
+  Menu,
+  MenuItem,
+  ListItemText,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -96,6 +99,11 @@ declare global {
       onImportPhoenix: (callback: () => void) => () => void;
       getStartupFile: () => Promise<{ content: string; filePath: string } | null>;
       onOpenWithFile: (callback: (data: { content: string; filePath: string }) => void) => () => void;
+      onMenuUndo: (callback: () => void) => () => void;
+      onMenuRedo: (callback: () => void) => () => void;
+      onMenuCopy: (callback: () => void) => () => void;
+      onMenuPaste: (callback: () => void) => () => void;
+      onMenuDuplicate: (callback: () => void) => () => void;
     };
     settingsAPI: {
       get: () => Promise<Settings>;
@@ -179,6 +187,13 @@ const App = () => {
   const isAddingNodeRef = useRef(false); // mirrors isAddingNode, usable in stable callbacks
   const [nodeCreateDragRect, setNodeCreateDragRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [pendingNodeCreate, setPendingNodeCreate] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    mouseX: number; mouseY: number;
+    worldX: number; worldY: number;
+    type: 'pane' | 'stateNode' | 'decisionNode' | 'proxyNode' | 'edge' | 'historyMarker';
+    nodeId: string | null;
+    edgeId: string | null;
+  } | null>(null);
 
   // Machine properties (needs to be before transformedNodes useMemo)
   const [machineProperties, setMachineProperties] = useState<MachineProperties>(defaultMachineProperties);
@@ -1193,6 +1208,18 @@ const App = () => {
     setFocusName(true);
   }, [handleDuplicateWithExternalEdgesBase]);
 
+  // Subscribe to Edit menu IPC commands from the native menu bar
+  useEffect(() => {
+    const cleanups = [
+      window.fileAPI.onMenuUndo(handleUndo),
+      window.fileAPI.onMenuRedo(handleRedo),
+      window.fileAPI.onMenuCopy(handleCopy),
+      window.fileAPI.onMenuPaste(handlePaste),
+      window.fileAPI.onMenuDuplicate(handleDuplicate),
+    ];
+    return () => cleanups.forEach(c => c());
+  }, [handleUndo, handleRedo, handleCopy, handlePaste, handleDuplicate]);
+
   const selectedNode = useMemo(() => {
     if (selectedTreeItem === '/') {
       // Root node uses machineProperties for entry/exit/do
@@ -1720,6 +1747,97 @@ const App = () => {
     setMachineProperties: setMachineProperties as unknown as (updater: (prev: unknown) => unknown) => void,
     toggleShowLabels: () => setShowLabels(v => !v),
   });
+
+  // Screen-to-world coordinate conversion
+  const screenToWorld = useCallback((clientX: number, clientY: number) => {
+    const rect = reactFlowWrapper.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    return {
+      x: (clientX - rect.left - effectivePan.x) / effectiveScale,
+      y: (clientY - rect.top - effectivePan.y) / effectiveScale,
+    };
+  }, [effectivePan, effectiveScale]);
+
+  // Zoom to a specific node by ID
+  const zoomToNodeId = useCallback((nodeId: string) => {
+    const bounds = getAbsoluteNodeBounds(nodeId, nodes);
+    if (!bounds) return;
+    const padding = 0.1;
+    const scaleX = viewportSize.width * (1 - padding * 2) / bounds.width;
+    const scaleY = viewportSize.height * (1 - padding * 2) / bounds.height;
+    const targetZoom = Math.min(scaleX, scaleY);
+    const centerX = bounds.x + bounds.width / 2;
+    const centerY = bounds.y + bounds.height / 2;
+    setFocusNode(nodeId);
+    startAnimation(targetZoom, { x: viewportSize.width / 2 - centerX * targetZoom, y: viewportSize.height / 2 - centerY * targetZoom });
+  }, [nodes, viewportSize, setFocusNode, startAnimation]);
+
+  // Create a state node directly at a world position (no mode activation needed)
+  const createStateAtWorld = useCallback((worldX: number, worldY: number, parentId?: string) => {
+    const stateWidth = (viewportSize.width * 0.1) / effectiveScale;
+    const stateHeight = stateWidth / 2;
+    const newNode = {
+      id: getNextId(),
+      type: 'stateNode',
+      position: { x: worldX, y: worldY },
+      ...(parentId ? { parentId, extent: 'parent' as const } : {}),
+      data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '', showEntry: settings.defaultShowEntry, showExit: settings.defaultShowExit, showDo: settings.defaultShowDo, showAnnotation: settings.defaultShowAnnotation },
+      style: { width: stateWidth, height: stateHeight },
+      selected: true,
+    };
+    saveSnapshot();
+    setNodes((nds) => nds.map((n) => ({ ...n, selected: false })).concat(newNode));
+    setSelectedTreeItem(newNode.id);
+    setFocusName(true);
+  }, [viewportSize, effectiveScale, settings, saveSnapshot, setNodes, setFocusName]);
+
+  // Create a decision node directly at a world position
+  const createDecisionAtWorld = useCallback((worldX: number, worldY: number, parentId?: string) => {
+    const decisionSize = (viewportSize.width * 0.015) / effectiveScale;
+    const newNode = {
+      id: getNextId(),
+      type: 'decisionNode',
+      position: { x: worldX, y: worldY },
+      ...(parentId ? { parentId, extent: 'parent' as const } : {}),
+      data: { label: getNextDecisionName() },
+      style: { width: decisionSize, height: decisionSize },
+    };
+    saveSnapshot();
+    setNodes((nds) => nds.concat(newNode));
+  }, [viewportSize, effectiveScale, saveSnapshot, setNodes]);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  const onPaneContextMenu = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    const world = screenToWorld(event.clientX, event.clientY);
+    setContextMenu({ mouseX: event.clientX, mouseY: event.clientY, worldX: world.x, worldY: world.y, type: 'pane', nodeId: null, edgeId: null });
+  }, [screenToWorld]);
+
+  const onNodeContextMenu = useCallback((event: React.MouseEvent, node: typeof nodes[0]) => {
+    event.preventDefault();
+    if (node.id.startsWith('initial-marker')) return;
+    // Select the right-clicked node so Copy/Duplicate work on it
+    if (!node.id.startsWith('history-marker')) {
+      setNodes(nds => nds.map(n => ({ ...n, selected: n.id === node.id })));
+      setEdges(eds => eds.map(e => ({ ...e, selected: false })));
+      setSelectedTreeItem(node.id);
+    } else {
+      setSelectedMarkerId(node.id);
+    }
+    const world = screenToWorld(event.clientX, event.clientY);
+    const type = node.id.startsWith('history-marker') ? 'historyMarker'
+      : node.type === 'decisionNode' ? 'decisionNode'
+      : node.type === 'proxyNode' ? 'proxyNode'
+      : 'stateNode';
+    setContextMenu({ mouseX: event.clientX, mouseY: event.clientY, worldX: world.x, worldY: world.y, type: type as 'stateNode' | 'decisionNode' | 'proxyNode' | 'historyMarker', nodeId: node.id, edgeId: null });
+  }, [screenToWorld, setNodes, setEdges, setSelectedMarkerId]);
+
+  const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: typeof edges[0]) => {
+    event.preventDefault();
+    const world = screenToWorld(event.clientX, event.clientY);
+    setContextMenu({ mouseX: event.clientX, mouseY: event.clientY, worldX: world.x, worldY: world.y, type: 'edge', nodeId: null, edgeId: edge.id });
+  }, [screenToWorld]);
 
   const onPaneClick = useCallback(
     (event) => {
@@ -2599,6 +2717,204 @@ const App = () => {
               }}
             />
           )}
+          <Menu
+            open={!!contextMenu}
+            onClose={closeContextMenu}
+            anchorReference="anchorPosition"
+            anchorPosition={contextMenu ? { top: contextMenu.mouseY, left: contextMenu.mouseX } : undefined}
+          >
+            {contextMenu?.type === 'pane' && (() => {
+              const { worldX, worldY } = contextMenu;
+              return [
+                <MenuItem key="add-state" onClick={() => { closeContextMenu(); createStateAtWorld(worldX, worldY); }}>
+                  <ListItemText>Add State</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>S</Typography>
+                </MenuItem>,
+                <MenuItem key="add-decision" onClick={() => { closeContextMenu(); createDecisionAtWorld(worldX, worldY); }}>
+                  <ListItemText>Add Decision</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>D</Typography>
+                </MenuItem>,
+                <Divider key="div" />,
+                <MenuItem key="paste" onClick={() => { closeContextMenu(); handlePaste(); }}>
+                  <ListItemText>Paste</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⌘V</Typography>
+                </MenuItem>,
+              ];
+            })()}
+            {contextMenu?.type === 'stateNode' && (() => {
+              const nodeId = contextMenu.nodeId!;
+              const ctxNode = nodes.find(n => n.id === nodeId);
+              const hasChildren = nodes.some(n => n.parentId === nodeId);
+              const hasParent = !!ctxNode?.parentId;
+              const parentBounds = getAbsoluteNodeBounds(nodeId, nodes);
+              const relX = parentBounds ? contextMenu.worldX - parentBounds.x : contextMenu.worldX;
+              const relY = parentBounds ? contextMenu.worldY - parentBounds.y : contextMenu.worldY;
+              return [
+                <MenuItem key="add-child" onClick={() => { closeContextMenu(); createStateAtWorld(relX, relY, nodeId); }}>
+                  <ListItemText>Add Child State</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>S</Typography>
+                </MenuItem>,
+                <MenuItem key="add-decision" onClick={() => { closeContextMenu(); createDecisionAtWorld(relX, relY, nodeId); }}>
+                  <ListItemText>Add Decision</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>D</Typography>
+                </MenuItem>,
+                <Divider key="div1" />,
+                <MenuItem key="copy" onClick={() => { closeContextMenu(); handleCopy(); }}>
+                  <ListItemText>Copy</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⌘C</Typography>
+                </MenuItem>,
+                <MenuItem key="paste" onClick={() => { closeContextMenu(); handlePaste(); }}>
+                  <ListItemText>Paste</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⌘V</Typography>
+                </MenuItem>,
+                <MenuItem key="duplicate" onClick={() => { closeContextMenu(); handleDuplicate(); }}>
+                  <ListItemText>Duplicate</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⌘D</Typography>
+                </MenuItem>,
+                <Divider key="div2" />,
+                <MenuItem key="start-trans" onClick={() => { closeContextMenu(); setIsAddingTransition(true); setTransitionSourceId(nodeId); }}>
+                  <ListItemText>Start Transition</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>T</Typography>
+                </MenuItem>,
+                <MenuItem key="set-initial" onClick={() => { closeContextMenu(); setIsSettingInitial(true); setInitialTargetId(nodeId); }}>
+                  <ListItemText>Set as Initial</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>I</Typography>
+                </MenuItem>,
+                <MenuItem key="create-proxy" onClick={() => { closeContextMenu(); setIsAddingProxy(true); setProxyTargetId(nodeId); }}>
+                  <ListItemText>Create Proxy</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>P</Typography>
+                </MenuItem>,
+                <MenuItem key="history" onClick={() => { closeContextMenu(); setIsSettingHistory(true); }}>
+                  <ListItemText>History Marker</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>H</Typography>
+                </MenuItem>,
+                <Divider key="div3" />,
+                <MenuItem key="zoom" onClick={() => { closeContextMenu(); zoomToNodeId(nodeId); }}>
+                  <ListItemText>Zoom to Fit</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>Z</Typography>
+                </MenuItem>,
+                hasChildren ? <MenuItem key="group" onClick={() => { closeContextMenu(); setNodes(nds => nds.map(n => ({ ...n, selected: n.id === nodeId }))); handleGroupStates(); }}>
+                  <ListItemText>Group Children</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>G</Typography>
+                </MenuItem> : null,
+                hasParent ? <MenuItem key="ungroup" onClick={() => { closeContextMenu(); handleUngroupState(nodeId); }}>
+                  <ListItemText>Ungroup</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⇧G</Typography>
+                </MenuItem> : null,
+                <Divider key="div4" />,
+                <MenuItem key="delete" onClick={() => { closeContextMenu(); onNodesChangeWithSelection([{ type: 'remove', id: nodeId }]); }}>
+                  <ListItemText>Delete</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>Del</Typography>
+                </MenuItem>,
+              ];
+            })()}
+            {contextMenu?.type === 'decisionNode' && (() => {
+              const nodeId = contextMenu.nodeId!;
+              return [
+                <MenuItem key="start-trans" onClick={() => { closeContextMenu(); setIsAddingTransition(true); setTransitionSourceId(nodeId); }}>
+                  <ListItemText>Start Transition</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>T</Typography>
+                </MenuItem>,
+                <Divider key="div1" />,
+                <MenuItem key="copy" onClick={() => { closeContextMenu(); handleCopy(); }}>
+                  <ListItemText>Copy</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⌘C</Typography>
+                </MenuItem>,
+                <MenuItem key="paste" onClick={() => { closeContextMenu(); handlePaste(); }}>
+                  <ListItemText>Paste</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⌘V</Typography>
+                </MenuItem>,
+                <MenuItem key="duplicate" onClick={() => { closeContextMenu(); handleDuplicate(); }}>
+                  <ListItemText>Duplicate</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⌘D</Typography>
+                </MenuItem>,
+                <Divider key="div2" />,
+                <MenuItem key="zoom" onClick={() => { closeContextMenu(); zoomToNodeId(nodeId); }}>
+                  <ListItemText>Zoom to Fit</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>Z</Typography>
+                </MenuItem>,
+                <Divider key="div3" />,
+                <MenuItem key="delete" onClick={() => { closeContextMenu(); onNodesChangeWithSelection([{ type: 'remove', id: nodeId }]); }}>
+                  <ListItemText>Delete</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>Del</Typography>
+                </MenuItem>,
+              ];
+            })()}
+            {contextMenu?.type === 'proxyNode' && (() => {
+              const nodeId = contextMenu.nodeId!;
+              return [
+                <MenuItem key="copy" onClick={() => { closeContextMenu(); handleCopy(); }}>
+                  <ListItemText>Copy</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⌘C</Typography>
+                </MenuItem>,
+                <MenuItem key="paste" onClick={() => { closeContextMenu(); handlePaste(); }}>
+                  <ListItemText>Paste</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⌘V</Typography>
+                </MenuItem>,
+                <MenuItem key="duplicate" onClick={() => { closeContextMenu(); handleDuplicate(); }}>
+                  <ListItemText>Duplicate</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⌘D</Typography>
+                </MenuItem>,
+                <Divider key="div1" />,
+                <MenuItem key="zoom" onClick={() => { closeContextMenu(); zoomToNodeId(nodeId); }}>
+                  <ListItemText>Zoom to Fit</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>Z</Typography>
+                </MenuItem>,
+                <Divider key="div2" />,
+                <MenuItem key="delete" onClick={() => { closeContextMenu(); onNodesChangeWithSelection([{ type: 'remove', id: nodeId }]); }}>
+                  <ListItemText>Delete</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>Del</Typography>
+                </MenuItem>,
+              ];
+            })()}
+            {contextMenu?.type === 'edge' && (() => {
+              const edgeId = contextMenu.edgeId!;
+              const ctxEdge = edges.find(e => e.id === edgeId);
+              return [
+                <MenuItem key="recompute" onClick={() => {
+                  closeContextMenu();
+                  if (!ctxEdge) return;
+                  const { sourceHandle, targetHandle } = calculateBestHandles(ctxEdge.source, ctxEdge.target, nodes);
+                  setEdges(eds => eds.map(e => e.id === edgeId ? { ...e, sourceHandle, targetHandle, data: { ...e.data, controlPoints: [] } } : e));
+                }}>
+                  <ListItemText>Recompute Handles</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>T</Typography>
+                </MenuItem>,
+                <MenuItem key="retarget" onClick={() => { closeContextMenu(); setIsRetargetingTransition(true); setRetargetEdgeId(edgeId); }}>
+                  <ListItemText>Retarget…</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⇧T</Typography>
+                </MenuItem>,
+                <MenuItem key="resource" onClick={() => { closeContextMenu(); setIsResourcingTransition(true); setRetargetEdgeId(edgeId); }}>
+                  <ListItemText>Re-source…</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⇧S</Typography>
+                </MenuItem>,
+                <MenuItem key="create-proxy" onClick={() => {
+                  closeContextMenu();
+                  if (!ctxEdge) return;
+                  setIsAddingProxy(true);
+                  setProxyTargetId(ctxEdge.target);
+                  setProxySourceEdgeId(edgeId);
+                }}>
+                  <ListItemText>Create Proxy of Target</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>P</Typography>
+                </MenuItem>,
+                <Divider key="div" />,
+                <MenuItem key="delete" onClick={() => { closeContextMenu(); onEdgesChangeWithSelection([{ type: 'remove', id: edgeId }]); }}>
+                  <ListItemText>Delete</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>Del</Typography>
+                </MenuItem>,
+              ];
+            })()}
+            {contextMenu?.type === 'historyMarker' && (() => {
+              const nodeId = contextMenu.nodeId!;
+              return (
+                <MenuItem onClick={() => { closeContextMenu(); onNodesChangeWithSelection([{ type: 'remove', id: nodeId }]); }}>
+                  <ListItemText>Delete</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>Del</Typography>
+                </MenuItem>
+              );
+            })()}
+          </Menu>
           <SearchReplacePanel
             isOpen={search.isOpen}
             searchTerm={search.searchTerm}
@@ -2629,7 +2945,10 @@ const App = () => {
               onConnect={onConnect}
               onReconnect={onReconnect}
               onPaneClick={onPaneClick}
+              onPaneContextMenu={onPaneContextMenu}
               onNodeClick={onNodeClick}
+              onNodeContextMenu={onNodeContextMenu}
+              onEdgeContextMenu={onEdgeContextMenu}
               onNodeDragStart={onNodeDragStart}
               onNodeDrag={onNodeDrag}
               onNodeDragStop={onNodeDragStop}

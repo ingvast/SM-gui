@@ -167,7 +167,47 @@ app.on('ready', () => {
         },
       ],
     },
-    { role: 'editMenu' as const },
+    {
+      label: 'Edit',
+      submenu: [
+        {
+          label: 'Undo',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+            win?.webContents.send('menu-undo');
+          },
+        },
+        {
+          label: 'Redo',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+            win?.webContents.send('menu-redo');
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Copy',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+            win?.webContents.send('menu-copy');
+          },
+        },
+        {
+          label: 'Paste',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+            win?.webContents.send('menu-paste');
+          },
+        },
+        {
+          label: 'Duplicate',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+            win?.webContents.send('menu-duplicate');
+          },
+        },
+      ],
+    },
   ];
 
   const menu = Menu.buildFromTemplate(template);

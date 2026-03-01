@@ -17,7 +17,6 @@ export function useClipboard(
   const handleCopy = useCallback(async () => {
     const selectedNodes = nodes.filter(node => node.selected);
     if (selectedNodes.length === 0) {
-      console.log('No nodes selected to copy.');
       return;
     }
 
@@ -49,8 +48,6 @@ export function useClipboard(
       console.error('Failed to write to system clipboard:', err);
     }
 
-    console.log('Nodes copied:', finalNodesToCopy.map(n => n.id));
-    console.log('Edges copied:', edgesToCopy.map(e => e.id));
   }, [nodes, edges]);
 
   const handlePaste = useCallback(async () => {
@@ -60,7 +57,6 @@ export function useClipboard(
     try {
       const text = await navigator.clipboard.readText();
       if (!text.startsWith(CLIPBOARD_MARKER)) {
-        console.log('Clipboard does not contain SM-GUI data.');
         return;
       }
       const parsed = JSON.parse(text.slice(CLIPBOARD_MARKER.length));
@@ -72,7 +68,6 @@ export function useClipboard(
     }
 
     if (copiedNodes.length === 0) {
-      console.log('No nodes to paste.');
       return;
     }
 
@@ -160,14 +155,11 @@ export function useClipboard(
     setEdges((eds) => eds.concat(pastedEdges));
     setSelectedTreeItem(newNodes.length > 0 ? newNodes[0].id : null);
 
-    console.log('Nodes pasted.');
-    console.log('Edges pasted:', pastedEdges.map(e => e.id));
   }, [nodes, setNodes, setEdges, setSelectedTreeItem, saveSnapshot]);
 
   const duplicateNodes = useCallback((includeExternalEdges: boolean) => {
     const selectedNodes = nodes.filter(node => node.selected);
     if (selectedNodes.length === 0) {
-      console.log('No nodes selected to duplicate.');
       return;
     }
 
@@ -287,7 +279,6 @@ export function useClipboard(
     setEdges((eds) => eds.concat(allDuplicatedEdges));
     setSelectedTreeItem(duplicatedNodes.length > 0 ? duplicatedNodes[0].id : null);
 
-    console.log('Nodes duplicated', includeExternalEdges ? '(with external edges).' : '.');
   }, [nodes, edges, setNodes, setEdges, setSelectedTreeItem, saveSnapshot]);
 
   const handleDuplicate = useCallback(() => {

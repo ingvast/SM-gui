@@ -16,6 +16,11 @@ export interface FileAPI {
   onOpenWithFile: (callback: (data: { content: string; filePath: string }) => void) => () => void;
   onExportSourceCode: (callback: () => void) => () => void;
   exportSourceCode: (smbFilePath: string) => Promise<{ success: boolean; outputPath?: string; canceled?: boolean; error?: string }>;
+  onMenuUndo: (callback: () => void) => () => void;
+  onMenuRedo: (callback: () => void) => () => void;
+  onMenuCopy: (callback: () => void) => () => void;
+  onMenuPaste: (callback: () => void) => () => void;
+  onMenuDuplicate: (callback: () => void) => () => void;
 }
 
 export interface Settings {
@@ -73,6 +78,31 @@ contextBridge.exposeInMainWorld('fileAPI', {
     return () => { ipcRenderer.removeListener('export-source-code', handler); };
   },
   exportSourceCode: (smbFilePath: string) => ipcRenderer.invoke('export-source-code', smbFilePath),
+  onMenuUndo: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('menu-undo', handler);
+    return () => { ipcRenderer.removeListener('menu-undo', handler); };
+  },
+  onMenuRedo: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('menu-redo', handler);
+    return () => { ipcRenderer.removeListener('menu-redo', handler); };
+  },
+  onMenuCopy: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('menu-copy', handler);
+    return () => { ipcRenderer.removeListener('menu-copy', handler); };
+  },
+  onMenuPaste: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('menu-paste', handler);
+    return () => { ipcRenderer.removeListener('menu-paste', handler); };
+  },
+  onMenuDuplicate: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('menu-duplicate', handler);
+    return () => { ipcRenderer.removeListener('menu-duplicate', handler); };
+  },
 } as FileAPI);
 
 contextBridge.exposeInMainWorld('settingsAPI', {
