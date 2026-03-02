@@ -183,10 +183,12 @@ const App = () => {
   // Drag-to-create state refs
   const nodeCreateDragStart = useRef<{ x: number; y: number } | null>(null);
   const nodeCreateDragIsDragging = useRef(false);
+  const nodeCreateDragParentId = useRef<string | null>(null); // parent state ID if drag started inside one
   const suppressNextPaneClick = useRef(false);
+  const suppressNextNodeClick = useRef(false);
   const isAddingNodeRef = useRef(false); // mirrors isAddingNode, usable in stable callbacks
   const [nodeCreateDragRect, setNodeCreateDragRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const [pendingNodeCreate, setPendingNodeCreate] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
+  const [pendingNodeCreate, setPendingNodeCreate] = useState<{ startX: number; startY: number; endX: number; endY: number; parentId: string | null } | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     mouseX: number; mouseY: number;
     worldX: number; worldY: number;
@@ -918,16 +920,23 @@ const App = () => {
   const lastPanPos = useRef({ x: 0, y: 0 });
 
   const handlePaneMouseDown = useCallback((event: React.MouseEvent) => {
-    // Don't start panning if clicking on a node, edge, handle, or edge reconnection anchor
-    const target = event.target as HTMLElement;
-    if (target.closest('.react-flow__node') || target.closest('.react-flow__edge') || target.closest('.react-flow__handle') || target.closest('.react-flow__edgeupdater')) {
-      return;
-    }
     if (event.button !== 0) return;
+    const target = event.target as HTMLElement;
     if (isAddingNodeRef.current) {
-      // Begin drag-to-size for new state
+      // In add-state mode: capture mousedown even on nodes so drag-create works inside a parent.
+      // Still skip edges, handles, and reconnect anchors.
+      if (target.closest('.react-flow__edge') || target.closest('.react-flow__handle') || target.closest('.react-flow__edgeupdater')) {
+        return;
+      }
+      // Detect if drag starts inside a state node (becomes the parent)
+      const stateNodeEl = target.closest('.react-flow__node-stateNode');
+      nodeCreateDragParentId.current = stateNodeEl?.getAttribute('data-id') ?? null;
       nodeCreateDragStart.current = { x: event.clientX, y: event.clientY };
       nodeCreateDragIsDragging.current = false;
+      return;
+    }
+    // Normal mode: don't start panning on nodes/edges/handles
+    if (target.closest('.react-flow__node') || target.closest('.react-flow__edge') || target.closest('.react-flow__handle') || target.closest('.react-flow__edgeupdater')) {
       return;
     }
     isPanning.current = true;
@@ -969,6 +978,9 @@ const App = () => {
   const cancelNodeCreateDrag = useCallback(() => {
     nodeCreateDragStart.current = null;
     nodeCreateDragIsDragging.current = false;
+    nodeCreateDragParentId.current = null;
+    suppressNextPaneClick.current = false;
+    suppressNextNodeClick.current = false;
     setNodeCreateDragRect(null);
     isPanning.current = false;
   }, []);
@@ -985,12 +997,15 @@ const App = () => {
             startY: nodeCreateDragStart.current.y,
             endX: event.clientX,
             endY: event.clientY,
+            parentId: nodeCreateDragParentId.current,
           });
           suppressNextPaneClick.current = true;
+          suppressNextNodeClick.current = true;
         }
       }
       nodeCreateDragStart.current = null;
       nodeCreateDragIsDragging.current = false;
+      nodeCreateDragParentId.current = null;
       setNodeCreateDragRect(null);
     }
     isPanning.current = false;
@@ -1170,19 +1185,32 @@ const App = () => {
     if (!pendingNodeCreate) return;
     const rect = reactFlowWrapper.current?.getBoundingClientRect();
     if (!rect) return;
-    const { startX, startY, endX, endY } = pendingNodeCreate;
+    const { startX, startY, endX, endY, parentId } = pendingNodeCreate;
     const screenLeft = Math.min(startX, endX) - rect.left;
     const screenTop = Math.min(startY, endY) - rect.top;
     const screenW = Math.abs(endX - startX);
     const screenH = Math.abs(endY - startY);
+    // Convert screen rect to absolute world coords
     const worldX = (screenLeft - effectivePan.x) / effectiveScale;
     const worldY = (screenTop - effectivePan.y) / effectiveScale;
     const worldW = screenW / effectiveScale;
     const worldH = screenH / effectiveScale;
+    // If dragged inside a parent state, make position parent-relative
+    let position = { x: worldX, y: worldY };
+    const nodeExtra: Record<string, unknown> = {};
+    if (parentId) {
+      const parentBounds = getAbsoluteNodeBounds(parentId, nodes);
+      if (parentBounds) {
+        position = { x: worldX - parentBounds.x, y: worldY - parentBounds.y };
+        nodeExtra.parentId = parentId;
+        nodeExtra.extent = 'parent';
+      }
+    }
     const newNode = {
       id: getNextId(),
       type: 'stateNode',
-      position: { x: worldX, y: worldY },
+      position,
+      ...nodeExtra,
       data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '', showEntry: settings.defaultShowEntry, showExit: settings.defaultShowExit, showDo: settings.defaultShowDo, showAnnotation: settings.defaultShowAnnotation },
       style: { width: worldW, height: worldH },
       selected: true,
@@ -2145,6 +2173,11 @@ const App = () => {
 
   const onNodeClick = useCallback(
     (event, node) => {
+      // Suppress click that follows a drag-to-create gesture
+      if (suppressNextNodeClick.current) {
+        suppressNextNodeClick.current = false;
+        return;
+      }
       // Handle transition creation mode
       if (isAddingTransition && transitionSourceId) {
         // Create transition from source to this node
@@ -2969,6 +3002,7 @@ const App = () => {
               autoPanOnNodeDrag={false}
               autoPanOnConnect={false}
               elevateNodesOnSelect={false}
+              nodesDraggable={!isAddingNode}
               deleteKeyCode={['Backspace', 'Delete']}
               proOptions={{ hideAttribution: true }}
             />
