@@ -130,10 +130,21 @@ const CodeEditor = React.forwardRef<CodeEditorHandle, CodeEditorProps>(
             onBlurRef.current?.(view.state.doc.toString());
             return false;
           },
-          // Stop keyboard events from reaching ReactFlow (which would intercept
-          // Space for panning, Delete for node removal, etc.)
-          keydown: (event) => { event.stopPropagation(); return false; },
-          keyup:   (event) => { event.stopPropagation(); return false; },
+          // Stop only the keys that ReactFlow would intercept (Space=pan,
+          // Delete/Backspace=remove nodes, arrows=move nodes, Escape=mode exit).
+          // Let Ctrl/Cmd combinations (copy, paste, cut, undo, …) bubble normally.
+          keydown: (event) => {
+            if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+              event.stopPropagation();
+            }
+            return false;
+          },
+          keyup: (event) => {
+            if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+              event.stopPropagation();
+            }
+            return false;
+          },
         }),
       ];
 

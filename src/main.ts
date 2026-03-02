@@ -185,20 +185,11 @@ app.on('ready', () => {
           },
         },
         { type: 'separator' },
-        {
-          label: 'Copy',
-          click: () => {
-            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-            win?.webContents.send('menu-copy');
-          },
-        },
-        {
-          label: 'Paste',
-          click: () => {
-            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-            win?.webContents.send('menu-paste');
-          },
-        },
+        { role: 'cut' as const },
+        { role: 'copy' as const },
+        { role: 'paste' as const },
+        { role: 'selectAll' as const },
+        { type: 'separator' },
         {
           label: 'Duplicate',
           click: () => {
