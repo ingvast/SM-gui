@@ -434,6 +434,13 @@ const App = () => {
         .map(n => (n.data as unknown as { targetId: string }).targetId)
     );
 
+    // Compute set of state node IDs that have at least one child state/decision
+    const parentStateIds = new Set<string>(
+      nodes
+        .filter(n => n.parentId && (n.type === 'stateNode' || n.type === 'decisionNode'))
+        .map(n => n.parentId!)
+    );
+
     // Compute set of currently selected state/decision node IDs
     const selectedNodeIds = new Set<string>(
       nodes.filter(n => n.selected).map(n => n.id)
@@ -471,6 +478,7 @@ const App = () => {
           minWidth: mins?.minWidth,
           minHeight: mins?.minHeight,
           hasProxy: node.type === 'stateNode' && proxyTargetIds.has(node.id),
+          isCompound: node.type === 'stateNode' && parentStateIds.has(node.id),
           targetSelected: node.type === 'proxyNode' && selectedNodeIds.has((node.data as unknown as { targetId: string }).targetId),
         },
       };

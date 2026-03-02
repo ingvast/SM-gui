@@ -27,15 +27,16 @@ interface StateNodeData {
   minWidth?: number;     // Minimum width to contain children (screen pixels)
   minHeight?: number;    // Minimum height to contain children (screen pixels)
   hasProxy?: boolean;    // True if at least one proxy node points to this state
+  isCompound?: boolean;  // True if this state has child states/decisions
 }
 
 interface StateNodeProps {
   data: StateNodeData;
   selected: boolean;
-  isParent?: boolean;
 }
 
-export default memo(({ data, selected, isParent }: StateNodeProps) => {
+export default memo(({ data, selected }: StateNodeProps) => {
+  const isCompound = data.isCompound;
   // Fixed screen-pixel sizes (no counter-scaling needed since viewport zoom is 1
   // and nodes are already rendered at their screen size)
   const fontSize = 14;
@@ -123,16 +124,16 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
     sections = sections.filter(s => s !== toRemove);
   }
 
-  const borderColor = selected ? '#1976d2' : (isOrthogonal ? '#0066cc' : (isParent ? '#666' : '#1a192b'));
+  const borderColor = selected ? '#1976d2' : (isOrthogonal ? '#0066cc' : (isCompound ? '#666' : '#1a192b'));
 
   const nodeStyle: React.CSSProperties = {
     position: 'relative',
     fontSize: `${fontSize}px`,
     borderWidth: isOrthogonal ? '2px' : `${borderWidth}px`,
-    borderStyle: isOrthogonal ? 'dashed' : (isParent ? 'dashed' : 'solid'),
+    borderStyle: isOrthogonal ? 'dashed' : (isCompound ? 'dashed' : 'solid'),
     borderColor,
     borderRadius: `${borderRadius}px`,
-    backgroundColor: isOrthogonal ? 'rgba(240, 248, 255, 0.9)' : (isParent ? 'rgba(249, 249, 249, 0.85)' : 'rgba(255, 255, 255, 0.85)'),
+    backgroundColor: isOrthogonal ? 'rgba(240, 248, 255, 0.9)' : (isCompound ? 'rgba(249, 249, 249, 0.85)' : 'rgba(255, 255, 255, 0.85)'),
     width: '100%',
     height: '100%',
     boxShadow: selected ? '0 0 0 1.5px #1976d2, 0 0 12px 4px rgba(25, 118, 210, 0.35)' : undefined,
@@ -175,7 +176,41 @@ export default memo(({ data, selected, isParent }: StateNodeProps) => {
         </div>
       )}
 
-      {showLabel && sections.length > 0 && (
+      {showLabel && sections.length > 0 && isCompound && (
+        // Compound state: code/annotation displayed in a distinct double-bordered box
+        <div style={{
+          position: 'absolute',
+          top: labelAreaHeight + 4,
+          left: 8,
+          right: 8,
+          border: `3px double ${borderColor}`,
+          borderRadius: 3,
+          backgroundColor: 'rgba(242, 242, 248, 0.92)',
+          padding: '3px 6px',
+          pointerEvents: 'none',
+          overflow: 'hidden',
+          zIndex: 1,
+        }}>
+          {sections.map(s => (
+            <div key={s.key} style={{
+              fontSize: `${sectionFontSize}px`,
+              fontFamily: s.fontFamily,
+              fontStyle: s.fontStyle,
+              textAlign: s.textAlign,
+              whiteSpace: s.whiteSpace as React.CSSProperties['whiteSpace'],
+              wordBreak: s.key === 'annotation' ? 'break-word' : undefined,
+              lineHeight: '1.3',
+              color: '#444',
+              overflow: 'hidden',
+            }}>
+              {s.text}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showLabel && sections.length > 0 && !isCompound && (
+        // Leaf state: code/annotation displayed inline in the state area
         <div style={{
           position: 'absolute',
           top: labelAreaHeight,
