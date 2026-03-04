@@ -60,6 +60,7 @@ const languages = [
   { value: 'python', label: 'Python' },
   { value: 'rust', label: 'Rust' },
   { value: 'c', label: 'C' },
+  { value: 'typescript', label: 'TypeScript' },
 ];
 
 interface MachinePropertiesDialogProps {

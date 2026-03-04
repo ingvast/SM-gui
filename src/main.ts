@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
 import started from 'electron-squirrel-startup';
+import type { ViewPlugin, PluginCallbacks } from './viewPlugin';
 
 // Settings types
 interface Settings {
@@ -81,6 +82,59 @@ app.on('open-file', (event, filePath) => {
     if (fs.existsSync(resolved)) {
       pendingFileToOpen = resolved;
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// View-mode plugin host
+// ---------------------------------------------------------------------------
+
+// Registry of available plugins (loaded lazily on first list request)
+let pluginRegistry: Map<string, ViewPlugin> | null = null;
+let activePlugin: ViewPlugin | null = null;
+
+async function loadPluginRegistry(): Promise<Map<string, ViewPlugin>> {
+  if (pluginRegistry) return pluginRegistry;
+  pluginRegistry = new Map();
+  // Statically import known built-in plugins.
+  // Additional plugins can be added here in the future.
+  try {
+    const mock = await import('./plugins/mockPlugin');
+    pluginRegistry.set(mock.default.name, mock.default);
+  } catch (err) {
+    console.warn('Failed to load mockPlugin:', err);
+  }
+  try {
+    const smRunner = await import('./plugins/smRunnerPlugin');
+    pluginRegistry.set(smRunner.default.name, smRunner.default);
+  } catch (err) {
+    console.warn('Failed to load smRunnerPlugin:', err);
+  }
+  return pluginRegistry;
+}
+
+async function startPlugin(name: string, _config: Record<string, unknown>, mainWindow: BrowserWindow): Promise<void> {
+  const registry = await loadPluginRegistry();
+  const plugin = registry.get(name);
+  if (!plugin) throw new Error(`Unknown plugin: ${name}`);
+  if (activePlugin) await activePlugin.stop();
+
+  const callbacks: PluginCallbacks = {
+    onStateUpdate(activeStates: string[]) {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('view-state-update', activeStates);
+      }
+    },
+  };
+
+  await plugin.start(callbacks, _config);
+  activePlugin = plugin;
+}
+
+async function stopPlugin(): Promise<void> {
+  if (activePlugin) {
+    await activePlugin.stop();
+    activePlugin = null;
   }
 }
 
@@ -382,6 +436,32 @@ ipcMain.handle('get-startup-file', async () => {
     return { content, filePath };
   } catch (error) {
     return null;
+  }
+});
+
+// View-mode plugin IPC handlers
+ipcMain.handle('view-list-plugins', async () => {
+  const registry = await loadPluginRegistry();
+  return Array.from(registry.keys());
+});
+
+ipcMain.handle('view-start-plugin', async (_event, name: string, config: Record<string, unknown>) => {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win) return { success: false, error: 'No window' };
+  try {
+    await startPlugin(name, config, win);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle('view-stop-plugin', async () => {
+  try {
+    await stopPlugin();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
   }
 });
 

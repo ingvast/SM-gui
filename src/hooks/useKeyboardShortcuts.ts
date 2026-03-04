@@ -36,6 +36,7 @@ interface KeyboardShortcutsParams {
   isRetargetingTransition: boolean;
   isResourcingTransition: boolean;
   selectedMarkerId: string | null;
+  isViewMode: boolean;
 
   // Setters
   setIsAddingNode: (v: boolean) => void;
@@ -70,7 +71,7 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
     isSearchOpen,
     isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
     isRetargetingTransition, isResourcingTransition,
-    selectedMarkerId,
+    selectedMarkerId, isViewMode,
     setIsAddingNode, setIsAddingDecision, setIsAddingTransition, setTransitionSourceId,
     setIsUngroupingMode, setIsSettingInitial, setInitialTargetId, setIsSettingHistory,
     setIsAddingProxy, setProxyTargetId, setProxySourceEdgeId,
@@ -99,6 +100,17 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
       if (isInTextInput && event.key !== 'Escape') {
         return;
+      }
+
+      // View mode: only allow navigation keys and modifier combos
+      if (isViewMode) {
+        if (event.key === 'Escape' || event.key === 'z' || event.key === 'v') {
+          // fall through to normal handling
+        } else if (isModifierPressed) {
+          // allow Ctrl/Cmd combos (save, open, find, etc.)
+        } else {
+          return; // block all other keys
+        }
       }
 
       // Delete selected history marker
@@ -317,7 +329,7 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
     handleUndo, handleRedo, saveSnapshot, handleCopyImage, handleExportPdf, toggleShowLabels,
     handleOpenSearch, handleCloseSearch,
     setIsAddingNode, setIsAddingDecision, isAddingDecision,
-    nodes, edges, isSearchOpen, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
+    nodes, edges, isSearchOpen, isViewMode, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
     isRetargetingTransition, isResourcingTransition,
     selectedMarkerId, setEdges, setRootHistory, setMachineProperties, setNodes,
     setIsAddingTransition, setTransitionSourceId, setIsUngroupingMode,

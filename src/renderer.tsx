@@ -25,6 +25,8 @@ import {
   Menu,
   MenuItem,
   ListItemText,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -34,6 +36,8 @@ import {
   Tune as TuneIcon,
   Undo as UndoIcon,
   Redo as RedoIcon,
+  Visibility as VisibilityIcon,
+  VisibilityOff as VisibilityOffIcon,
 } from '@mui/icons-material';
 
 import './index.css';
@@ -118,6 +122,12 @@ declare global {
         useBuiltin?: boolean;
         fallbackToBuiltin?: boolean;
       }>;
+    };
+    viewAPI: {
+      listPlugins: () => Promise<string[]>;
+      startPlugin: (name: string, config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
+      stopPlugin: () => Promise<{ success: boolean; error?: string }>;
+      onStateUpdate: (cb: (activeStates: string[]) => void) => () => void;
     };
   }
 }
@@ -304,6 +314,109 @@ const App = () => {
   const effectiveScale = zoomLevel;
   const effectivePan = panOffset;
 
+  // ---------------------------------------------------------------------------
+  // View Mode state
+  // ---------------------------------------------------------------------------
+  const [isViewMode, setIsViewMode] = useState(false);
+  const [activeStatePaths, setActiveStatePaths] = useState<string[]>([]);
+  const [activeSince, setActiveSince] = useState<Map<string, number>>(new Map());
+  const [viewModeTick, setViewModeTick] = useState(0);
+  const [viewModeError, setViewModeError] = useState<string | null>(null);
+
+  // Build a map from slash-separated path → node ID (memoized)
+  const pathToNodeId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const node of nodes) {
+      if (node.type === 'stateNode') {
+        const p = computeNodePath(node.id, nodes);
+        map.set(p, node.id);
+      }
+    }
+    return map;
+  }, [nodes]);
+
+  // Resolve active state paths to node IDs, including all ancestors
+  const activeNodeIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const sp of activeStatePaths) {
+      const nodeId = pathToNodeId.get(sp);
+      if (nodeId) {
+        ids.add(nodeId);
+        // Walk parent chain to mark ancestors
+        let current = nodes.find(n => n.id === nodeId);
+        while (current?.parentId) {
+          ids.add(current.parentId);
+          current = nodes.find(n => n.id === current!.parentId);
+        }
+      }
+    }
+    return ids;
+  }, [activeStatePaths, pathToNodeId, nodes]);
+
+  // Leaf active nodes (directly matched, not just ancestors)
+  const leafActiveNodeIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const sp of activeStatePaths) {
+      const nodeId = pathToNodeId.get(sp);
+      if (nodeId) ids.add(nodeId);
+    }
+    return ids;
+  }, [activeStatePaths, pathToNodeId]);
+
+  // Track when nodes became active
+  useEffect(() => {
+    if (!isViewMode) return;
+    setActiveSince(prev => {
+      const next = new Map<string, number>();
+      const now = Date.now();
+      for (const id of activeNodeIds) {
+        next.set(id, prev.get(id) ?? now);
+      }
+      return next;
+    });
+  }, [activeNodeIds, isViewMode]);
+
+  // Tick timer for dwell display
+  useEffect(() => {
+    if (!isViewMode || activeNodeIds.size === 0) return;
+    const interval = setInterval(() => setViewModeTick(t => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, [isViewMode, activeNodeIds.size]);
+
+  // Listen for state updates from the plugin (IPC)
+  useEffect(() => {
+    if (!isViewMode) return;
+    const unsub = window.viewAPI.onStateUpdate((paths) => {
+      setActiveStatePaths(paths);
+    });
+    return unsub;
+  }, [isViewMode]);
+
+  // Enter/exit view mode
+  const handleToggleViewMode = useCallback(async () => {
+    if (isViewMode) {
+      // Exit view mode
+      await window.viewAPI.stopPlugin();
+      setIsViewMode(false);
+      setActiveStatePaths([]);
+      setActiveSince(new Map());
+      setViewModeTick(0);
+    } else {
+      setViewModeError(null);
+      let result: { success: boolean; error?: string };
+      if (currentFilePath) {
+        result = await window.viewAPI.startPlugin('SM Runner', { filePath: currentFilePath });
+      } else {
+        result = await window.viewAPI.startPlugin('Mock', {});
+      }
+      if (result.success) {
+        setIsViewMode(true);
+      } else {
+        setViewModeError(result.error || 'Failed to start view mode');
+      }
+    }
+  }, [isViewMode, currentFilePath]);
+
   // Transform nodes to screen coordinates based on semantic zoom
   const transformedNodes = useMemo(() => {
     // Compute DFS preorder order (matches state tree sidebar list order)
@@ -480,6 +593,11 @@ const App = () => {
           hasProxy: node.type === 'stateNode' && proxyTargetIds.has(node.id),
           isCompound: node.type === 'stateNode' && parentStateIds.has(node.id),
           targetSelected: node.type === 'proxyNode' && selectedNodeIds.has((node.data as unknown as { targetId: string }).targetId),
+          ...(isViewMode && node.type === 'stateNode' && activeNodeIds.has(node.id) ? {
+            isActive: leafActiveNodeIds.has(node.id),
+            isAncestorActive: !leafActiveNodeIds.has(node.id),
+            activeTimerMs: activeSince.has(node.id) ? (Date.now() - activeSince.get(node.id)!) : 0,
+          } : {}),
         },
       };
     }).filter(Boolean) as typeof nodes;
@@ -657,7 +775,7 @@ const App = () => {
     }
 
     return [...result, ...initialMarkers, ...historyMarkers];
-  }, [nodes, edges, effectiveScale, effectivePan, viewportSize, machineProperties, draggingMarkerId, draggingMarkerPos, selectedMarkerId, draggingNodeId]);
+  }, [nodes, edges, effectiveScale, effectivePan, viewportSize, machineProperties, draggingMarkerId, draggingMarkerPos, selectedMarkerId, draggingNodeId, isViewMode, activeNodeIds, leafActiveNodeIds, activeSince, viewModeTick]);
 
   // Build a set of visible node IDs for edge filtering
   const visibleNodeIds = useMemo(() => {
@@ -1775,6 +1893,7 @@ const App = () => {
     isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
     isRetargetingTransition, isResourcingTransition,
     selectedMarkerId,
+    isViewMode,
     setIsAddingNode, setIsAddingDecision, setIsAddingTransition, setTransitionSourceId,
     setIsUngroupingMode, setIsSettingInitial, setInitialTargetId, setIsSettingHistory,
     setIsAddingProxy, setProxyTargetId, setProxySourceEdgeId,
@@ -2590,24 +2709,30 @@ const App = () => {
       <AppBar className="no-print" position="static" color="default" elevation={1}>
         <Toolbar variant="dense" sx={{ gap: 1 }}>
           <Tooltip title="New (Cmd+N)">
+            <span>
             <Button
               variant="outlined"
               size="small"
               startIcon={<AddIcon />}
               onClick={handleNew}
+              disabled={isViewMode}
             >
               New
             </Button>
+            </span>
           </Tooltip>
           <Tooltip title="Open (Cmd+O)">
+            <span>
             <Button
               variant="outlined"
               size="small"
               startIcon={<OpenIcon />}
               onClick={handleOpen}
+              disabled={isViewMode}
             >
               Open
             </Button>
+            </span>
           </Tooltip>
           <Tooltip title="Save (Cmd+S)">
             <Button
@@ -2632,7 +2757,7 @@ const App = () => {
                 size="small"
                 startIcon={<UndoIcon />}
                 onClick={handleUndo}
-                disabled={!canUndo}
+                disabled={!canUndo || isViewMode}
               >
                 Undo
               </Button>
@@ -2645,7 +2770,7 @@ const App = () => {
                 size="small"
                 startIcon={<RedoIcon />}
                 onClick={handleRedo}
-                disabled={!canRedo}
+                disabled={!canRedo || isViewMode}
               >
                 Redo
               </Button>
@@ -2672,8 +2797,20 @@ const App = () => {
               Settings
             </Button>
           </Tooltip>
+          <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
+          <Tooltip title={isViewMode ? 'Exit View Mode' : 'Enter View Mode (live state visualization)'}>
+            <Button
+              variant={isViewMode ? 'contained' : 'outlined'}
+              size="small"
+              startIcon={isViewMode ? <VisibilityIcon /> : <VisibilityOffIcon />}
+              onClick={handleToggleViewMode}
+              color={isViewMode ? 'success' : 'inherit'}
+            >
+              {isViewMode ? 'Viewing' : 'View'}
+            </Button>
+          </Tooltip>
           <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
-            Cmd+S: Save | Cmd+Shift+S: Export | Cmd+O: Open
+            {isViewMode ? 'View Mode — editing disabled' : 'Cmd+S: Save | Cmd+Shift+S: Export | Cmd+O: Open'}
           </Typography>
         </Toolbar>
       </AppBar>
@@ -2722,6 +2859,7 @@ const App = () => {
               focusName={focusName}
               onNameFocused={() => setFocusName(false)}
               replaceVersion={search.replaceVersion}
+              readOnly={isViewMode}
             />
           </Box>
         </Paper>
@@ -3010,8 +3148,9 @@ const App = () => {
               autoPanOnNodeDrag={false}
               autoPanOnConnect={false}
               elevateNodesOnSelect={false}
-              nodesDraggable={!isAddingNode}
-              deleteKeyCode={['Backspace', 'Delete']}
+              nodesDraggable={!isAddingNode && !isViewMode}
+              nodesConnectable={!isViewMode}
+              deleteKeyCode={isViewMode ? [] : ['Backspace', 'Delete']}
               proOptions={{ hideAttribution: true }}
             />
           </EdgesProvider>
@@ -3038,6 +3177,22 @@ const App = () => {
           });
         }}
       />
+
+      <Snackbar
+        open={viewModeError !== null}
+        autoHideDuration={12000}
+        onClose={() => setViewModeError(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setViewModeError(null)}
+          severity="error"
+          variant="filled"
+          sx={{ maxWidth: 600, whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 12 }}
+        >
+          {viewModeError}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

@@ -1,0 +1,32 @@
+language: typescript
+initial: S1
+graphics:
+  initialMarkerPos:
+    x: 232.78321678321674
+    'y': 459.67176573426576
+  initialMarkerSize: 17.8125
+states:
+  S1:
+    graphics:
+      x: 266
+      'y': 481
+      width: 150
+      height: 75
+    transitions:
+      - to: S2
+        guard: time > 0.3
+        graphics:
+          labelPosition: 0.49
+  S2:
+    graphics:
+      x: 591
+      'y': 485
+      width: 150
+      height: 75
+    transitions:
+      - to: S1
+        guard: time > 0.2
+        graphics:
+          sourceHandle: bottom-source
+          targetHandle: bottom-target
+          labelPosition: 0.47

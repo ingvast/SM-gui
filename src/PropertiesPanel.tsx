@@ -64,6 +64,7 @@ interface PropertiesPanelProps {
   focusName?: boolean;
   onNameFocused?: () => void;
   replaceVersion?: number;
+  readOnly?: boolean;
 }
 
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
@@ -84,6 +85,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   focusName,
   onNameFocused,
   replaceVersion,
+  readOnly = false,
 }) => {
   const [tempName, setTempName] = useState('');
   const [tempEntry, setTempEntry] = useState('');
@@ -611,7 +613,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   }
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', ...(readOnly ? { pointerEvents: 'none', opacity: 0.6 } : {}) }}>
 
       {!isDecision && (
         <TextField

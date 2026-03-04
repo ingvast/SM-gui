@@ -8,6 +8,7 @@ import { linter, lintGutter, Diagnostic } from '@codemirror/lint';
 import { python } from '@codemirror/lang-python';
 import { cpp } from '@codemirror/lang-cpp';
 import { rust } from '@codemirror/lang-rust';
+import { javascript } from '@codemirror/lang-javascript';
 
 export interface CodeEditorHandle {
   focus: () => void;
@@ -33,6 +34,10 @@ function getLanguageExtension(language: string): Extension[] {
       return [cpp()];
     case 'rust':
       return [rust()];
+    case 'typescript':
+      return [javascript({ typescript: true })];
+    case 'javascript':
+      return [javascript()];
     default:
       return [];
   }

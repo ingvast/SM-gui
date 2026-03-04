@@ -34,6 +34,13 @@ export interface SettingsAPI {
   save: (settings: Settings) => Promise<{ success: boolean }>;
 }
 
+export interface ViewAPI {
+  listPlugins: () => Promise<string[]>;
+  startPlugin: (name: string, config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
+  stopPlugin: () => Promise<{ success: boolean; error?: string }>;
+  onStateUpdate: (cb: (activeStates: string[]) => void) => () => void;
+}
+
 export interface EditorAPI {
   editExternal: (content: string, language: string) => Promise<{
     success: boolean;
@@ -113,3 +120,14 @@ contextBridge.exposeInMainWorld('settingsAPI', {
 contextBridge.exposeInMainWorld('editorAPI', {
   editExternal: (content: string, language: string) => ipcRenderer.invoke('edit-in-external-editor', content, language),
 } as EditorAPI);
+
+contextBridge.exposeInMainWorld('viewAPI', {
+  listPlugins: () => ipcRenderer.invoke('view-list-plugins'),
+  startPlugin: (name: string, config: Record<string, unknown>) => ipcRenderer.invoke('view-start-plugin', name, config),
+  stopPlugin: () => ipcRenderer.invoke('view-stop-plugin'),
+  onStateUpdate: (cb: (activeStates: string[]) => void) => {
+    const handler = (_: unknown, activeStates: string[]) => cb(activeStates);
+    ipcRenderer.on('view-state-update', handler);
+    return () => { ipcRenderer.removeListener('view-state-update', handler); };
+  },
+} as ViewAPI);
