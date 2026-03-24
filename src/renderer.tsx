@@ -104,6 +104,7 @@ declare global {
       onMenuCopy: (callback: () => void) => () => void;
       onMenuPaste: (callback: () => void) => () => void;
       onMenuDuplicate: (callback: () => void) => () => void;
+      onMenuOpen: (callback: () => void) => () => void;
     };
     settingsAPI: {
       get: () => Promise<Settings>;

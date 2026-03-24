@@ -220,6 +220,11 @@ export function useFileOperations(
   }, [handleExportPhoenix]);
 
   useEffect(() => {
+    const cleanup = window.fileAPI.onMenuOpen(handleOpen);
+    return cleanup;
+  }, [handleOpen]);
+
+  useEffect(() => {
     const cleanup = window.fileAPI.onSaveAs(handleSaveAs);
     return cleanup;
   }, [handleSaveAs]);

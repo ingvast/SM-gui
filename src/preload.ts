@@ -21,6 +21,7 @@ export interface FileAPI {
   onMenuCopy: (callback: () => void) => () => void;
   onMenuPaste: (callback: () => void) => () => void;
   onMenuDuplicate: (callback: () => void) => () => void;
+  onMenuOpen: (callback: () => void) => () => void;
 }
 
 export interface Settings {
@@ -102,6 +103,11 @@ contextBridge.exposeInMainWorld('fileAPI', {
     const handler = () => callback();
     ipcRenderer.on('menu-duplicate', handler);
     return () => { ipcRenderer.removeListener('menu-duplicate', handler); };
+  },
+  onMenuOpen: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('menu-open', handler);
+    return () => { ipcRenderer.removeListener('menu-open', handler); };
   },
 } as FileAPI);
 
