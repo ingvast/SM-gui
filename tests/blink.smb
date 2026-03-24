@@ -19,8 +19,8 @@ states:
           labelPosition: 0.49
   S2:
     graphics:
-      x: 591
-      'y': 485
+      x: 475.5716783216783
+      'y': 495.79545454545456
       width: 150
       height: 75
     transitions:
