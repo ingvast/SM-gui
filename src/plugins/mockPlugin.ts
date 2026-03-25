@@ -5,7 +5,7 @@
  * so the renderer can be verified without a real state machine running.
  */
 
-import type { ViewPlugin, PluginCallbacks } from '../viewPlugin';
+import type { ViewPlugin, PluginCallbacks, PluginConfigField } from '../viewPlugin';
 
 /** Sequence of active-state snapshots to cycle through. */
 const MOCK_SEQUENCE: string[][] = [
@@ -21,8 +21,11 @@ const TICK_MS = 2000;
 
 let timer: ReturnType<typeof setInterval> | null = null;
 
+const mockConfigFields: PluginConfigField[] = [];
+
 const mockPlugin: ViewPlugin = {
   name: 'Mock',
+  configFields: mockConfigFields,
 
   async start(callbacks: PluginCallbacks, _config: Record<string, unknown>) {
     let idx = 0;

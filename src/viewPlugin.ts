@@ -14,9 +14,27 @@ export interface PluginCallbacks {
   onStateUpdate(activeStates: string[]): void;
 }
 
+/** Describes a single configuration field for a plugin. */
+export interface PluginConfigField {
+  key: string;
+  label: string;
+  type: 'string' | 'number';
+  default?: string | number;
+  placeholder?: string;
+}
+
+/** Serializable plugin info sent to the renderer for the picker dialog. */
+export interface PluginInfo {
+  name: string;
+  configFields: PluginConfigField[];
+}
+
 export interface ViewPlugin {
   /** Human-readable name shown in the UI. */
   name: string;
+
+  /** Describes the config fields this plugin accepts (for the picker UI). */
+  configFields?: PluginConfigField[];
 
   /** Start the plugin. `config` carries plugin-specific options (e.g. filePath).
    *  `callbacks` is used to push state updates back to the renderer. */

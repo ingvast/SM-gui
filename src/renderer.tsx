@@ -53,6 +53,7 @@ import SplineEdge from './SplineEdge';
 import { EdgesProvider, LabelsVisibleProvider } from './EdgesContext';
 import MachinePropertiesDialog from './MachinePropertiesDialog';
 import SettingsDialog, { Settings } from './SettingsDialog';
+import ViewPluginDialog from './ViewPluginDialog';
 import { MachineProperties, defaultMachineProperties, computeProxyLabel } from './yamlConverter';
 import {
   useSemanticZoomStore,
@@ -124,10 +125,12 @@ declare global {
       }>;
     };
     viewAPI: {
-      listPlugins: () => Promise<string[]>;
+      listPlugins: () => Promise<import('./preload').PluginInfo[]>;
       startPlugin: (name: string, config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
       stopPlugin: () => Promise<{ success: boolean; error?: string }>;
       onStateUpdate: (cb: (activeStates: string[]) => void) => () => void;
+      getConfig: () => Promise<import('./preload').ViewPluginConfig>;
+      saveConfig: (config: import('./preload').ViewPluginConfig) => Promise<{ success: boolean }>;
     };
   }
 }
@@ -322,6 +325,7 @@ const App = () => {
   const [activeSince, setActiveSince] = useState<Map<string, number>>(new Map());
   const [viewModeTick, setViewModeTick] = useState(0);
   const [viewModeError, setViewModeError] = useState<string | null>(null);
+  const [viewPluginDialogOpen, setViewPluginDialogOpen] = useState(false);
 
   // Build a map from slash-separated path → node ID (memoized)
   const pathToNodeId = useMemo(() => {
@@ -402,20 +406,23 @@ const App = () => {
       setActiveSince(new Map());
       setViewModeTick(0);
     } else {
-      setViewModeError(null);
-      let result: { success: boolean; error?: string };
-      if (currentFilePath) {
-        result = await window.viewAPI.startPlugin('SM Runner', { filePath: currentFilePath });
-      } else {
-        result = await window.viewAPI.startPlugin('Mock', {});
-      }
-      if (result.success) {
-        setIsViewMode(true);
-      } else {
-        setViewModeError(result.error || 'Failed to start view mode');
-      }
+      // Open plugin picker dialog
+      setViewPluginDialogOpen(true);
     }
-  }, [isViewMode, currentFilePath]);
+  }, [isViewMode]);
+
+  const handleStartPlugin = useCallback(async (pluginName: string, config: Record<string, unknown>) => {
+    setViewPluginDialogOpen(false);
+    setViewModeError(null);
+    // Always provide the current file path to plugins that need it
+    const fullConfig = { ...config, filePath: currentFilePath };
+    const result = await window.viewAPI.startPlugin(pluginName, fullConfig);
+    if (result.success) {
+      setIsViewMode(true);
+    } else {
+      setViewModeError(result.error || 'Failed to start plugin');
+    }
+  }, [currentFilePath]);
 
   // Transform nodes to screen coordinates based on semantic zoom
   const transformedNodes = useMemo(() => {
@@ -2798,16 +2805,19 @@ const App = () => {
             </Button>
           </Tooltip>
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
-          <Tooltip title={isViewMode ? 'Exit View Mode' : 'Enter View Mode (live state visualization)'}>
-            <Button
-              variant={isViewMode ? 'contained' : 'outlined'}
-              size="small"
-              startIcon={isViewMode ? <VisibilityIcon /> : <VisibilityOffIcon />}
-              onClick={handleToggleViewMode}
-              color={isViewMode ? 'success' : 'inherit'}
-            >
-              {isViewMode ? 'Viewing' : 'View'}
-            </Button>
+          <Tooltip title={isViewMode ? 'Exit View Mode' : !currentFilePath ? 'Save the file first to enter View Mode' : 'Enter View Mode (live state visualization)'}>
+            <span>
+              <Button
+                variant={isViewMode ? 'contained' : 'outlined'}
+                size="small"
+                startIcon={isViewMode ? <VisibilityIcon /> : <VisibilityOffIcon />}
+                onClick={handleToggleViewMode}
+                color={isViewMode ? 'success' : 'inherit'}
+                disabled={!isViewMode && !currentFilePath}
+              >
+                {isViewMode ? 'Viewing' : 'View'}
+              </Button>
+            </span>
           </Tooltip>
           <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
             {isViewMode ? 'View Mode — editing disabled' : 'Cmd+S: Save | Cmd+Shift+S: Export | Cmd+O: Open'}
@@ -3176,6 +3186,13 @@ const App = () => {
             console.error('Error saving settings:', error);
           });
         }}
+      />
+
+      <ViewPluginDialog
+        open={viewPluginDialogOpen}
+        onClose={() => setViewPluginDialogOpen(false)}
+        onStart={handleStartPlugin}
+        currentFilePath={currentFilePath}
       />
 
       <Snackbar

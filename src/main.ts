@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
 import started from 'electron-squirrel-startup';
-import type { ViewPlugin, PluginCallbacks } from './viewPlugin';
+import type { ViewPlugin, PluginCallbacks, PluginInfo } from './viewPlugin';
 
 // Settings types
 interface Settings {
@@ -38,6 +38,33 @@ function saveSettings(settings: Settings): void {
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
   } catch (error) {
     console.error('Error saving settings:', error);
+  }
+}
+
+// View plugin config persistence
+interface ViewPluginConfig {
+  lastPlugin: string;
+  pluginConfigs: Record<string, Record<string, string>>;
+}
+
+const viewPluginConfigPath = path.join(app.getPath('userData'), 'viewPluginConfig.json');
+
+function loadViewPluginConfig(): ViewPluginConfig {
+  try {
+    if (fs.existsSync(viewPluginConfigPath)) {
+      return JSON.parse(fs.readFileSync(viewPluginConfigPath, 'utf-8'));
+    }
+  } catch (error) {
+    console.error('Error loading view plugin config:', error);
+  }
+  return { lastPlugin: '', pluginConfigs: {} };
+}
+
+function saveViewPluginConfig(config: ViewPluginConfig): void {
+  try {
+    fs.writeFileSync(viewPluginConfigPath, JSON.stringify(config, null, 2), 'utf-8');
+  } catch (error) {
+    console.error('Error saving view plugin config:', error);
   }
 }
 
@@ -109,6 +136,12 @@ async function loadPluginRegistry(): Promise<Map<string, ViewPlugin>> {
     pluginRegistry.set(smRunner.default.name, smRunner.default);
   } catch (err) {
     console.warn('Failed to load smRunnerPlugin:', err);
+  }
+  try {
+    const mqttBridge = await import('./plugins/mqttBridgePlugin');
+    pluginRegistry.set(mqttBridge.default.name, mqttBridge.default);
+  } catch (err) {
+    console.warn('Failed to load mqttBridgePlugin:', err);
   }
   return pluginRegistry;
 }
@@ -440,9 +473,21 @@ ipcMain.handle('get-startup-file', async () => {
 });
 
 // View-mode plugin IPC handlers
-ipcMain.handle('view-list-plugins', async () => {
+ipcMain.handle('view-list-plugins', async (): Promise<PluginInfo[]> => {
   const registry = await loadPluginRegistry();
-  return Array.from(registry.keys());
+  return Array.from(registry.values()).map((p) => ({
+    name: p.name,
+    configFields: p.configFields || [],
+  }));
+});
+
+ipcMain.handle('view-get-config', async () => {
+  return loadViewPluginConfig();
+});
+
+ipcMain.handle('view-save-config', async (_event, config: ViewPluginConfig) => {
+  saveViewPluginConfig(config);
+  return { success: true };
 });
 
 ipcMain.handle('view-start-plugin', async (_event, name: string, config: Record<string, unknown>) => {

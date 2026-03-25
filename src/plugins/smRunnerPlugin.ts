@@ -6,7 +6,7 @@
  * StateMachine class, and runs a tick loop pushing state updates.
  */
 
-import type { ViewPlugin, PluginCallbacks } from '../viewPlugin';
+import type { ViewPlugin, PluginCallbacks, PluginConfigField } from '../viewPlugin';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -161,8 +161,13 @@ export async function compileAndLoad(filePath: string): Promise<{
   }
 }
 
+const smRunnerConfigFields: PluginConfigField[] = [
+  { key: 'tickInterval', label: 'Tick interval (ms)', type: 'number', default: 100 },
+];
+
 const smRunnerPlugin: ViewPlugin = {
   name: 'SM Runner',
+  configFields: smRunnerConfigFields,
 
   async start(callbacks: PluginCallbacks, config: Record<string, unknown>) {
     const filePath = config.filePath as string;
