@@ -76,13 +76,10 @@ interface YamlDecisionTransition {
   };
 }
 
-interface YamlDecision {
-  transitions: YamlDecisionTransition[];
-  graphics?: {
-    x: number;
-    y: number;
-    size: number;
-  };
+interface YamlDecisionGraphics {
+  x: number;
+  y: number;
+  size: number;
 }
 
 interface YamlState {
@@ -94,7 +91,8 @@ interface YamlState {
   orthogonal?: boolean;
   initial?: string;
   states?: Record<string, YamlState>;
-  decisions?: Record<string, YamlDecisionTransition[] | YamlDecision>;
+  decisions?: Record<string, YamlDecisionTransition[]>;
+  decisionGraphics?: Record<string, YamlDecisionGraphics>;
   transitions?: YamlTransition[];
   graphics?: {
     x: number;
@@ -151,7 +149,8 @@ interface YamlDocument {
   history?: boolean;
   initial?: string;
   states?: Record<string, YamlState>;
-  decisions?: Record<string, YamlDecisionTransition[] | YamlDecision>;
+  decisions?: Record<string, YamlDecisionTransition[]>;
+  decisionGraphics?: Record<string, YamlDecisionGraphics>;
   connectors?: Record<string, YamlConnector>;
   graphics?: {
     initialMarkerPos?: { x: number; y: number };
@@ -436,7 +435,8 @@ export function convertToYaml(
     // Add decision children
     const decisionChildren = decisionNodes.filter(n => n.parentId === node.id);
     if (decisionChildren.length > 0) {
-      const decisions: Record<string, YamlDecisionTransition[] | YamlDecision> = {};
+      const decisions: Record<string, YamlDecisionTransition[]> = {};
+      const decGraphics: Record<string, YamlDecisionGraphics> = {};
       decisionChildren.forEach(decision => {
         const decisionEdges = edgesBySource.get(decision.id) || [];
         const transitions: YamlDecisionTransition[] = decisionEdges.map(edge => {
@@ -466,21 +466,20 @@ export function convertToYaml(
           return t;
         });
 
+        decisions[decision.data.label] = transitions;
         if (includeGraphics) {
           const size = (decision.style?.width as number) || 15;
-          decisions[decision.data.label] = {
-            transitions,
-            graphics: {
-              x: decision.position.x,
-              y: decision.position.y,
-              size,
-            },
+          decGraphics[decision.data.label] = {
+            x: decision.position.x,
+            y: decision.position.y,
+            size,
           };
-        } else {
-          decisions[decision.data.label] = transitions;
         }
       });
       stateObj.decisions = decisions;
+      if (includeGraphics && Object.keys(decGraphics).length > 0) {
+        stateObj.decisionGraphics = decGraphics;
+      }
     }
 
     // Add transitions for state nodes
@@ -613,7 +612,8 @@ export function convertToYaml(
   // 10. Root-level decisions
   const rootDecisions = decisionNodes.filter(n => !n.parentId);
   if (rootDecisions.length > 0) {
-    const decisions: Record<string, YamlDecisionTransition[] | YamlDecision> = {};
+    const decisions: Record<string, YamlDecisionTransition[]> = {};
+    const decGraphics: Record<string, YamlDecisionGraphics> = {};
     rootDecisions.forEach(decision => {
       const decisionEdges = edgesBySource.get(decision.id) || [];
       const transitions: YamlDecisionTransition[] = decisionEdges.map(edge => {
@@ -643,21 +643,20 @@ export function convertToYaml(
         return t;
       });
 
+      decisions[decision.data.label] = transitions;
       if (includeGraphics) {
         const size = (decision.style?.width as number) || 15;
-        decisions[decision.data.label] = {
-          transitions,
-          graphics: {
-            x: decision.position.x,
-            y: decision.position.y,
-            size,
-          },
+        decGraphics[decision.data.label] = {
+          x: decision.position.x,
+          y: decision.position.y,
+          size,
         };
-      } else {
-        decisions[decision.data.label] = transitions;
       }
     });
     doc.decisions = decisions;
+    if (includeGraphics && Object.keys(decGraphics).length > 0) {
+      doc.decisionGraphics = decGraphics;
+    }
   }
 
   // 11. Proxy connectors
@@ -984,7 +983,7 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
 
     // Process decision children
     if (safeStateData.decisions) {
-      processDecisions(safeStateData.decisions, nodeId, childX, childY);
+      processDecisions(safeStateData.decisions, nodeId, childX, childY, safeStateData.decisionGraphics);
     }
 
     // If no graphics, expand node to fit children
@@ -1001,10 +1000,11 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
 
   // Process decisions dictionary and create decision nodes
   function processDecisions(
-    decisions: Record<string, YamlDecisionTransition[] | YamlDecision>,
+    decisions: Record<string, YamlDecisionTransition[]>,
     parentId: string | undefined,
     autoLayoutX: number,
-    autoLayoutY: number
+    autoLayoutY: number,
+    decGraphics?: Record<string, YamlDecisionGraphics>
   ) {
     let dx = autoLayoutX;
     Object.keys(decisions).forEach(decisionName => {
@@ -1016,14 +1016,11 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
       let y = autoLayoutY;
       let size = defaultDecisionSize;
 
-      // Check if it has graphics (object form with transitions + graphics)
-      if (decisionData && !Array.isArray(decisionData) && 'transitions' in decisionData) {
-        const d = decisionData as YamlDecision;
-        if (d.graphics) {
-          x = d.graphics.x;
-          y = d.graphics.y;
-          size = d.graphics.size || defaultDecisionSize;
-        }
+      if (decGraphics && decGraphics[decisionName]) {
+        const g = decGraphics[decisionName];
+        x = g.x;
+        y = g.y;
+        size = g.size || defaultDecisionSize;
       }
 
       const node: Node<StateData> = {
@@ -1067,7 +1064,7 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
 
   // Process root-level decisions
   if (doc.decisions) {
-    processDecisions(doc.decisions, undefined, topLevelX, topLevelY);
+    processDecisions(doc.decisions, undefined, topLevelX, topLevelY, doc.decisionGraphics);
   }
 
   // Process proxy connectors
@@ -1276,10 +1273,7 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
         const decisionId = decisionNameToIdMap.get(decisionName);
         if (!decisionId) return;
 
-        const decisionData = stateData.decisions![decisionName];
-        const transitions: YamlDecisionTransition[] = Array.isArray(decisionData)
-          ? decisionData
-          : (decisionData as YamlDecision).transitions || [];
+        const transitions = stateData.decisions![decisionName];
 
         transitions.forEach(transition => {
           if (!transition.to) return;
@@ -1325,10 +1319,7 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
       const decisionId = decisionNameToIdMap.get(decisionName);
       if (!decisionId) return;
 
-      const decisionData = doc.decisions![decisionName];
-      const transitions: YamlDecisionTransition[] = Array.isArray(decisionData)
-        ? decisionData
-        : (decisionData as YamlDecision).transitions || [];
+      const transitions = doc.decisions![decisionName];
 
       transitions.forEach(transition => {
         if (!transition.to) return;
