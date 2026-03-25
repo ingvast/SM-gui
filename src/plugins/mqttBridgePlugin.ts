@@ -76,7 +76,9 @@ const mqttBridgePlugin: ViewPlugin = {
           return;
         }
         try {
-          const paths = parseStateStr(payload);
+          // Support both plain strings and JSON-encoded strings
+          const stateStr = payload.startsWith('"') ? JSON.parse(payload) : payload;
+          const paths = parseStateStr(stateStr);
           callbacks.onStateUpdate(paths);
         } catch (err) {
           console.warn('MQTT Bridge: failed to parse state string:', payload, err);
