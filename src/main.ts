@@ -41,32 +41,6 @@ function saveSettings(settings: Settings): void {
   }
 }
 
-// View plugin config persistence
-interface ViewPluginConfig {
-  lastPlugin: string;
-  pluginConfigs: Record<string, Record<string, string>>;
-}
-
-const viewPluginConfigPath = path.join(app.getPath('userData'), 'viewPluginConfig.json');
-
-function loadViewPluginConfig(): ViewPluginConfig {
-  try {
-    if (fs.existsSync(viewPluginConfigPath)) {
-      return JSON.parse(fs.readFileSync(viewPluginConfigPath, 'utf-8'));
-    }
-  } catch (error) {
-    console.error('Error loading view plugin config:', error);
-  }
-  return { lastPlugin: '', pluginConfigs: {} };
-}
-
-function saveViewPluginConfig(config: ViewPluginConfig): void {
-  try {
-    fs.writeFileSync(viewPluginConfigPath, JSON.stringify(config, null, 2), 'utf-8');
-  } catch (error) {
-    console.error('Error saving view plugin config:', error);
-  }
-}
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -479,15 +453,6 @@ ipcMain.handle('view-list-plugins', async (): Promise<PluginInfo[]> => {
     name: p.name,
     configFields: p.configFields || [],
   }));
-});
-
-ipcMain.handle('view-get-config', async () => {
-  return loadViewPluginConfig();
-});
-
-ipcMain.handle('view-save-config', async (_event, config: ViewPluginConfig) => {
-  saveViewPluginConfig(config);
-  return { success: true };
 });
 
 ipcMain.handle('view-start-plugin', async (_event, name: string, config: Record<string, unknown>) => {

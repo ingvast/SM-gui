@@ -53,8 +53,8 @@ import SplineEdge from './SplineEdge';
 import { EdgesProvider, LabelsVisibleProvider } from './EdgesContext';
 import MachinePropertiesDialog from './MachinePropertiesDialog';
 import SettingsDialog, { Settings } from './SettingsDialog';
-import ViewPluginDialog from './ViewPluginDialog';
 import { MachineProperties, defaultMachineProperties, computeProxyLabel } from './yamlConverter';
+import type { PluginInfo } from './preload';
 import {
   useSemanticZoomStore,
   getAbsoluteNodeBounds,
@@ -129,8 +129,6 @@ declare global {
       startPlugin: (name: string, config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
       stopPlugin: () => Promise<{ success: boolean; error?: string }>;
       onStateUpdate: (cb: (activeStates: string[]) => void) => () => void;
-      getConfig: () => Promise<import('./preload').ViewPluginConfig>;
-      saveConfig: (config: import('./preload').ViewPluginConfig) => Promise<{ success: boolean }>;
     };
   }
 }
@@ -325,7 +323,7 @@ const App = () => {
   const [activeSince, setActiveSince] = useState<Map<string, number>>(new Map());
   const [viewModeTick, setViewModeTick] = useState(0);
   const [viewModeError, setViewModeError] = useState<string | null>(null);
-  const [viewPluginDialogOpen, setViewPluginDialogOpen] = useState(false);
+  const [availablePlugins, setAvailablePlugins] = useState<PluginInfo[]>([]);
 
   // Build a map from slash-separated path → node ID (memoized)
   const pathToNodeId = useMemo(() => {
@@ -387,6 +385,11 @@ const App = () => {
     return () => clearInterval(interval);
   }, [isViewMode, activeNodeIds.size]);
 
+  // Load available view plugins on mount
+  useEffect(() => {
+    window.viewAPI.listPlugins().then(setAvailablePlugins);
+  }, []);
+
   // Listen for state updates from the plugin (IPC)
   useEffect(() => {
     if (!isViewMode) return;
@@ -406,23 +409,21 @@ const App = () => {
       setActiveSince(new Map());
       setViewModeTick(0);
     } else {
-      // Open plugin picker dialog
-      setViewPluginDialogOpen(true);
+      const vp = machineProperties.viewPlugin;
+      if (!vp?.name) {
+        setViewModeError('No view plugin configured. Select one in the View Plugin tab of the Properties panel.');
+        return;
+      }
+      setViewModeError(null);
+      const fullConfig: Record<string, unknown> = { ...vp.config, filePath: currentFilePath };
+      const result = await window.viewAPI.startPlugin(vp.name, fullConfig);
+      if (result.success) {
+        setIsViewMode(true);
+      } else {
+        setViewModeError(result.error || 'Failed to start plugin');
+      }
     }
-  }, [isViewMode]);
-
-  const handleStartPlugin = useCallback(async (pluginName: string, config: Record<string, unknown>) => {
-    setViewPluginDialogOpen(false);
-    setViewModeError(null);
-    // Always provide the current file path to plugins that need it
-    const fullConfig = { ...config, filePath: currentFilePath };
-    const result = await window.viewAPI.startPlugin(pluginName, fullConfig);
-    if (result.success) {
-      setIsViewMode(true);
-    } else {
-      setViewModeError(result.error || 'Failed to start plugin');
-    }
-  }, [currentFilePath]);
+  }, [isViewMode, machineProperties.viewPlugin, currentFilePath]);
 
   // Transform nodes to screen coordinates based on semantic zoom
   const transformedNodes = useMemo(() => {
@@ -2805,7 +2806,7 @@ const App = () => {
             </Button>
           </Tooltip>
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
-          <Tooltip title={isViewMode ? 'Exit View Mode' : !currentFilePath ? 'Save the file first to enter View Mode' : 'Enter View Mode (live state visualization)'}>
+          <Tooltip title={isViewMode ? 'Exit View Mode' : !currentFilePath ? 'Save the file first to enter View Mode' : !machineProperties.viewPlugin?.name ? 'Configure a view plugin first' : 'Enter View Mode (live state visualization)'}>
             <span>
               <Button
                 variant={isViewMode ? 'contained' : 'outlined'}
@@ -2813,7 +2814,7 @@ const App = () => {
                 startIcon={isViewMode ? <VisibilityIcon /> : <VisibilityOffIcon />}
                 onClick={handleToggleViewMode}
                 color={isViewMode ? 'success' : 'inherit'}
-                disabled={!isViewMode && !currentFilePath}
+                disabled={!isViewMode && (!currentFilePath || !machineProperties.viewPlugin?.name)}
               >
                 {isViewMode ? 'Viewing' : 'View'}
               </Button>
@@ -3174,6 +3175,7 @@ const App = () => {
         machineProperties={machineProperties}
         onSave={(props) => { saveSnapshot(); setMachineProperties(props); }}
         tabWidth={settings.tabWidth}
+        availablePlugins={availablePlugins}
       />
 
       <SettingsDialog
@@ -3186,13 +3188,6 @@ const App = () => {
             console.error('Error saving settings:', error);
           });
         }}
-      />
-
-      <ViewPluginDialog
-        open={viewPluginDialogOpen}
-        onClose={() => setViewPluginDialogOpen(false)}
-        onStart={handleStartPlugin}
-        currentFilePath={currentFilePath}
       />
 
       <Snackbar

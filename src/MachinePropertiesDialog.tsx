@@ -10,13 +10,19 @@ import {
   Select,
   MenuItem,
   FormControl,
+  FormControlLabel,
   InputLabel,
   IconButton,
-  Divider,
+  RadioGroup,
+  Radio,
+  TextField,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import { CodeEditorDialog } from './CodeEditorDialog';
 import { MachineProperties } from './yamlConverter';
+import type { PluginInfo } from './preload';
 import CodeEditor from './CodeEditor';
 
 type ExpandableField = 'entry' | 'exit' | 'do' | 'hookEntry' | 'hookExit' | 'hookDo' | 'hookTransition' | 'includes' | 'context' | 'context_init' | null;
@@ -69,6 +75,7 @@ interface MachinePropertiesDialogProps {
   machineProperties: MachineProperties;
   onSave: (properties: MachineProperties) => void;
   tabWidth?: number;
+  availablePlugins: PluginInfo[];
 }
 
 const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
@@ -76,9 +83,11 @@ const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
   onClose,
   machineProperties,
   onSave,
+  availablePlugins,
 }) => {
   const [tempProps, setTempProps] = useState<MachineProperties>(machineProperties);
   const [expandedField, setExpandedField] = useState<ExpandableField>(null);
+  const [activeTab, setActiveTab] = useState(0);
 
   useEffect(() => {
     if (open) {
@@ -185,115 +194,175 @@ const MachinePropertiesDialog: React.FC<MachinePropertiesDialogProps> = ({
               </Select>
             </FormControl>
 
-            <Divider />
-            <Typography variant="subtitle2" color="text.secondary">
-              Root State Actions
-            </Typography>
+            <Tabs
+              value={activeTab}
+              onChange={(_, v) => setActiveTab(v)}
+              sx={{ borderBottom: 1, borderColor: 'divider', minHeight: 36, '& .MuiTab-root': { minHeight: 36, textTransform: 'none' } }}
+            >
+              <Tab label="Root Actions" />
+              <Tab label="Hooks" />
+              <Tab label="Includes" />
+              <Tab label="Context" />
+              <Tab label="View Plugin" />
+            </Tabs>
 
-            <CodeFieldWithExpand
-              label="Entry"
-              value={tempProps.entry}
-              onChange={(v) => handleFieldChange('entry', v)}
-              expandField="entry"
-              onExpand={setExpandedField}
-              language={tempProps.language}
-            />
+            {activeTab === 0 && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <CodeFieldWithExpand
+                  label="Entry"
+                  value={tempProps.entry}
+                  onChange={(v) => handleFieldChange('entry', v)}
+                  expandField="entry"
+                  onExpand={setExpandedField}
+                  language={tempProps.language}
+                />
+                <CodeFieldWithExpand
+                  label="Exit"
+                  value={tempProps.exit}
+                  onChange={(v) => handleFieldChange('exit', v)}
+                  expandField="exit"
+                  onExpand={setExpandedField}
+                  language={tempProps.language}
+                />
+                <CodeFieldWithExpand
+                  label="Do"
+                  value={tempProps.do}
+                  onChange={(v) => handleFieldChange('do', v)}
+                  expandField="do"
+                  onExpand={setExpandedField}
+                  language={tempProps.language}
+                />
+              </Box>
+            )}
 
-            <CodeFieldWithExpand
-              label="Exit"
-              value={tempProps.exit}
-              onChange={(v) => handleFieldChange('exit', v)}
-              expandField="exit"
-              onExpand={setExpandedField}
-              language={tempProps.language}
-            />
+            {activeTab === 1 && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <CodeFieldWithExpand
+                  label="Entry Hook"
+                  value={tempProps.hooks.entry}
+                  onChange={(v) => handleHookChange('entry', v)}
+                  expandField="hookEntry"
+                  onExpand={setExpandedField}
+                  language={tempProps.language}
+                />
+                <CodeFieldWithExpand
+                  label="Exit Hook"
+                  value={tempProps.hooks.exit}
+                  onChange={(v) => handleHookChange('exit', v)}
+                  expandField="hookExit"
+                  onExpand={setExpandedField}
+                  language={tempProps.language}
+                />
+                <CodeFieldWithExpand
+                  label="Do Hook"
+                  value={tempProps.hooks.do}
+                  onChange={(v) => handleHookChange('do', v)}
+                  expandField="hookDo"
+                  onExpand={setExpandedField}
+                  language={tempProps.language}
+                />
+                <CodeFieldWithExpand
+                  label="Transition Hook"
+                  value={tempProps.hooks.transition}
+                  onChange={(v) => handleHookChange('transition', v)}
+                  expandField="hookTransition"
+                  onExpand={setExpandedField}
+                  language={tempProps.language}
+                />
+              </Box>
+            )}
 
-            <CodeFieldWithExpand
-              label="Do"
-              value={tempProps.do}
-              onChange={(v) => handleFieldChange('do', v)}
-              expandField="do"
-              onExpand={setExpandedField}
-              language={tempProps.language}
-            />
+            {activeTab === 2 && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <CodeFieldWithExpand
+                  label="Includes"
+                  value={tempProps.includes}
+                  onChange={(v) => handleFieldChange('includes', v)}
+                  expandField="includes"
+                  onExpand={setExpandedField}
+                  language={tempProps.language}
+                />
+              </Box>
+            )}
 
-            <Divider />
-            <Typography variant="subtitle2" color="text.secondary">
-              Hooks
-            </Typography>
+            {activeTab === 3 && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <CodeFieldWithExpand
+                  label="Context"
+                  value={tempProps.context}
+                  onChange={(v) => handleFieldChange('context', v)}
+                  expandField="context"
+                  onExpand={setExpandedField}
+                  language={tempProps.language}
+                />
+                <CodeFieldWithExpand
+                  label="Context Init"
+                  value={tempProps.context_init}
+                  onChange={(v) => handleFieldChange('context_init', v)}
+                  expandField="context_init"
+                  onExpand={setExpandedField}
+                  language={tempProps.language}
+                />
+              </Box>
+            )}
 
-            <CodeFieldWithExpand
-              label="Entry Hook"
-              value={tempProps.hooks.entry}
-              onChange={(v) => handleHookChange('entry', v)}
-              expandField="hookEntry"
-              onExpand={setExpandedField}
-              language={tempProps.language}
-            />
-
-            <CodeFieldWithExpand
-              label="Exit Hook"
-              value={tempProps.hooks.exit}
-              onChange={(v) => handleHookChange('exit', v)}
-              expandField="hookExit"
-              onExpand={setExpandedField}
-              language={tempProps.language}
-            />
-
-            <CodeFieldWithExpand
-              label="Do Hook"
-              value={tempProps.hooks.do}
-              onChange={(v) => handleHookChange('do', v)}
-              expandField="hookDo"
-              onExpand={setExpandedField}
-              language={tempProps.language}
-            />
-
-            <CodeFieldWithExpand
-              label="Transition Hook"
-              value={tempProps.hooks.transition}
-              onChange={(v) => handleHookChange('transition', v)}
-              expandField="hookTransition"
-              onExpand={setExpandedField}
-              language={tempProps.language}
-            />
-
-            <Divider />
-            <Typography variant="subtitle2" color="text.secondary">
-              Includes
-            </Typography>
-
-            <CodeFieldWithExpand
-              label="Includes"
-              value={tempProps.includes}
-              onChange={(v) => handleFieldChange('includes', v)}
-              expandField="includes"
-              onExpand={setExpandedField}
-              language={tempProps.language}
-            />
-
-            <Divider />
-            <Typography variant="subtitle2" color="text.secondary">
-              Context
-            </Typography>
-
-            <CodeFieldWithExpand
-              label="Context"
-              value={tempProps.context}
-              onChange={(v) => handleFieldChange('context', v)}
-              expandField="context"
-              onExpand={setExpandedField}
-              language={tempProps.language}
-            />
-
-            <CodeFieldWithExpand
-              label="Context Init"
-              value={tempProps.context_init}
-              onChange={(v) => handleFieldChange('context_init', v)}
-              expandField="context_init"
-              onExpand={setExpandedField}
-              language={tempProps.language}
-            />
+            {activeTab === 4 && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <FormControl component="fieldset" fullWidth>
+                  <RadioGroup
+                    value={tempProps.viewPlugin?.name || ''}
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      const plugin = availablePlugins.find((p) => p.name === name);
+                      if (!plugin) return;
+                      const config: Record<string, string> = {};
+                      for (const field of plugin.configFields) {
+                        if (tempProps.viewPlugin?.name === name && tempProps.viewPlugin.config[field.key] !== undefined) {
+                          config[field.key] = tempProps.viewPlugin.config[field.key];
+                        } else if (field.default !== undefined) {
+                          config[field.key] = String(field.default);
+                        } else {
+                          config[field.key] = '';
+                        }
+                      }
+                      setTempProps((prev) => ({ ...prev, viewPlugin: { name, config } }));
+                    }}
+                  >
+                    {availablePlugins.map((plugin) => (
+                      <Box key={plugin.name} sx={{ mb: 0.5 }}>
+                        <FormControlLabel
+                          value={plugin.name}
+                          control={<Radio size="small" />}
+                          label={plugin.name}
+                        />
+                        {tempProps.viewPlugin?.name === plugin.name && plugin.configFields.length > 0 && (
+                          <Box sx={{ pl: 4, pb: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                            {plugin.configFields.map((field) => (
+                              <TextField
+                                key={field.key}
+                                label={field.label}
+                                size="small"
+                                type={field.type === 'number' ? 'number' : 'text'}
+                                placeholder={field.placeholder}
+                                value={tempProps.viewPlugin?.config[field.key] ?? (field.default !== undefined ? String(field.default) : '')}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setTempProps((prev) => ({
+                                    ...prev,
+                                    viewPlugin: prev.viewPlugin ? { ...prev.viewPlugin, config: { ...prev.viewPlugin.config, [field.key]: val } } : prev.viewPlugin,
+                                  }));
+                                }}
+                                fullWidth
+                              />
+                            ))}
+                          </Box>
+                        )}
+                      </Box>
+                    ))}
+                  </RadioGroup>
+                </FormControl>
+              </Box>
+            )}
           </Box>
         </DialogContent>
         <DialogActions>

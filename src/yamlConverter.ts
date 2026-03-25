@@ -21,6 +21,11 @@ interface StateData {
   historyMarkerSize?: number;
 }
 
+export interface ViewPluginSettings {
+  name: string;
+  config: Record<string, string>;
+}
+
 export interface MachineProperties {
   language: string;
   includes: string;
@@ -40,6 +45,7 @@ export interface MachineProperties {
   initialMarkerSize?: number;
   historyMarkerPos?: { x: number; y: number };
   historyMarkerSize?: number;
+  viewPlugin?: ViewPluginSettings;
 }
 
 export const defaultMachineProperties: MachineProperties = {
@@ -549,6 +555,14 @@ export function convertToYaml(
       if (hooks.do?.trim()) doc.hooks.do = hooks.do;
       if (hooks.transition?.trim()) doc.hooks.transition = hooks.transition;
     }
+  }
+
+  // 5b. View plugin settings
+  if (machineProperties?.viewPlugin?.name) {
+    doc.view_plugin = {
+      name: machineProperties.viewPlugin.name,
+      ...machineProperties.viewPlugin.config,
+    };
   }
 
   // 6. Root state entry/exit/do
@@ -1398,6 +1412,14 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
     initialMarkerSize: doc.graphics?.initialMarkerSize,
     historyMarkerPos: doc.graphics?.historyMarkerPos,
     historyMarkerSize: doc.graphics?.historyMarkerSize,
+    viewPlugin: doc.view_plugin ? (() => {
+      const { name, ...config } = doc.view_plugin;
+      const stringConfig: Record<string, string> = {};
+      for (const [k, v] of Object.entries(config)) {
+        stringConfig[k] = String(v);
+      }
+      return { name, config: stringConfig };
+    })() : undefined,
   };
 
   // Default root history marker position if history=true but no geometry

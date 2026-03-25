@@ -47,18 +47,11 @@ export interface PluginInfo {
   configFields: PluginConfigField[];
 }
 
-export interface ViewPluginConfig {
-  lastPlugin: string;
-  pluginConfigs: Record<string, Record<string, string>>;
-}
-
 export interface ViewAPI {
   listPlugins: () => Promise<PluginInfo[]>;
   startPlugin: (name: string, config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   stopPlugin: () => Promise<{ success: boolean; error?: string }>;
   onStateUpdate: (cb: (activeStates: string[]) => void) => () => void;
-  getConfig: () => Promise<ViewPluginConfig>;
-  saveConfig: (config: ViewPluginConfig) => Promise<{ success: boolean }>;
 }
 
 export interface EditorAPI {
@@ -150,6 +143,4 @@ contextBridge.exposeInMainWorld('viewAPI', {
     ipcRenderer.on('view-state-update', handler);
     return () => { ipcRenderer.removeListener('view-state-update', handler); };
   },
-  getConfig: () => ipcRenderer.invoke('view-get-config'),
-  saveConfig: (config: ViewPluginConfig) => ipcRenderer.invoke('view-save-config', config),
 } as ViewAPI);
