@@ -28,6 +28,9 @@ interface StateNodeData {
   minHeight?: number;    // Minimum height to contain children (screen pixels)
   hasProxy?: boolean;    // True if at least one proxy node points to this state
   isCompound?: boolean;  // True if this state has child states/decisions
+  isActive?: boolean;           // View mode: this state is an active leaf
+  isAncestorActive?: boolean;   // View mode: this state is an ancestor of an active leaf
+  activeTimerMs?: number;       // View mode: ms since this state became active
 }
 
 interface StateNodeProps {
@@ -124,19 +127,46 @@ export default memo(({ data, selected }: StateNodeProps) => {
     sections = sections.filter(s => s !== toRemove);
   }
 
-  const borderColor = selected ? '#1976d2' : (isOrthogonal ? '#0066cc' : (isCompound ? '#666' : '#1a192b'));
+  const isActive = data.isActive;
+  const isAncestorActive = data.isAncestorActive;
+
+  const borderColor = selected ? '#1976d2' : (isActive ? '#2e7d32' : (isOrthogonal ? '#0066cc' : (isCompound ? '#666' : '#1a192b')));
+
+  // Determine background color based on active state
+  let backgroundColor: string;
+  if (isActive) {
+    backgroundColor = 'rgba(200, 240, 200, 0.92)';
+  } else if (isAncestorActive) {
+    backgroundColor = 'rgba(220, 245, 220, 0.88)';
+  } else if (isOrthogonal) {
+    backgroundColor = 'rgba(240, 248, 255, 0.9)';
+  } else if (isCompound) {
+    backgroundColor = 'rgba(249, 249, 249, 0.85)';
+  } else {
+    backgroundColor = 'rgba(255, 255, 255, 0.85)';
+  }
+
+  // Determine box-shadow
+  let boxShadow: string | undefined;
+  if (selected) {
+    boxShadow = '0 0 0 1.5px #1976d2, 0 0 12px 4px rgba(25, 118, 210, 0.35)';
+  } else if (isActive) {
+    boxShadow = '0 0 0 2px #4caf50, 0 0 16px 6px rgba(76, 175, 80, 0.45)';
+  } else if (isAncestorActive) {
+    boxShadow = '0 0 0 1px rgba(76, 175, 80, 0.4)';
+  }
 
   const nodeStyle: React.CSSProperties = {
     position: 'relative',
     fontSize: `${fontSize}px`,
-    borderWidth: isOrthogonal ? '2px' : `${borderWidth}px`,
+    borderWidth: isOrthogonal ? '2px' : (isActive ? '2px' : `${borderWidth}px`),
     borderStyle: isOrthogonal ? 'dashed' : (isCompound ? 'dashed' : 'solid'),
     borderColor,
     borderRadius: `${borderRadius}px`,
-    backgroundColor: isOrthogonal ? 'rgba(240, 248, 255, 0.9)' : (isCompound ? 'rgba(249, 249, 249, 0.85)' : 'rgba(255, 255, 255, 0.85)'),
+    backgroundColor,
     width: '100%',
     height: '100%',
-    boxShadow: selected ? '0 0 0 1.5px #1976d2, 0 0 12px 4px rgba(25, 118, 210, 0.35)' : undefined,
+    boxShadow,
   };
 
   const labelStyle: React.CSSProperties = {
@@ -241,6 +271,29 @@ export default memo(({ data, selected }: StateNodeProps) => {
           ))}
         </div>
       )}
+      {(isActive || isAncestorActive) && data.activeTimerMs != null && (data.screenWidth ?? 999) > 60 && (data.screenHeight ?? 999) > 30 && (() => {
+        const totalSec = Math.floor(data.activeTimerMs / 1000);
+        const min = Math.floor(totalSec / 60);
+        const sec = totalSec % 60;
+        const label = `${min}:${sec.toString().padStart(2, '0')}`;
+        return (
+          <div style={{
+            position: 'absolute',
+            bottom: 2,
+            right: 4,
+            fontSize: '10px',
+            fontFamily: '"Consolas", "Monaco", "Courier New", monospace',
+            color: '#2e7d32',
+            backgroundColor: 'rgba(255,255,255,0.8)',
+            borderRadius: 3,
+            padding: '0 3px',
+            pointerEvents: 'none',
+            lineHeight: '14px',
+          }}>
+            {label}
+          </div>
+        );
+      })()}
     </div>
   );
 });

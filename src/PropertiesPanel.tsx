@@ -64,6 +64,7 @@ interface PropertiesPanelProps {
   focusName?: boolean;
   onNameFocused?: () => void;
   replaceVersion?: number;
+  readOnly?: boolean;
 }
 
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
@@ -84,6 +85,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   focusName,
   onNameFocused,
   replaceVersion,
+  readOnly = false,
 }) => {
   const [tempName, setTempName] = useState('');
   const [tempEntry, setTempEntry] = useState('');
@@ -506,7 +508,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   // Show transition editing when only an edge is selected on canvas
   if ((!selectedNode || !selectedNode.data) && selectedCanvasEdge) {
     return (
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, p: 1 }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, p: 1, ...(readOnly ? { pointerEvents: 'none', opacity: 0.6 } : {}) }}>
         <Box sx={{ p: 1, bgcolor: '#f5f5f5', borderRadius: 1 }}>
           <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
             <NodeLink label={getTransitionSourceLabel(selectedCanvasEdge.source, selectedCanvasEdge.target)} nodeId={selectedCanvasEdge.source} />
@@ -611,7 +613,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   }
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', ...(readOnly ? { pointerEvents: 'none', opacity: 0.6 } : {}) }}>
 
       {!isDecision && (
         <TextField
