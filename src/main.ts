@@ -357,8 +357,9 @@ app.on('activate', () => {
 // code. You can also put them in separate files and import them here.
 
 // IPC handlers for file operations
-ipcMain.handle('save-file', async (_event, content: string, defaultName: string) => {
-  const { canceled, filePath } = await dialog.showSaveDialog({
+ipcMain.handle('save-file', async (event, content: string, defaultName: string) => {
+  const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
     defaultPath: defaultName,
     filters: [
       { name: 'State Machine Builder Files', extensions: ['smb'] },
@@ -460,9 +461,10 @@ ipcMain.handle('export-pdf', async (event, fileName: string) => {
   }
 });
 
-ipcMain.handle('export-source-code', async (_event, smbFilePath: string) => {
+ipcMain.handle('export-source-code', async (event, smbFilePath: string) => {
+  const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
   const defaultOutputPath = smbFilePath.replace(/\.(smb|yaml|yml)$/i, '');
-  const { canceled, filePath: outputPath } = await dialog.showSaveDialog({
+  const { canceled, filePath: outputPath } = await dialog.showSaveDialog(win, {
     defaultPath: defaultOutputPath,
     title: 'Export to source code',
     buttonLabel: 'Export',
