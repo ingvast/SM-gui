@@ -47,6 +47,13 @@ if (started) {
   app.quit();
 }
 
+// On Linux, the XDG portal file chooser can silently fail on systems where
+// xdg-desktop-portal-gtk (or equivalent) is absent or misconfigured. Fall back
+// to the native GTK file chooser which works without a portal daemon.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('disable-features', 'PortalFileChooser');
+}
+
 // Track a file to open once the renderer is ready
 let pendingFileToOpen: string | null = null;
 
