@@ -1016,6 +1016,7 @@ const App = () => {
 
   // Space+drag and middle-mouse pan (work anywhere, including over nodes)
   const spaceHeld = useRef(false);
+  const lastMousePosRef = useRef<{ x: number; y: number } | null>(null);
   const [isSpaceHeld, setIsSpaceHeld] = useState(false);
 
   useEffect(() => {
@@ -1036,6 +1037,7 @@ const App = () => {
     };
     // Pan on mousemove when space is held, or when middle mouse button is held (buttons===4)
     const onMouseMove = (e: MouseEvent) => {
+      lastMousePosRef.current = { x: e.clientX, y: e.clientY };
       if (spaceHeld.current || e.buttons === 4) {
         adjustPan(e.movementX, e.movementY);
       }
@@ -1359,7 +1361,23 @@ const App = () => {
   }, [pendingNodeCreate]); // intentional: reads latest values from closure at effect run time
 
   // Clipboard operations
-  const { handleCopy, handlePaste, handleDuplicate: handleDuplicateBase, handleDuplicateWithExternalEdges: handleDuplicateWithExternalEdgesBase } = useClipboard(nodes, edges, setNodes, setEdges, setSelectedTreeItem, saveSnapshot);
+  const { handleCopy, handlePaste: handlePasteBase, handleDuplicate: handleDuplicateBase, handleDuplicateWithExternalEdges: handleDuplicateWithExternalEdgesBase } = useClipboard(nodes, edges, setNodes, setEdges, setSelectedTreeItem, saveSnapshot);
+
+  // Paste at the cursor position by default (keyboard / menu); context-menu
+  // pastes pass an explicit world position.
+  const handlePaste = useCallback((worldPos?: { x: number; y: number }) => {
+    let pos = worldPos;
+    if (!pos && lastMousePosRef.current) {
+      const rect = reactFlowWrapper.current?.getBoundingClientRect();
+      if (rect) {
+        pos = {
+          x: (lastMousePosRef.current.x - rect.left - effectivePan.x) / effectiveScale,
+          y: (lastMousePosRef.current.y - rect.top - effectivePan.y) / effectiveScale,
+        };
+      }
+    }
+    return handlePasteBase(pos);
+  }, [handlePasteBase, effectivePan, effectiveScale]);
 
   const handleDuplicate = useCallback(() => {
     handleDuplicateBase();
@@ -2926,7 +2944,7 @@ const App = () => {
                   <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>D</Typography>
                 </MenuItem>,
                 <Divider key="div" />,
-                <MenuItem key="paste" onClick={() => { closeContextMenu(); handlePaste(); }}>
+                <MenuItem key="paste" onClick={() => { closeContextMenu(); handlePaste({ x: worldX, y: worldY }); }}>
                   <ListItemText>Paste</ListItemText>
                   <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>⌘V</Typography>
                 </MenuItem>,

@@ -45,6 +45,18 @@ export function getAllDescendants(parentNodeId: string, allNodes: Node[]): Node[
   return descendants;
 }
 
+// Decisions are referenced globally in YAML as `@Name` with no scope, so their
+// labels must be unique across the whole machine — not just per-parent.
+export function generateUniqueDecisionLabel(baseLabel: string, currentNodes: Node[]): string {
+  const used = new Set(
+    currentNodes.filter(n => n.type === 'decisionNode').map(n => (n.data.label as string).trim()),
+  );
+  if (!used.has(baseLabel.trim())) return baseLabel;
+  let counter = 2;
+  while (used.has(`${baseLabel} ${counter}`.trim())) counter++;
+  return `${baseLabel} ${counter}`;
+}
+
 export function generateUniqueNodeLabel(baseLabel: string, parentId: string | undefined, currentNodes: Node[]): string {
   let counter = 1;
   let newLabel = baseLabel;

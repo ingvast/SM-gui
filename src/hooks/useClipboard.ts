@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { Node, Edge } from 'reactflow';
-import { getAllDescendants, generateUniqueNodeLabel } from '../utils/nodeUtils';
+import { getAllDescendants, generateUniqueNodeLabel, generateUniqueDecisionLabel } from '../utils/nodeUtils';
+import { getAbsoluteNodeBounds } from '../semanticZoom';
 import { getNextId } from '../utils/idCounters';
 
 const CLIPBOARD_MARKER = 'sm-gui-clipboard:';
@@ -50,7 +51,7 @@ export function useClipboard(
 
   }, [nodes, edges]);
 
-  const handlePaste = useCallback(async () => {
+  const handlePaste = useCallback(async (pasteWorldPos?: { x: number; y: number }) => {
     let copiedNodes: Node[] = [];
     let copiedEdges: Edge[] = [];
 
@@ -82,6 +83,28 @@ export function useClipboard(
       potentialParentNodeId = currentlySelectedNode.id;
     }
 
+    // If a paste position was supplied (e.g. cursor location), translate the
+    // root copied nodes so their bounding-box top-left lands at that position.
+    // When pasting into a parent state, convert world coords to parent-local.
+    let cursorTranslate: { x: number; y: number } | null = null;
+    if (pasteWorldPos) {
+      const rootCopied = copiedNodes.filter(n => !n.parentId || !copiedNodes.some(p => p.id === n.parentId));
+      if (rootCopied.length > 0) {
+        let targetX = pasteWorldPos.x;
+        let targetY = pasteWorldPos.y;
+        if (potentialParentNodeId) {
+          const parentBounds = getAbsoluteNodeBounds(potentialParentNodeId, nodes);
+          if (parentBounds) {
+            targetX -= parentBounds.x;
+            targetY -= parentBounds.y;
+          }
+        }
+        const minX = Math.min(...rootCopied.map(n => n.position.x));
+        const minY = Math.min(...rootCopied.map(n => n.position.y));
+        cursorTranslate = { x: targetX - minX, y: targetY - minY };
+      }
+    }
+
     copiedNodes.forEach(oldNode => {
       const newId = getNextId();
       newIdMap.set(oldNode.id, newId);
@@ -100,10 +123,15 @@ export function useClipboard(
       }
 
       let newPosition;
-      if (potentialParentNodeId && newNodeParentId === potentialParentNodeId) {
-        newPosition = { x: offset.x, y: offset.y };
-      } else if (oldNode.parentId && copiedNodes.some(n => n.id === oldNode.parentId)) {
+      if (oldNode.parentId && copiedNodes.some(n => n.id === oldNode.parentId)) {
+        // Non-root copied node: keep parent-relative position unchanged.
         newPosition = { ...oldNode.position };
+      } else if (cursorTranslate) {
+        // Root copied node, cursor-positioned (works for both root paste and
+        // paste-into-parent — cursorTranslate already accounts for parent offset).
+        newPosition = { x: oldNode.position.x + cursorTranslate.x, y: oldNode.position.y + cursorTranslate.y };
+      } else if (potentialParentNodeId && newNodeParentId === potentialParentNodeId) {
+        newPosition = { x: offset.x, y: offset.y };
       } else {
         newPosition = { x: oldNode.position.x + offset.x, y: oldNode.position.y + offset.y };
       }
@@ -117,7 +145,9 @@ export function useClipboard(
         extent: newNodeExtent,
         data: {
           ...oldNode.data,
-          label: generateUniqueNodeLabel(oldNode.data.label, newNodeParentId, nodes.concat(newNodes))
+          label: oldNode.type === 'decisionNode'
+            ? generateUniqueDecisionLabel(oldNode.data.label, nodes.concat(newNodes))
+            : generateUniqueNodeLabel(oldNode.data.label, newNodeParentId, nodes.concat(newNodes))
         },
       };
       newNodes.push(newNode);
@@ -135,17 +165,32 @@ export function useClipboard(
       }
     });
 
-    const pastedEdges = copiedEdges.map(edge => ({
-      ...edge,
-      id: `e${newIdMap.get(edge.source)}-${newIdMap.get(edge.target)}`,
-      source: newIdMap.get(edge.source)!,
-      target: newIdMap.get(edge.target)!,
-      selected: false,
-      data: edge.data ? {
-        ...edge.data,
-        controlPoints: edge.data.controlPoints ? [...edge.data.controlPoints] : [],
-      } : { controlPoints: [], label: '' },
-    }));
+    // Remap data.initial (id of the initial child state) if that child was copied too.
+    newNodes.forEach(node => {
+      const initialId = node.data?.initial as string | undefined;
+      if (initialId) {
+        const remapped = newIdMap.get(initialId);
+        if (remapped) {
+          node.data = { ...node.data, initial: remapped };
+        }
+      }
+    });
+
+    const pastedEdges = copiedEdges.map(edge => {
+      const newSource = newIdMap.get(edge.source)!;
+      const newTarget = newIdMap.get(edge.target)!;
+      return {
+        ...edge,
+        id: `e${newSource}-${newTarget}-${getNextId()}`,
+        source: newSource,
+        target: newTarget,
+        selected: false,
+        data: edge.data ? {
+          ...edge.data,
+          controlPoints: edge.data.controlPoints ? [...edge.data.controlPoints] : [],
+        } : { controlPoints: [], label: '' },
+      };
+    });
 
     saveSnapshot();
     setNodes((nds) => {
@@ -195,8 +240,11 @@ export function useClipboard(
       } else if (oldNode.parentId && nodesToDuplicate.some(n => n.id === oldNode.parentId)) {
         newNodeParentId = newIdMap.get(oldNode.parentId);
       } else {
-        newNodeParentId = undefined;
-        newNodeExtent = undefined;
+        // Top-level node of the duplicated set: keep its original parent so the
+        // duplicate becomes a sibling of the original (root stays at root,
+        // nested stays under the same parent).
+        newNodeParentId = oldNode.parentId;
+        newNodeExtent = oldNode.extent;
       }
 
       let newPosition;
@@ -217,7 +265,9 @@ export function useClipboard(
         extent: newNodeExtent,
         data: {
           ...oldNode.data,
-          label: generateUniqueNodeLabel(oldNode.data.label, newNodeParentId, nodes.concat(duplicatedNodes))
+          label: oldNode.type === 'decisionNode'
+            ? generateUniqueDecisionLabel(oldNode.data.label, nodes.concat(duplicatedNodes))
+            : generateUniqueNodeLabel(oldNode.data.label, newNodeParentId, nodes.concat(duplicatedNodes))
         },
       };
       duplicatedNodes.push(newNode);
@@ -234,12 +284,25 @@ export function useClipboard(
       }
     });
 
+    // Remap data.initial (id of the initial child state) if that child was duplicated too.
+    duplicatedNodes.forEach(node => {
+      const initialId = node.data?.initial as string | undefined;
+      if (initialId) {
+        const remapped = newIdMap.get(initialId);
+        if (remapped) {
+          node.data = { ...node.data, initial: remapped };
+        }
+      }
+    });
+
     const duplicatedNodeIds = new Set(nodesToDuplicate.map(n => n.id));
 
-    // Internal edges: both endpoints inside the duplicated set
+    // Internal edges: both endpoints inside the duplicated set.
+    // Edge id includes a fresh counter so parallel edges (same source/target
+    // pair) get distinct ids — otherwise React complains about duplicate keys.
     const cloneEdge = (edge: Edge, newSource: string, newTarget: string) => ({
       ...edge,
-      id: `e${newSource}-${newTarget}`,
+      id: `e${newSource}-${newTarget}-${getNextId()}`,
       source: newSource,
       target: newTarget,
       selected: false,
