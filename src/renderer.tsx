@@ -171,6 +171,29 @@ const NESTING_SCALE_FACTOR = 0.85;
 const App = () => {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+
+  // Tracks the last-applied position for each node (in the same frame as node.position:
+  // relative-to-parent for nested, world for top-level). Updated synchronously whenever
+  // we apply a position change, so back-to-back events within a single render frame
+  // see the correct "previous" value instead of a stale closure.
+  const lastAppliedPositionRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+
+  // Keep the ref in sync with committed node positions. This runs after each render,
+  // so the ref picks up any position change that came through normal React state updates
+  // (paste, undo, drag, etc.). Within a single render cycle, the ref is authoritative
+  // since we update it synchronously before React re-renders.
+  useEffect(() => {
+    const map = lastAppliedPositionRef.current;
+    const liveIds = new Set<string>();
+    for (const n of nodes) {
+      liveIds.add(n.id);
+      map.set(n.id, { x: n.position.x, y: n.position.y });
+    }
+    for (const id of map.keys()) {
+      if (!liveIds.has(id)) map.delete(id);
+    }
+  }, [nodes]);
+
   const { setViewport } = useReactFlow();
 
   // Semantic zoom state
@@ -1531,6 +1554,13 @@ const App = () => {
       // Track world-space position deltas for nodes being resized from left/top
       const resizeDeltas = new Map<string, { dx: number; dy: number }>();
 
+      // Helper: prev position in the same frame as node.position (rel-to-parent for nested,
+      // world for top-level). Prefers the ref (which is updated synchronously after each
+      // event) over the closure's node.position, which can be stale between renders.
+      const getPrevPosition = (id: string, fallback: { x: number; y: number }) => {
+        return lastAppliedPositionRef.current.get(id) ?? fallback;
+      };
+
       // Convert position and dimension changes from screen coordinates to world coordinates
       const convertedChanges = filteredChanges.map(change => {
         // Skip initial/history markers - they are virtual nodes
@@ -1572,11 +1602,13 @@ const App = () => {
 
                   // Track delta if this is a resize-from-left/top
                   if (hasDimensionsChange.has(change.id)) {
+                    const prev = getPrevPosition(change.id, node.position);
                     resizeDeltas.set(change.id, {
-                      dx: relX - node.position.x,
-                      dy: relY - node.position.y,
+                      dx: relX - prev.x,
+                      dy: relY - prev.y,
                     });
                   }
+                  lastAppliedPositionRef.current.set(change.id, { x: relX, y: relY });
 
                   return {
                     ...change,
@@ -1588,11 +1620,13 @@ const App = () => {
               // Top-level node
               // Track delta if this is a resize-from-left/top
               if (hasDimensionsChange.has(change.id)) {
+                const prev = getPrevPosition(change.id, node.position);
                 resizeDeltas.set(change.id, {
-                  dx: worldX - node.position.x,
-                  dy: worldY - node.position.y,
+                  dx: worldX - prev.x,
+                  dy: worldY - prev.y,
                 });
               }
+              lastAppliedPositionRef.current.set(change.id, { x: worldX, y: worldY });
 
               return {
                 ...change,
@@ -1624,18 +1658,37 @@ const App = () => {
         if (delta.dx === 0 && delta.dy === 0) continue;
         const children = nodes.filter(n => n.parentId === parentId);
         for (const child of children) {
+          const prev = lastAppliedPositionRef.current.get(child.id) ?? child.position;
+          const next = { x: prev.x - delta.dx, y: prev.y - delta.dy };
+          lastAppliedPositionRef.current.set(child.id, next);
           childCompensation.push({
             type: 'position' as const,
             id: child.id,
-            position: {
-              x: child.position.x - delta.dx,
-              y: child.position.y - delta.dy,
-            },
+            position: next,
           });
         }
       }
 
       onNodesChange([...convertedChanges, ...childCompensation]);
+
+      // Compensate initialMarkerPos on resized parents so the marker stays relative to its target
+      if (resizeDeltas.size > 0) {
+        setNodes(nds => nds.map(n => {
+          const delta = resizeDeltas.get(n.id);
+          if (!delta) return n;
+          if (delta.dx === 0 && delta.dy === 0) return n;
+          const pos = n.data?.initialMarkerPos as { x: number; y: number } | undefined;
+          if (!pos) return n;
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              initialMarkerPos: { x: pos.x - delta.dx, y: pos.y - delta.dy },
+            },
+          };
+        }));
+      }
+
       filteredChanges.forEach(change => {
         if (change.type === 'select' && change.selected) {
           setSelectedTreeItem(change.id);
@@ -1644,7 +1697,7 @@ const App = () => {
         }
       });
     },
-    [onNodesChange, selectedTreeItem, nodes, edges, effectiveScale, effectivePan, setRootHistory, setMachineProperties, setEdges, saveSnapshot]
+    [onNodesChange, selectedTreeItem, nodes, edges, effectiveScale, effectivePan, setRootHistory, setMachineProperties, setNodes, setEdges, saveSnapshot]
   );
 
   const onEdgesChangeWithSelection = useCallback(
