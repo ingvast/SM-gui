@@ -312,6 +312,37 @@ function buildMenu() {
       ],
     },
     {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'About SM builder',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+            const detail = [
+              `Version ${app.getVersion()}`,
+              'Author: Johan Ingvast',
+              'License: MIT',
+              '',
+              'SM builder is a graphical editor for hierarchical state machines.',
+              'Design nested states and transitions on a visual canvas, then export to code.',
+            ].join('\n');
+            const options: Electron.MessageBoxOptions = {
+              type: 'info',
+              title: 'About SM builder',
+              message: 'SM builder',
+              detail,
+              buttons: ['OK'],
+            };
+            if (win) {
+              dialog.showMessageBox(win, options);
+            } else {
+              dialog.showMessageBox(options);
+            }
+          },
+        },
+      ],
+    },
+    {
       label: 'Window',
       submenu: [
         { role: 'minimize' as const },
