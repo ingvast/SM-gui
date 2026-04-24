@@ -53,6 +53,8 @@ import SplineEdge from './SplineEdge';
 import { EdgesProvider, LabelsVisibleProvider } from './EdgesContext';
 import MachinePropertiesDialog from './MachinePropertiesDialog';
 import SettingsDialog, { Settings } from './SettingsDialog';
+import VersionPromptDialog from './VersionPromptDialog';
+import type { MissingVersionPolicy } from './yamlConverter';
 import { MachineProperties, defaultMachineProperties, computeProxyLabel } from './yamlConverter';
 import type { PluginInfo } from './preload';
 import {
@@ -1339,6 +1341,18 @@ const App = () => {
     defaultShowAnnotation: false,
   });
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [versionPrompt, setVersionPrompt] = useState<{
+    filePath: string | null;
+    resolve: (choice: MissingVersionPolicy | null) => void;
+  } | null>(null);
+
+  const promptForVersionPolicy = useCallback(
+    (filePath: string | null) =>
+      new Promise<MissingVersionPolicy | null>(resolve => {
+        setVersionPrompt({ filePath, resolve });
+      }),
+    []
+  );
 
   // Handle drag-to-create node completion (runs after all deps are available)
   useEffect(() => {
@@ -1451,7 +1465,7 @@ const App = () => {
   const { handleSave, handleOpen, handleNew } = useFileOperations(
     nodes, edges, rootHistory, machineProperties, currentFilePath,
     setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo,
-    onSaved, onLoaded,
+    onSaved, onLoaded, promptForVersionPolicy,
   );
 
   const handleSaveWithFlash = useCallback(async () => {
@@ -3259,6 +3273,16 @@ const App = () => {
           window.settingsAPI.save(newSettings).catch((error) => {
             console.error('Error saving settings:', error);
           });
+        }}
+      />
+
+      <VersionPromptDialog
+        open={versionPrompt !== null}
+        filePath={versionPrompt?.filePath ?? null}
+        onChoice={(choice) => {
+          const pending = versionPrompt;
+          setVersionPrompt(null);
+          pending?.resolve(choice);
         }}
       />
 

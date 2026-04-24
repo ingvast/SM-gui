@@ -5,6 +5,10 @@ import {
   convertFromYaml,
   computeRelativePath,
   defaultMachineProperties,
+  rewriteLegacyTarget,
+  applyLegacyTransitionRewrite,
+  detectSmbVersion,
+  SMB_FORMAT_VERSION,
 } from './yamlConverter';
 
 // ---------------------------------------------------------------------------
@@ -62,9 +66,134 @@ describe('computeRelativePath', () => {
     expect(computeRelativePath('A/X', 'B/Y')).toBe('/B/Y');
   });
 
-  it('uncle (one level up, different subtree)', () => {
-    // Source = A/Child, Target = A/Uncle
-    expect(computeRelativePath('A/Child', 'A/Uncle')).toBe('Uncle');
+  it('sibling-of-source is emitted as bare name', () => {
+    // Source = A/Child, Target = A/Sibling (same immediate parent)
+    expect(computeRelativePath('A/Child', 'A/Sibling')).toBe('Sibling');
+  });
+
+  it('uncle (parent\'s sibling) emits "../../name" under Unix-style', () => {
+    // Source = A/B/C, Target = A/Uncle — uncle is 2 levels up from C
+    expect(computeRelativePath('A/B/C', 'A/Uncle')).toBe('../../Uncle');
+  });
+
+  it('sibling\'s descendant emits "../X/Y" under Unix-style', () => {
+    // Source = A/B, Target = A/X/Y
+    expect(computeRelativePath('A/B', 'A/X/Y')).toBe('../X/Y');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Legacy target rewrite (< 0.4.0 → 0.4.0)
+// ---------------------------------------------------------------------------
+
+describe('rewriteLegacyTarget', () => {
+  it('leaves bare names untouched', () => {
+    expect(rewriteLegacyTarget('X')).toBe('X');
+    expect(rewriteLegacyTarget('X/Y')).toBe('X/Y');
+  });
+
+  it('leaves absolute, self, and descendant paths untouched', () => {
+    expect(rewriteLegacyTarget('/Top/Child')).toBe('/Top/Child');
+    expect(rewriteLegacyTarget('.')).toBe('.');
+    expect(rewriteLegacyTarget('./Child')).toBe('./Child');
+  });
+
+  it('leaves @decision refs untouched', () => {
+    expect(rewriteLegacyTarget('@D1')).toBe('@D1');
+  });
+
+  it('leaves pure ancestor chains untouched', () => {
+    expect(rewriteLegacyTarget('..')).toBe('..');
+    expect(rewriteLegacyTarget('../..')).toBe('../..');
+    expect(rewriteLegacyTarget('../../..')).toBe('../../..');
+  });
+
+  it('prepends one ".." when ".." is followed by a name', () => {
+    expect(rewriteLegacyTarget('../x')).toBe('../../x');
+    expect(rewriteLegacyTarget('../../x')).toBe('../../../x');
+    expect(rewriteLegacyTarget('../x/y')).toBe('../../x/y');
+  });
+});
+
+describe('applyLegacyTransitionRewrite', () => {
+  it('rewrites nested state + decision transition targets', () => {
+    const doc = {
+      states: {
+        Top: {
+          states: {
+            A: {
+              transitions: [{ to: '../x' }, { to: 'sib' }, { to: '.' }],
+              decisions: {
+                D1: [{ to: '../../y' }, { to: '@Other' }],
+              },
+            },
+          },
+        },
+      },
+    };
+    applyLegacyTransitionRewrite(doc as unknown as Parameters<typeof applyLegacyTransitionRewrite>[0]);
+    // @ts-expect-error: traversing for assertion
+    expect(doc.states.Top.states.A.transitions[0].to).toBe('../../x');
+    // @ts-expect-error
+    expect(doc.states.Top.states.A.transitions[1].to).toBe('sib');
+    // @ts-expect-error
+    expect(doc.states.Top.states.A.transitions[2].to).toBe('.');
+    // @ts-expect-error
+    expect(doc.states.Top.states.A.decisions.D1[0].to).toBe('../../../y');
+    // @ts-expect-error
+    expect(doc.states.Top.states.A.decisions.D1[1].to).toBe('@Other');
+  });
+});
+
+describe('detectSmbVersion', () => {
+  it('returns undefined for missing key', () => {
+    expect(detectSmbVersion('states:\n  A: {}\n')).toBeUndefined();
+  });
+
+  it('reads the version from the document', () => {
+    expect(detectSmbVersion('SM-builder-version: "0.4.0"\nstates: {}\n')).toBe('0.4.0');
+  });
+
+  it('reads the version from a document saved by convertToYaml', () => {
+    const y = convertToYaml([], [], false, false, defaultMachineProperties);
+    expect(detectSmbVersion(y)).toBe(SMB_FORMAT_VERSION);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Legacy file interpretation (round-trip via transform)
+// ---------------------------------------------------------------------------
+
+describe('legacy file transition interpretation', () => {
+  // A legacy (pre-0.4.0) file where A/B has a transition to "../Sibling"
+  // meant "uncle" (sibling of A), i.e. top-level state Sibling.
+  const legacyYaml = [
+    'states:',
+    '  A:',
+    '    states:',
+    '      B:',
+    '        transitions:',
+    '          - to: ../Sibling',
+    '  Sibling: {}',
+    '',
+  ].join('\n');
+
+  it('treating missing version as legacy resolves "../Sibling" from A/B to top-level Sibling', () => {
+    const { nodes, edges } = convertFromYaml(legacyYaml, 'legacy');
+    const b = nodes.find(n => n.data.label === 'B')!;
+    const sibling = nodes.find(n => n.data.label === 'Sibling')!;
+    expect(sibling.parentId).toBeUndefined(); // top-level
+    const e = edges.find(e => e.source === b.id)!;
+    expect(e.target).toBe(sibling.id);
+  });
+
+  it('treating missing version as modern resolves "../Sibling" from A/B to a sibling under A', () => {
+    // Under modern semantics, "../Sibling" from A/B is A/Sibling — which doesn't exist here,
+    // so the edge is dropped.
+    const { nodes, edges } = convertFromYaml(legacyYaml, 'modern');
+    const b = nodes.find(n => n.data.label === 'B')!;
+    const hasEdgeFromB = edges.some(e => e.source === b.id);
+    expect(hasEdgeFromB).toBe(false);
   });
 });
 

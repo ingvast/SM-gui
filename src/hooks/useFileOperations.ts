@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { Node, Edge } from 'reactflow';
-import { convertToYaml, convertFromYaml, convertToPhoenixYaml, convertFromPhoenixYaml, MachineProperties, defaultMachineProperties } from '../yamlConverter';
+import { convertToYaml, convertFromYaml, convertToPhoenixYaml, convertFromPhoenixYaml, detectSmbVersion, MachineProperties, MissingVersionPolicy, defaultMachineProperties } from '../yamlConverter';
 import { resetIdCounter, resetStateNameCounter, resetProxyNameCounter } from '../utils/idCounters';
 import { findSyntaxErrors } from '../utils/syntaxCheck';
 
@@ -27,6 +27,7 @@ export function useFileOperations(
   clearUndoRedo: () => void,
   onSaved?: () => void,
   onLoaded?: () => void,
+  promptForVersionPolicy?: (filePath: string | null) => Promise<MissingVersionPolicy | null>,
 ) {
   const handleSave = useCallback(async () => {
     const syntaxErrorLocations = findSyntaxErrors(nodes, edges, machineProperties);
@@ -46,8 +47,14 @@ export function useFileOperations(
     }
   }, [nodes, edges, rootHistory, machineProperties, currentFilePath, setCurrentFilePath, onSaved]);
 
-  const loadFromContent = useCallback((content: string, filePath: string | null) => {
-    const { nodes: loadedNodes, edges: loadedEdges, rootHistory: loadedRootHistory, machineProperties: loadedMachineProperties } = convertFromYaml(content);
+  const loadFromContent = useCallback(async (content: string, filePath: string | null) => {
+    let missingPolicy: MissingVersionPolicy = 'legacy';
+    if (!detectSmbVersion(content) && promptForVersionPolicy) {
+      const choice = await promptForVersionPolicy(filePath);
+      if (choice === null) return;
+      missingPolicy = choice;
+    }
+    const { nodes: loadedNodes, edges: loadedEdges, rootHistory: loadedRootHistory, machineProperties: loadedMachineProperties } = convertFromYaml(content, missingPolicy);
     setNodes(loadedNodes);
     setEdges(loadedEdges);
     setRootHistory(loadedRootHistory);
@@ -74,13 +81,13 @@ export function useFileOperations(
     setCurrentFilePath(filePath);
     clearUndoRedo();
     onLoaded?.();
-  }, [setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo, onLoaded]);
+  }, [setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo, onLoaded, promptForVersionPolicy]);
 
   const handleOpen = useCallback(async () => {
     const result = await window.fileAPI.openFile();
     if (result.success && result.content) {
       try {
-        loadFromContent(result.content, result.filePath || null);
+        await loadFromContent(result.content, result.filePath || null);
       } catch (error) {
         alert('Error parsing YAML file: ' + (error as Error).message);
       }
@@ -191,10 +198,10 @@ export function useFileOperations(
 
   // On startup, check if the app was launched with a file (double-click or CLI arg)
   useEffect(() => {
-    window.fileAPI.getStartupFile().then((result) => {
+    window.fileAPI.getStartupFile().then(async (result) => {
       if (result) {
         try {
-          loadFromContent(result.content, result.filePath);
+          await loadFromContent(result.content, result.filePath);
         } catch (error) {
           alert('Error parsing file: ' + (error as Error).message);
         }
@@ -204,9 +211,9 @@ export function useFileOperations(
 
   // When the app is already running and a file is opened (macOS Finder double-click)
   useEffect(() => {
-    const cleanup = window.fileAPI.onOpenWithFile((data) => {
+    const cleanup = window.fileAPI.onOpenWithFile(async (data) => {
       try {
-        loadFromContent(data.content, data.filePath);
+        await loadFromContent(data.content, data.filePath);
       } catch (error) {
         alert('Error parsing file: ' + (error as Error).message);
       }

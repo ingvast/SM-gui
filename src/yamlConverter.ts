@@ -1,6 +1,23 @@
 import yaml from 'js-yaml';
 import { Node, Edge, MarkerType } from 'reactflow';
 import dagre from '@dagrejs/dagre';
+import pkg from '../package.json';
+
+export const SMB_FORMAT_VERSION = pkg.version;
+
+// Transition-path semantics changed at this version (Unix-style `..`).
+// Files with SM-builder-version < this require legacy rewrite on load.
+const MODERN_TRANSITION_MIN_VERSION = '0.4.0';
+
+function compareSemver(a: string, b: string): number {
+  const pa = a.split('.').map(n => parseInt(n, 10) || 0);
+  const pb = b.split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff < 0 ? -1 : 1;
+  }
+  return 0;
+}
 
 interface StateData {
   label: string;
@@ -133,6 +150,7 @@ interface YamlConnector {
 }
 
 interface YamlDocument {
+  'SM-builder-version'?: string;
   language?: string;
   includes?: string;
   context?: string;
@@ -197,16 +215,19 @@ function buildNodePathMap(nodes: Node<StateData>[]): Map<string, string> {
 }
 
 // Compute a relative path from sourcePath to targetPath
-// Rules (per spec §5.2):
+// Rules (SM-builder-version >= 0.4.0, Unix-style semantics):
 //   /absolute/path: Used when the path crosses top-level state boundaries
-//   sibling: Same parent — just the target name, e.g. "B"
+//   bare name: Same parent (sibling) — just the target name, e.g. "B"
+//     (equivalent to "../B"; both resolve to the sibling)
 //   Self: "."
-//   ./child: Direct child of source, e.g. "./Child/Grandchild"
-//   ../uncle: Up one level from sibling scope, e.g. parent's sibling
-//   sibling/child: Sibling's descendant, e.g. "C/D"
+//   ./child: Descendant of source, e.g. "./Child/Grandchild"
+//   ..: Parent of source
+//   ../sibling: Sibling of source (up 1 from source, then down)
+//   ../../uncle: Parent's sibling (up 2 from source, then down)
 //
-// Note: each "../" goes up one level from the SIBLING scope (parent level),
-// not from the state itself. So ../uncle from A/B/C reaches A's children (uncles of C).
+// Each "../" goes up one level from the source state itself (standard Unix).
+// Legacy (< 0.4.0) files used a shifted convention where "../uncle" meant uncle;
+// they are rewritten on load by adding one extra "../".
 export function computeRelativePath(sourcePath: string, targetPath: string): string {
   if (sourcePath === targetPath) return '.';
 
@@ -251,15 +272,11 @@ export function computeRelativePath(sourcePath: string, targetPath: string): str
     return Array(ups).fill('..').join('/');
   }
 
-  // Navigate up from sibling scope: each "../" goes one level above sibling scope.
-  // ups=1 → sibling scope (same parent) → just the name or name/child
-  // ups=2 → one level above sibling scope → ../uncle
-  // ups=3 → two levels above → ../../great-uncle
-  const dotCount = ups - 1;
-  if (dotCount === 0) {
-    return downs.join('/');
-  }
-  return Array(dotCount).fill('..').join('/') + '/' + downs.join('/');
+  // Unix-style: each "../" goes up one level from source.
+  // ups=1 → parent scope (same parent) → "../name"
+  // ups=2 → grandparent scope → "../../uncle"
+  // ups=3 → "../../../great-uncle"
+  return Array(ups).fill('..').join('/') + '/' + downs.join('/');
 }
 
 // Compute display label for a proxy node.
@@ -521,8 +538,11 @@ export function convertToYaml(
   }
 
   // Build the document with explicit property ordering
-  // Machine properties go first, then states
+  // Version marker first, then machine properties, then states
   const doc: YamlDocument = {};
+
+  // 0. Format version
+  doc['SM-builder-version'] = SMB_FORMAT_VERSION;
 
   // 1. Language first
   if (machineProperties?.language?.trim()) {
@@ -877,8 +897,78 @@ interface ConvertFromYamlResult {
   machineProperties: MachineProperties;
 }
 
-export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
+// Rewrite a single transition target string from legacy (< 0.4.0) semantics
+// to modern (Unix-style) semantics. Legacy "../x" meant uncle; under Unix it
+// means sibling. To preserve meaning, prepend one extra "../" whenever the
+// target has a descending segment after its leading ".." segments.
+// Pure "../..", "..", and bare names are unchanged.
+export function rewriteLegacyTarget(target: string): string {
+  if (!target || target.startsWith('@') || target.startsWith('/')) return target;
+  if (target === '.' || target.startsWith('./')) return target;
+  if (!target.startsWith('..')) return target;
+  const segs = target.split('/');
+  if (segs.every(s => s === '..')) return target;
+  return '../' + target;
+}
+
+// Walk a parsed YamlDocument and rewrite every transition `to:` (both state
+// transitions and decision-branch transitions, recursively) using the legacy
+// rewrite rule. Mutates and returns the document.
+export function applyLegacyTransitionRewrite(doc: YamlDocument): YamlDocument {
+  function walkState(state: YamlState | null | undefined): void {
+    if (!state) return;
+    state.transitions?.forEach(t => {
+      if (t.to) t.to = rewriteLegacyTarget(t.to);
+    });
+    if (state.decisions) {
+      Object.values(state.decisions).forEach(branches => {
+        branches.forEach(t => {
+          if (t.to) t.to = rewriteLegacyTarget(t.to);
+        });
+      });
+    }
+    if (state.states) Object.values(state.states).forEach(walkState);
+  }
+  if (doc.states) Object.values(doc.states).forEach(walkState);
+  if (doc.decisions) {
+    Object.values(doc.decisions).forEach(branches => {
+      branches.forEach(t => {
+        if (t.to) t.to = rewriteLegacyTarget(t.to);
+      });
+    });
+  }
+  return doc;
+}
+
+// Peek at the SM-builder-version field without fully parsing. Returns undefined
+// if the key is missing.
+export function detectSmbVersion(yamlContent: string): string | undefined {
+  try {
+    const doc = yaml.load(yamlContent) as YamlDocument | null;
+    const v = doc?.['SM-builder-version'];
+    return typeof v === 'string' ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export type MissingVersionPolicy = 'legacy' | 'modern';
+
+export function convertFromYaml(
+  yamlContent: string,
+  treatMissingVersionAs: MissingVersionPolicy = 'legacy'
+): ConvertFromYamlResult {
   const doc = yaml.load(yamlContent) as YamlDocument;
+
+  // Decide whether legacy transition-path rewrite is needed.
+  // Files written before 0.4.0 used a shifted "../" convention; rewrite on load.
+  const fileVersion = doc?.['SM-builder-version'];
+  const needsLegacyRewrite = fileVersion
+    ? compareSemver(fileVersion, MODERN_TRANSITION_MIN_VERSION) < 0
+    : treatMissingVersionAs === 'legacy';
+  if (needsLegacyRewrite && doc) {
+    applyLegacyTransitionRewrite(doc);
+  }
 
   const nodes: Node<StateData>[] = [];
   const edges: Edge[] = [];
@@ -1160,29 +1250,24 @@ export function convertFromYaml(yamlContent: string): ConvertFromYamlResult {
       return sourcePath + '/' + target.substring(2);
     }
 
-    // Starts with ".." — go up from source
-    // Each ".." goes up one level from the sibling scope (parent level).
-    // So "../uncle" from A/B/C: sibling scope is B's children,
-    // one ".." goes to A's children → finds uncle at A level.
-    // ".." alone means parent state (special case).
+    // Starts with ".." — Unix-style from source as cwd.
+    // Each ".." goes up one level from source.
+    //   ".." from A/B/C   → A/B (parent)
+    //   "../x" from A/B/C → A/B/x (sibling)
+    //   "../../x"         → A/x (uncle)
     if (target.startsWith('..')) {
-      const sourceParts = sourcePath.split('/');
+      const sourceParts = sourcePath ? sourcePath.split('/') : [];
       const targetSegments = target.split('/');
-      let depth = sourceParts.length; // current position = source state
+      let depth = sourceParts.length;
       let i = 0;
       while (i < targetSegments.length && targetSegments[i] === '..') {
         depth--;
         i++;
       }
-      // If there's remaining path after ".." segments, subtract one extra level
-      // because ".." scope is relative to sibling scope (parent), not self
-      if (i < targetSegments.length) {
-        depth--;
-      }
       if (depth < 0) depth = 0;
       const baseParts = sourceParts.slice(0, depth);
       const rest = targetSegments.slice(i);
-      return [...baseParts, ...rest].join('/');
+      return [...baseParts, ...rest].filter(s => s !== '').join('/');
     }
 
     // No prefix — treat as relative to parent (sibling scope)
