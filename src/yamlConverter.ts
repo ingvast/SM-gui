@@ -326,37 +326,32 @@ export function convertToYaml(
       return `@${decisionName}`;
     }
 
+    // Determine the source path used for relative-path computation.
+    // For a decision, the compiler treats the decision as a pseudo-leaf inside
+    // its container, so its scope is `container_path + decisionName`. We must
+    // use the same scope so that "../x" / "../../x" mean the same thing here
+    // as in the code generator.
+    const sourceNode = nodes.find(n => n.id === edge.source);
+    let sourcePath: string | undefined;
+    if (sourceNode?.type === 'decisionNode') {
+      const parentPath = sourceNode.parentId ? pathMap.get(sourceNode.parentId) : undefined;
+      const decisionLabel = sourceNode.data.label;
+      sourcePath = parentPath ? `${parentPath}/${decisionLabel}` : decisionLabel;
+    } else {
+      sourcePath = pathMap.get(edge.source);
+    }
+
     // If target is a proxy node, resolve to the real target state path
     const proxyNode = proxyIdToNode.get(edge.target);
     if (proxyNode) {
       const realTargetId = (proxyNode.data as unknown as { targetId: string }).targetId;
       const realTargetPath = pathMap.get(realTargetId);
       if (realTargetPath) {
-        const sourceNode = nodes.find(n => n.id === edge.source);
-        let sourcePath: string | undefined;
-        if (sourceNode?.type === 'decisionNode') {
-          if (sourceNode.parentId) sourcePath = pathMap.get(sourceNode.parentId);
-        } else {
-          sourcePath = pathMap.get(edge.source);
-        }
         if (sourcePath) return computeRelativePath(sourcePath, realTargetPath);
         return realTargetPath;
       }
     }
 
-    // For state targets, compute relative path from source
-    // Source might be a decision — find its parent state for path context
-    const sourceNode = nodes.find(n => n.id === edge.source);
-    let sourcePath: string | undefined;
-    if (sourceNode?.type === 'decisionNode') {
-      // Decision's context is its parent state
-      if (sourceNode.parentId) {
-        sourcePath = pathMap.get(sourceNode.parentId);
-      }
-      // If no parent (root-level decision), sourcePath stays undefined (top-level context)
-    } else {
-      sourcePath = pathMap.get(edge.source);
-    }
     const targetPath = pathMap.get(edge.target);
     if (targetPath && sourcePath) {
       return computeRelativePath(sourcePath, targetPath);
@@ -1362,8 +1357,12 @@ export function convertFromYaml(
 
         transitions.forEach(transition => {
           if (!transition.to) return;
-          // For decisions, use the parent state's path context for resolving relative paths
-          let targetId = resolveTransitionTarget(transition.to, sourcePath);
+          // Decision scope is `container_path + decisionName` (decision sits as
+          // a pseudo-leaf inside its container, matching the compiler).
+          // `./x` is invalid for decisions (decisions have no children) and
+          // will not resolve.
+          const decisionScope = sourcePath ? `${sourcePath}/${decisionName}` : decisionName;
+          let targetId = resolveTransitionTarget(transition.to, decisionScope);
           // If this transition was routed via a proxy, use the proxy node as the target
           if (transition.graphics?.proxyId) {
             const proxyNodeId = proxyNameToNodeId.get(transition.graphics.proxyId);
@@ -1408,8 +1407,9 @@ export function convertFromYaml(
 
       transitions.forEach(transition => {
         if (!transition.to) return;
-        // Root-level decisions use empty string as source path context
-        let targetId = resolveTransitionTarget(transition.to, '');
+        // Root-level decision: scope is just the decision name (pseudo-leaf at root).
+        // `./x` is invalid for decisions and will not resolve.
+        let targetId = resolveTransitionTarget(transition.to, decisionName);
         if (transition.graphics?.proxyId) {
           const proxyNodeId = proxyNameToNodeId.get(transition.graphics.proxyId);
           if (proxyNodeId) targetId = proxyNodeId;
