@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import { Node, Edge } from 'reactflow';
 import { convertToYaml, convertFromYaml, convertToPhoenixYaml, convertFromPhoenixYaml, detectSmbVersion, MachineProperties, MissingVersionPolicy, defaultMachineProperties } from '../yamlConverter';
-import { resetIdCounter, resetStateNameCounter, resetProxyNameCounter } from '../utils/idCounters';
+import { resetIdCounter, resetStateNameCounter, resetProxyNameCounter, resetDecisionNameCounter } from '../utils/idCounters';
 import { findSyntaxErrors } from '../utils/syntaxCheck';
 
 function confirmDespiteErrors(locations: string[]): boolean {
@@ -78,6 +78,14 @@ export function useFileOperations(
       return max;
     }, 0);
     resetProxyNameCounter(maxProxyNum + 1);
+    const maxDecisionNum = loadedNodes.reduce((max, node) => {
+      if (node.type === 'decisionNode') {
+        const match = (node.data.label as string)?.match(/^D(\d+)$/);
+        if (match) return Math.max(max, parseInt(match[1], 10));
+      }
+      return max;
+    }, 0);
+    resetDecisionNameCounter(maxDecisionNum + 1);
     setCurrentFilePath(filePath);
     clearUndoRedo();
     onLoaded?.();
@@ -112,6 +120,7 @@ export function useFileOperations(
     resetIdCounter(1);
     resetStateNameCounter(1);
     resetProxyNameCounter(1);
+    resetDecisionNameCounter(1);
     clearUndoRedo();
     onLoaded?.();
   }, [nodes, setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo, onLoaded]);
@@ -185,6 +194,14 @@ export function useFileOperations(
         }, 0);
         resetStateNameCounter(maxStateNum + 1);
         resetProxyNameCounter(1); // Phoenix files have no proxy nodes
+        const maxDecisionNum = loadedNodes.reduce((max, node) => {
+          if (node.type === 'decisionNode') {
+            const match = (node.data.label as string)?.match(/^D(\d+)$/);
+            if (match) return Math.max(max, parseInt(match[1], 10));
+          }
+          return max;
+        }, 0);
+        resetDecisionNameCounter(maxDecisionNum + 1);
         setCurrentFilePath(null); // Phoenix file is not an .smb file
         clearUndoRedo();
         onLoaded?.();
