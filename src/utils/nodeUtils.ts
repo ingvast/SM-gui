@@ -112,6 +112,7 @@ export function buildTreeData(nodes: Node[]) {
       id: nodeItem.id,
       label: nodeItem.data.label,
       type: 'state',
+      orthogonal: !!nodeItem.data.orthogonal,
       children: [] as ReturnType<typeof buildSubtree>[],
     };
 

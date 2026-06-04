@@ -7,6 +7,7 @@ type TreeNodeData = {
   id: string;
   label: string;
   type: string;
+  orthogonal?: boolean;
   children?: TreeNodeData[];
 };
 
@@ -31,6 +32,7 @@ const StateTree = ({ treeData, onSelect, selectedItemId, onReorder }) => {
           '& > .MuiTreeItem-content': {
             borderTop: isDropBefore(node.id) ? '2px solid #1976d2' : undefined,
             borderBottom: isDropAfter(node.id) ? '2px solid #1976d2' : undefined,
+            backgroundColor: node.orthogonal ? 'rgba(240, 248, 255, 0.9)' : undefined,
           }
         }}
         slotProps={{
