@@ -51,6 +51,7 @@ import StateTree from './StateTree';
 import PropertiesPanel from './PropertiesPanel';
 import SplineEdge from './SplineEdge';
 import { EdgesProvider, LabelsVisibleProvider } from './EdgesContext';
+import { AltKeyContext } from './contexts';
 import MachinePropertiesDialog from './MachinePropertiesDialog';
 import SettingsDialog, { Settings } from './SettingsDialog';
 import VersionPromptDialog from './VersionPromptDialog';
@@ -576,7 +577,7 @@ const App = () => {
 
     // Compute minimum screen-space dimensions for each parent node based on children
     const minScreenDims = new Map<string, { minWidth: number; minHeight: number }>();
-    const childPadding = 5 * effectiveScale; // padding in screen pixels
+    const childPadding = 0;
     for (const node of nodes) {
       if (!node.parentId) continue;
       const parentT = nodeTransforms.get(node.parentId);
@@ -1066,6 +1067,23 @@ const App = () => {
   const lastMousePosRef = useRef<{ x: number; y: number } | null>(null);
   const [isSpaceHeld, setIsSpaceHeld] = useState(false);
 
+  // Alt key tracking — used to lock aspect ratio and scale children during resize
+  const [altHeld, setAltHeld] = useState(false);
+  const altHeldRef = useRef(false);
+  const altResizeSnapshotRef = useRef<{
+    nodeId: string;
+    origW: number;
+    origH: number;
+    parentInitialMarkerPos?: { x: number; y: number };
+    descendants: Array<{
+      id: string;
+      position: { x: number; y: number };
+      width: number;
+      height: number;
+      initialMarkerPos?: { x: number; y: number };
+    }>;
+  } | null>(null);
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat) {
@@ -1098,6 +1116,28 @@ const App = () => {
       document.removeEventListener('mousemove', onMouseMove);
     };
   }, [adjustPan]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Alt' && !e.repeat) {
+        altHeldRef.current = true;
+        setAltHeld(true);
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') {
+        altHeldRef.current = false;
+        setAltHeld(false);
+        altResizeSnapshotRef.current = null;
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keyup', onKeyUp);
+    };
+  }, []);
 
   // Pan handling - drag background to pan
   const isPanning = useRef(false);
@@ -1630,9 +1670,8 @@ const App = () => {
                   const nodeWidth = (node.style?.width as number) || node.width || 150;
                   const nodeHeight = (node.style?.height as number) || node.height || 50;
 
-                  // Constrain to parent bounds (padding as 5% of parent, capped so node fits)
-                  const paddingX = Math.max(0, Math.min(parentBounds.width * 0.05, (parentBounds.width - nodeWidth) / 2));
-                  const paddingY = Math.max(0, Math.min(parentBounds.height * 0.05, (parentBounds.height - nodeHeight) / 2));
+                  const paddingX = 0;
+                  const paddingY = 0;
                   relX = Math.max(paddingX, Math.min(relX, parentBounds.width - nodeWidth - paddingX));
                   relY = Math.max(paddingY, Math.min(relY, parentBounds.height - nodeHeight - paddingY));
 
@@ -1688,10 +1727,106 @@ const App = () => {
         return change;
       });
 
+      // Alt+resize: scale all descendants proportionally instead of compensating them
+      const altScaledParents = new Set<string>();
+      if (altHeldRef.current) {
+        for (let i = 0; i < convertedChanges.length; i++) {
+          const change = convertedChanges[i];
+          if (change.type !== 'dimensions' || !change.updateStyle || !change.dimensions) continue;
+          const nodeId = change.id;
+          if (!nodes.some(n => n.parentId === nodeId)) continue; // leaf node — nothing to scale
+
+          const newWorldW = change.dimensions.width; // already world-space after conversion above
+
+          // Snapshot initial state on first frame of this Alt-resize gesture
+          if (!altResizeSnapshotRef.current || altResizeSnapshotRef.current.nodeId !== nodeId) {
+            const node = nodes.find(n => n.id === nodeId);
+            if (!node) continue;
+            const origW = (node.style?.width as number) || 150;
+            const origH = (node.style?.height as number) || 75;
+            const descs = getAllDescendants(nodeId, nodes);
+            altResizeSnapshotRef.current = {
+              nodeId,
+              origW,
+              origH,
+              parentInitialMarkerPos: node.data?.initialMarkerPos
+                ? { ...(node.data.initialMarkerPos as { x: number; y: number }) }
+                : undefined,
+              descendants: descs.map(d => ({
+                id: d.id,
+                position: { ...d.position },
+                width: (d.style?.width as number) || 150,
+                height: (d.style?.height as number) || 75,
+                initialMarkerPos: d.data?.initialMarkerPos
+                  ? { ...(d.data.initialMarkerPos as { x: number; y: number }) }
+                  : undefined,
+              })),
+            };
+          }
+
+          const snap = altResizeSnapshotRef.current;
+          if (snap.origW === 0) continue;
+          const s = newWorldW / snap.origW;
+
+          // Enforce uniform scale: override the parent's height to match the width scale
+          convertedChanges[i] = {
+            ...change,
+            dimensions: { width: change.dimensions.width, height: snap.origH * s },
+          };
+
+          altScaledParents.add(nodeId);
+
+          // Update lastAppliedPositionRef so the next frame's compensation sees correct positions
+          for (const desc of snap.descendants) {
+            lastAppliedPositionRef.current.set(desc.id, {
+              x: desc.position.x * s,
+              y: desc.position.y * s,
+            });
+          }
+
+          // Scale all descendants and the parent's own initialMarkerPos
+          setNodes(nds => nds.map(n => {
+            if (n.id === snap.nodeId && snap.parentInitialMarkerPos) {
+              return {
+                ...n,
+                data: {
+                  ...n.data,
+                  initialMarkerPos: {
+                    x: snap.parentInitialMarkerPos.x * s,
+                    y: snap.parentInitialMarkerPos.y * s,
+                  },
+                },
+              };
+            }
+            const snapDesc = snap.descendants.find(d => d.id === n.id);
+            if (!snapDesc) return n;
+            return {
+              ...n,
+              position: { x: snapDesc.position.x * s, y: snapDesc.position.y * s },
+              style: {
+                ...n.style,
+                width: snapDesc.width * s,
+                height: snapDesc.height * s,
+              },
+              data: snapDesc.initialMarkerPos
+                ? {
+                    ...n.data,
+                    initialMarkerPos: {
+                      x: snapDesc.initialMarkerPos.x * s,
+                      y: snapDesc.initialMarkerPos.y * s,
+                    },
+                  }
+                : n.data,
+            };
+          }));
+        }
+      }
+
       // Compensate children for resize-from-left/top so they stay in place on screen
       const childCompensation = [];
       for (const [parentId, delta] of resizeDeltas) {
         if (delta.dx === 0 && delta.dy === 0) continue;
+        if (altScaledParents.has(parentId)) continue; // handled by Alt-scale above
         const children = nodes.filter(n => n.parentId === parentId);
         for (const child of children) {
           const prev = lastAppliedPositionRef.current.get(child.id) ?? child.position;
@@ -1713,6 +1848,7 @@ const App = () => {
           const delta = resizeDeltas.get(n.id);
           if (!delta) return n;
           if (delta.dx === 0 && delta.dy === 0) return n;
+          if (altScaledParents.has(n.id)) return n; // handled by Alt-scale above
           const pos = n.data?.initialMarkerPos as { x: number; y: number } | undefined;
           if (!pos) return n;
           return {
@@ -3260,6 +3396,7 @@ const App = () => {
             onReplaceAll={search.replaceAll}
             onNavigateToMatch={search.navigateToMatchByIndex}
           />
+          <AltKeyContext.Provider value={altHeld}>
           <LabelsVisibleProvider value={showLabels}>
           <EdgesProvider value={setEdges}>
             <ReactFlow
@@ -3301,6 +3438,7 @@ const App = () => {
             />
           </EdgesProvider>
           </LabelsVisibleProvider>
+          </AltKeyContext.Provider>
         </Box>
       </Box>
 

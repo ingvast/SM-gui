@@ -1,6 +1,7 @@
-import React, { memo } from 'react';
+import React, { memo, useContext } from 'react';
 import { Handle, Position } from 'reactflow';
 import { NodeResizer } from '@reactflow/node-resizer';
+import { AltKeyContext } from './contexts';
 
 import '@reactflow/node-resizer/dist/style.css';
 import './StateNode.css';
@@ -39,6 +40,7 @@ interface StateNodeProps {
 }
 
 export default memo(({ data, selected }: StateNodeProps) => {
+  const altHeld = useContext(AltKeyContext);
   const isCompound = data.isCompound;
   // Fixed screen-pixel sizes (no counter-scaling needed since viewport zoom is 1
   // and nodes are already rendered at their screen size)
@@ -178,8 +180,9 @@ export default memo(({ data, selected }: StateNodeProps) => {
     <div className="state-node" style={nodeStyle}>
       <NodeResizer
         isVisible={selected}
-        minWidth={data.minWidth}
-        minHeight={data.minHeight}
+        minWidth={altHeld ? 30 : data.minWidth}
+        minHeight={altHeld ? 30 : data.minHeight}
+        keepAspectRatio={altHeld}
       />
 
       {/* Invisible ReactFlow Handles for connection logic */}
