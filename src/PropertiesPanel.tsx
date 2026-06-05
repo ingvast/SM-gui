@@ -104,6 +104,21 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const guardFieldRef = useRef<CodeEditorHandle | null>(null);
   const nameFieldRef = useRef<HTMLInputElement | null>(null);
 
+  // Refs that always mirror the latest temp values — used by flush logic in effects
+  // so we can commit unsaved edits even if the blur didn't fire in time.
+  const tempNameRef = useRef(tempName); tempNameRef.current = tempName;
+  const tempEntryRef = useRef(tempEntry); tempEntryRef.current = tempEntry;
+  const tempExitRef = useRef(tempExit); tempExitRef.current = tempExit;
+  const tempDoRef = useRef(tempDo); tempDoRef.current = tempDo;
+  const tempAnnotationRef = useRef(tempAnnotation); tempAnnotationRef.current = tempAnnotation;
+  const tempGuardRef = useRef(tempGuard); tempGuardRef.current = tempGuard;
+  const tempActionRef = useRef(tempAction); tempActionRef.current = tempAction;
+  // Refs to latest props/callbacks so effects can use them without stale closures
+  const nodesRef = useRef(nodes); nodesRef.current = nodes;
+  const edgesRef = useRef(edges); edgesRef.current = edges;
+  const onPropertyChangeRef = useRef(onPropertyChange); onPropertyChangeRef.current = onPropertyChange;
+  const onEdgePropertyChangeRef = useRef(onEdgePropertyChange); onEdgePropertyChangeRef.current = onEdgePropertyChange;
+
   // Get node label by id (plain name, used for source display and non-transition contexts)
   const getNodeLabel = (nodeId: string) => {
     const node = nodes.find(n => n.id === nodeId);
@@ -205,6 +220,25 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   useEffect(() => {
     // Only sync temp values when the selected node ID changes, not on every object reference change
     if (selectedNode?.id !== prevNodeIdRef.current) {
+      // Flush any unsaved edits to the previous node before switching.
+      // This catches the case where blur didn't fire before selectedNode changed.
+      const prevId = prevNodeIdRef.current;
+      if (prevId && prevId !== '/') {
+        const prevNode = nodesRef.current.find(n => n.id === prevId);
+        if (prevNode) {
+          if (tempNameRef.current !== prevNode.data.label)
+            onPropertyChangeRef.current(prevId, 'label', tempNameRef.current);
+          if (tempEntryRef.current !== ((prevNode.data.entry as string) || ''))
+            onPropertyChangeRef.current(prevId, 'entry', tempEntryRef.current);
+          if (tempExitRef.current !== ((prevNode.data.exit as string) || ''))
+            onPropertyChangeRef.current(prevId, 'exit', tempExitRef.current);
+          if (tempDoRef.current !== ((prevNode.data.do as string) || ''))
+            onPropertyChangeRef.current(prevId, 'do', tempDoRef.current);
+          if (tempAnnotationRef.current !== ((prevNode.data.annotation as string) || ''))
+            onPropertyChangeRef.current(prevId, 'annotation', tempAnnotationRef.current);
+        }
+      }
+
       prevNodeIdRef.current = selectedNode?.id || null;
       if (selectedNode && selectedNode.data) {
         setTempName(selectedNode.data.label || '');
@@ -251,8 +285,26 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     }
   }, [replaceVersion, selectedNode, selectedEdge]);
 
-  // Sync edge properties when selected edge changes
+  // Sync edge properties only when the edge ID changes (not on every edges-array reference change).
+  // Flush unsaved guard/action to the previous edge before switching.
+  const prevEdgeIdRef = useRef<string | null>(null);
   useEffect(() => {
+    const newEdgeId = selectedEdge?.id || null;
+    if (newEdgeId === prevEdgeIdRef.current) return;
+
+    // Flush pending edits to the previous edge
+    const prevEdgeId = prevEdgeIdRef.current;
+    if (prevEdgeId) {
+      const prevEdge = edgesRef.current.find(e => e.id === prevEdgeId);
+      if (prevEdge) {
+        if (tempGuardRef.current !== (prevEdge.data?.guard || ''))
+          onEdgePropertyChangeRef.current(prevEdgeId, 'guard', tempGuardRef.current);
+        if (tempActionRef.current !== (prevEdge.data?.action || ''))
+          onEdgePropertyChangeRef.current(prevEdgeId, 'action', tempActionRef.current);
+      }
+    }
+
+    prevEdgeIdRef.current = newEdgeId;
     if (selectedEdge) {
       setTempGuard(selectedEdge.data?.guard || '');
       setTempAction(selectedEdge.data?.action || '');

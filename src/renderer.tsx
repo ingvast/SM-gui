@@ -215,6 +215,8 @@ const App = () => {
 
   // Viewport size tracking
   const [viewportSize, setViewportSize] = useState({ width: 800, height: 600 });
+  const [sidebarWidth, setSidebarWidth] = useState(280);
+  const sidebarResizingRef = useRef(false);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   // Drag-to-create state refs
@@ -287,6 +289,26 @@ const App = () => {
     updateSize();
     window.addEventListener('resize', updateSize);
     return () => window.removeEventListener('resize', updateSize);
+  }, []);
+
+  // Sidebar resize drag handlers
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!sidebarResizingRef.current) return;
+      const newWidth = Math.max(150, Math.min(600, e.clientX));
+      setSidebarWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      sidebarResizingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
   }, []);
 
   // Load settings on mount
@@ -2920,11 +2942,15 @@ const App = () => {
           className="no-print"
           elevation={0}
           sx={{
-            width: 280,
+            width: sidebarWidth,
+            minWidth: 150,
+            maxWidth: 600,
             display: 'flex',
             flexDirection: 'column',
             borderRight: 1,
             borderColor: 'divider',
+            position: 'relative',
+            flexShrink: 0,
           }}
         >
           <Box sx={{ p: 2, maxHeight: '50%', overflowY: 'auto', flexShrink: 0 }}>
@@ -2962,6 +2988,26 @@ const App = () => {
               readOnly={isViewMode}
             />
           </Box>
+
+          {/* Resize handle */}
+          <Box
+            sx={{
+              position: 'absolute',
+              right: -3,
+              top: 0,
+              bottom: 0,
+              width: 6,
+              cursor: 'col-resize',
+              zIndex: 10,
+              '&:hover': { backgroundColor: 'primary.main', opacity: 0.4 },
+            }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              sidebarResizingRef.current = true;
+              document.body.style.cursor = 'col-resize';
+              document.body.style.userSelect = 'none';
+            }}
+          />
         </Paper>
 
         <Box
