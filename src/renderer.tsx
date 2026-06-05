@@ -836,7 +836,7 @@ const App = () => {
           ...edge,
           zIndex: 1000 + Math.max(sourceDepth, targetDepth) * 10 + 5,
           // Only allow reconnecting selected edges (avoids ambiguity when multiple edges share a handle)
-          reconnectable: edge.selected ? true : undefined,
+          reconnectable: edge.selected && !isViewMode ? true : undefined,
           data: {
             ...edge.data,
             effectiveScale,
@@ -1004,7 +1004,7 @@ const App = () => {
 
     const result = [...regularEdges, ...initialEdges];
     return result;
-  }, [edges, visibleNodeIds, effectiveScale, nodes, transformedNodes, machineProperties]);
+  }, [edges, visibleNodeIds, effectiveScale, nodes, transformedNodes, machineProperties, isViewMode]);
 
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
 
@@ -2059,12 +2059,14 @@ const App = () => {
 
   const onPaneContextMenu = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
+    if (isViewMode) return;
     const world = screenToWorld(event.clientX, event.clientY);
     setContextMenu({ mouseX: event.clientX, mouseY: event.clientY, worldX: world.x, worldY: world.y, type: 'pane', nodeId: null, edgeId: null });
-  }, [screenToWorld]);
+  }, [screenToWorld, isViewMode]);
 
   const onNodeContextMenu = useCallback((event: React.MouseEvent, node: typeof nodes[0]) => {
     event.preventDefault();
+    if (isViewMode) return;
     if (node.id.startsWith('initial-marker')) return;
     // Select the right-clicked node so Copy/Duplicate work on it
     if (!node.id.startsWith('history-marker')) {
@@ -2080,13 +2082,14 @@ const App = () => {
       : node.type === 'proxyNode' ? 'proxyNode'
       : 'stateNode';
     setContextMenu({ mouseX: event.clientX, mouseY: event.clientY, worldX: world.x, worldY: world.y, type: type as 'stateNode' | 'decisionNode' | 'proxyNode' | 'historyMarker', nodeId: node.id, edgeId: null });
-  }, [screenToWorld, setNodes, setEdges, setSelectedMarkerId]);
+  }, [screenToWorld, setNodes, setEdges, setSelectedMarkerId, isViewMode]);
 
   const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: typeof edges[0]) => {
     event.preventDefault();
+    if (isViewMode) return;
     const world = screenToWorld(event.clientX, event.clientY);
     setContextMenu({ mouseX: event.clientX, mouseY: event.clientY, worldX: world.x, worldY: world.y, type: 'edge', nodeId: null, edgeId: edge.id });
-  }, [screenToWorld]);
+  }, [screenToWorld, isViewMode]);
 
   const onPaneClick = useCallback(
     (event) => {
