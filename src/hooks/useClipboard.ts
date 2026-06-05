@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { Node, Edge } from 'reactflow';
 import { getAllDescendants, generateUniqueNodeLabel, generateUniqueDecisionLabel } from '../utils/nodeUtils';
 import { getAbsoluteNodeBounds } from '../semanticZoom';
-import { getNextId } from '../utils/idCounters';
+import { getNextId, getNextProxyName } from '../utils/idCounters';
 
 const CLIPBOARD_MARKER = 'sm-gui-clipboard:';
 
@@ -153,10 +153,11 @@ export function useClipboard(
       newNodes.push(newNode);
     });
 
-    // For proxy nodes, remap targetId if the target was also copied
+    // For proxy nodes, assign a fresh name (to avoid YAML collisions) and remap targetId
     newNodes.forEach(node => {
       if (node.type === 'proxyNode') {
-        const data = node.data as unknown as { targetId: string };
+        const data = node.data as unknown as { targetId: string; name: string };
+        data.name = getNextProxyName();
         const remappedTargetId = newIdMap.get(data.targetId);
         if (remappedTargetId) {
           data.targetId = remappedTargetId;
@@ -273,10 +274,11 @@ export function useClipboard(
       duplicatedNodes.push(newNode);
     });
 
-    // For proxy nodes, remap targetId if the target was also duplicated
+    // For proxy nodes, assign a fresh name (to avoid YAML collisions) and remap targetId
     duplicatedNodes.forEach(node => {
       if (node.type === 'proxyNode') {
-        const data = node.data as unknown as { targetId: string };
+        const data = node.data as unknown as { targetId: string; name: string };
+        data.name = getNextProxyName();
         const remappedTargetId = newIdMap.get(data.targetId);
         if (remappedTargetId) {
           data.targetId = remappedTargetId;
