@@ -1103,6 +1103,16 @@ const App = () => {
     // Pan on mousemove when space is held, or when middle mouse button is held (buttons===4)
     const onMouseMove = (e: MouseEvent) => {
       lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+      // Sync the Alt-modifier state from the live pointer event. This is more
+      // reliable than keydown/keyup on Windows, where pressing Alt moves focus
+      // to the native menu bar so the renderer never receives the keyup (and may
+      // miss the keydown). Pointer events carry the physical modifier state
+      // regardless of keyboard focus, so the resize-with-children gesture works.
+      if (e.altKey !== altHeldRef.current) {
+        altHeldRef.current = e.altKey;
+        setAltHeld(e.altKey);
+        if (!e.altKey) altResizeSnapshotRef.current = null;
+      }
       if (spaceHeld.current || e.buttons === 4) {
         adjustPan(e.movementX, e.movementY);
       }
