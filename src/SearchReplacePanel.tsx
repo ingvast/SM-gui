@@ -16,6 +16,9 @@ import {
   TableRow,
   TableCell,
   TableContainer,
+  InputAdornment,
+  List,
+  ListItemButton,
 } from '@mui/material';
 import {
   NavigateBefore as PrevIcon,
@@ -23,6 +26,7 @@ import {
   Close as CloseIcon,
   HelpOutline as HelpIcon,
   FilterList as FilterListIcon,
+  ArrowDropDown as ArrowDropDownIcon,
 } from '@mui/icons-material';
 import { SearchOptions, SearchMatchDisplay } from './hooks/useSearchReplace';
 
@@ -69,6 +73,25 @@ const FILTERABLE_FIELDS = [
 
 const ALL_FIELD_NAMES = FILTERABLE_FIELDS.map(f => f.name);
 
+const HISTORY_MAX = 20;
+const SEARCH_HISTORY_KEY = 'sm-gui-search-history';
+const REPLACE_HISTORY_KEY = 'sm-gui-replace-history';
+
+function loadHistory(key: string): string[] {
+  try { return JSON.parse(localStorage.getItem(key) || '[]'); }
+  catch { return []; }
+}
+
+function saveHistory(key: string, history: string[]): void {
+  try { localStorage.setItem(key, JSON.stringify(history)); }
+  catch { /* ignore */ }
+}
+
+function pushHistory(term: string, history: string[]): string[] {
+  if (!term.trim()) return history;
+  return [term, ...history.filter(h => h !== term)].slice(0, HISTORY_MAX);
+}
+
 const SearchReplacePanel: React.FC<SearchReplacePanelProps> = ({
   isOpen,
   searchTerm,
@@ -95,6 +118,93 @@ const SearchReplacePanel: React.FC<SearchReplacePanelProps> = ({
   const [helpAnchorEl, setHelpAnchorEl] = useState<HTMLElement | null>(null);
   const [fieldFilterAnchorEl, setFieldFilterAnchorEl] = useState<HTMLElement | null>(null);
 
+  // --- History state ---
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => loadHistory(SEARCH_HISTORY_KEY));
+  const [replaceHistory, setReplaceHistory] = useState<string[]>(() => loadHistory(REPLACE_HISTORY_KEY));
+  const searchHistoryIdxRef = useRef(-1);
+  const replaceHistoryIdxRef = useRef(-1);
+  const savedSearchRef = useRef('');
+  const savedReplaceRef = useRef('');
+  const [searchHistoryAnchorEl, setSearchHistoryAnchorEl] = useState<HTMLElement | null>(null);
+  const [replaceHistoryAnchorEl, setReplaceHistoryAnchorEl] = useState<HTMLElement | null>(null);
+
+  const commitSearchHistory = useCallback((term: string) => {
+    setSearchHistory(prev => {
+      const next = pushHistory(term, prev);
+      saveHistory(SEARCH_HISTORY_KEY, next);
+      return next;
+    });
+    searchHistoryIdxRef.current = -1;
+  }, []);
+
+  const commitReplaceHistory = useCallback((term: string) => {
+    setReplaceHistory(prev => {
+      const next = pushHistory(term, prev);
+      saveHistory(REPLACE_HISTORY_KEY, next);
+      return next;
+    });
+    replaceHistoryIdxRef.current = -1;
+  }, []);
+
+  const navigateSearchHistory = useCallback((direction: 'up' | 'down') => {
+    const idx = searchHistoryIdxRef.current;
+    if (direction === 'up') {
+      if (idx === -1) savedSearchRef.current = searchTerm;
+      const next = Math.min(idx + 1, searchHistory.length - 1);
+      searchHistoryIdxRef.current = next;
+      setSearchTerm(searchHistory[next]);
+    } else {
+      if (idx <= 0) {
+        searchHistoryIdxRef.current = -1;
+        setSearchTerm(savedSearchRef.current);
+      } else {
+        const next = idx - 1;
+        searchHistoryIdxRef.current = next;
+        setSearchTerm(searchHistory[next]);
+      }
+    }
+  }, [searchTerm, searchHistory, setSearchTerm]);
+
+  const navigateReplaceHistory = useCallback((direction: 'up' | 'down') => {
+    const idx = replaceHistoryIdxRef.current;
+    if (direction === 'up') {
+      if (idx === -1) savedReplaceRef.current = replaceTerm;
+      const next = Math.min(idx + 1, replaceHistory.length - 1);
+      replaceHistoryIdxRef.current = next;
+      setReplaceTerm(replaceHistory[next]);
+    } else {
+      if (idx <= 0) {
+        replaceHistoryIdxRef.current = -1;
+        setReplaceTerm(savedReplaceRef.current);
+      } else {
+        const next = idx - 1;
+        replaceHistoryIdxRef.current = next;
+        setReplaceTerm(replaceHistory[next]);
+      }
+    }
+  }, [replaceTerm, replaceHistory, setReplaceTerm]);
+
+  // Wrapped callbacks that commit terms to history before acting
+  const handleNext = useCallback(() => {
+    commitSearchHistory(searchTerm);
+    onNext();
+  }, [searchTerm, commitSearchHistory, onNext]);
+
+  const handlePrev = useCallback(() => {
+    commitSearchHistory(searchTerm);
+    onPrev();
+  }, [searchTerm, commitSearchHistory, onPrev]);
+
+  const handleReplace = useCallback(() => {
+    commitReplaceHistory(replaceTerm);
+    onReplace();
+  }, [replaceTerm, commitReplaceHistory, onReplace]);
+
+  const handleReplaceAll = useCallback(() => {
+    commitReplaceHistory(replaceTerm);
+    onReplaceAll();
+  }, [replaceTerm, commitReplaceHistory, onReplaceAll]);
+
   // Focus search input when panel opens
   useEffect(() => {
     if (isOpen) {
@@ -116,8 +226,8 @@ const SearchReplacePanel: React.FC<SearchReplacePanelProps> = ({
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       let delta = e.deltaY;
-      if (e.deltaMode === 1) delta *= 34;        // line mode
-      else if (e.deltaMode === 2) delta *= el.clientHeight; // page mode
+      if (e.deltaMode === 1) delta *= 34;
+      else if (e.deltaMode === 2) delta *= el.clientHeight;
       el.scrollTop += delta;
       e.preventDefault();
       e.stopPropagation();
@@ -126,32 +236,64 @@ const SearchReplacePanel: React.FC<SearchReplacePanelProps> = ({
     return () => el.removeEventListener('wheel', onWheel);
   }, [isOpen]);
 
-  // Stop propagation on all key events to prevent canvas shortcuts
-  const stopPropagation = useCallback((e: React.KeyboardEvent) => {
-    e.stopPropagation();
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      onNext();
-    } else if (e.key === 'Enter' && e.shiftKey) {
-      e.preventDefault();
-      onPrev();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
-    }
-  }, [onNext, onPrev, onClose]);
-
   // Stop wheel events from reaching the ReactFlow canvas underneath the panel
   const stopWheel = useCallback((e: React.WheelEvent) => {
     e.stopPropagation();
   }, []);
 
+  // Panel-level key handler for elements that don't have their own (checkboxes, etc.)
+  const panelKeyDown = useCallback((e: React.KeyboardEvent) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+  }, [onClose]);
+
   const sharedKeyHandlers = {
-    onKeyDown: stopPropagation,
+    onKeyDown: panelKeyDown,
     onKeyUp: (e: React.KeyboardEvent) => e.stopPropagation(),
     onKeyPress: (e: React.KeyboardEvent) => e.stopPropagation(),
     onWheel: stopWheel,
   };
+
+  // Per-field keydown: handles history navigation + Enter/Escape, stops propagation
+  const searchKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    e.stopPropagation();
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (searchHistory.length > 0) navigateSearchHistory('up');
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      navigateSearchHistory('down');
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleNext();
+    } else if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault();
+      handlePrev();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+    }
+  }, [searchHistory.length, navigateSearchHistory, handleNext, handlePrev, onClose]);
+
+  const replaceKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    e.stopPropagation();
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (replaceHistory.length > 0) navigateReplaceHistory('up');
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      navigateReplaceHistory('down');
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleNext();
+    } else if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault();
+      handlePrev();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+    }
+  }, [replaceHistory.length, navigateReplaceHistory, handleNext, handlePrev, onClose]);
 
   if (!isOpen) return null;
 
@@ -168,7 +310,6 @@ const SearchReplacePanel: React.FC<SearchReplacePanelProps> = ({
     const next = current.includes(fieldName)
       ? current.filter(f => f !== fieldName)
       : [...current, fieldName];
-    // If all fields checked → canonical null (no filter)
     setOptions({ ...options, fieldFilter: next.length === ALL_FIELD_NAMES.length ? null : next });
   };
 
@@ -180,6 +321,58 @@ const SearchReplacePanel: React.FC<SearchReplacePanelProps> = ({
     if (!fieldGroups[f.group]) fieldGroups[f.group] = [];
     fieldGroups[f.group].push(f);
   }
+
+  // --- History dropdown adornment ---
+  const historyAdornment = (history: string[], setAnchor: (el: HTMLElement | null) => void) =>
+    history.length > 0 ? (
+      <InputAdornment position="end">
+        <Tooltip title="Search history (↑↓)">
+          <IconButton
+            size="small"
+            tabIndex={-1}
+            onClick={(e) => { e.stopPropagation(); setAnchor(e.currentTarget); }}
+            sx={{ p: 0.1, mr: -0.5 }}
+          >
+            <ArrowDropDownIcon sx={{ fontSize: '1.1rem' }} />
+          </IconButton>
+        </Tooltip>
+      </InputAdornment>
+    ) : undefined;
+
+  const historyPopover = (
+    history: string[],
+    anchorEl: HTMLElement | null,
+    setAnchor: (el: HTMLElement | null) => void,
+    setTerm: (v: string) => void,
+    resetIdx: () => void,
+  ) => (
+    <Popover
+      open={Boolean(anchorEl)}
+      anchorEl={anchorEl}
+      onClose={() => setAnchor(null)}
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+      transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+      disableAutoFocus
+      disableEnforceFocus
+    >
+      <List dense disablePadding sx={{ minWidth: 180, maxWidth: 320, maxHeight: 240, overflowY: 'auto' }}>
+        {history.map((item, i) => (
+          <ListItemButton
+            key={i}
+            onClick={() => { setTerm(item); resetIdx(); setAnchor(null); setTimeout(() => searchInputRef.current?.focus(), 50); }}
+            sx={{ px: 1.5, py: 0.5 }}
+          >
+            <Typography
+              variant="caption"
+              sx={{ fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {item}
+            </Typography>
+          </ListItemButton>
+        ))}
+      </List>
+    </Popover>
+  );
 
   // --- Option checkboxes (Case / Word / Regex) ---
   const optionCheckboxes = (
@@ -237,7 +430,7 @@ const SearchReplacePanel: React.FC<SearchReplacePanelProps> = ({
               ['\\d  \\w  \\s', 'digit · word char · whitespace'],
               ['\\D  \\W  \\S', 'negated versions of the above'],
               ['[abc]', 'character set (a, b, or c)'],
-              ['[^abc]', 'negated set (anything but a, b, c)'],
+              ['[^abc]', 'character set (anything but a, b, c)'],
               ['[a-z]', 'range (a through z)'],
               ['^  $', 'start / end of string'],
               ['\\b', 'word boundary'],
@@ -426,14 +619,20 @@ const SearchReplacePanel: React.FC<SearchReplacePanelProps> = ({
           size="small"
           placeholder="Search"
           value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
+          onChange={(e) => { searchHistoryIdxRef.current = -1; setSearchTerm(e.target.value); }}
           error={regexError}
           sx={{ width: 180 }}
-          inputProps={{ style: { fontSize: '0.85rem', padding: '4px 8px' } }}
+          inputProps={{
+            style: { fontSize: '0.85rem', padding: '4px 8px' },
+            onKeyDown: searchKeyDown,
+            onKeyUp: (e: React.KeyboardEvent) => e.stopPropagation(),
+            onKeyPress: (e: React.KeyboardEvent) => e.stopPropagation(),
+          }}
+          InputProps={{ endAdornment: historyAdornment(searchHistory, setSearchHistoryAnchorEl) }}
         />
         <Tooltip title="Previous (Shift+Enter)">
           <span>
-            <IconButton size="small" onClick={onPrev} disabled={matchCount === 0}>
+            <IconButton size="small" onClick={handlePrev} disabled={matchCount === 0}>
               <PrevIcon fontSize="small" />
             </IconButton>
           </span>
@@ -446,7 +645,7 @@ const SearchReplacePanel: React.FC<SearchReplacePanelProps> = ({
         </Typography>
         <Tooltip title="Next (Enter)">
           <span>
-            <IconButton size="small" onClick={onNext} disabled={matchCount === 0}>
+            <IconButton size="small" onClick={handleNext} disabled={matchCount === 0}>
               <NextIcon fontSize="small" />
             </IconButton>
           </span>
@@ -459,13 +658,19 @@ const SearchReplacePanel: React.FC<SearchReplacePanelProps> = ({
           size="small"
           placeholder="Replace"
           value={replaceTerm}
-          onChange={(e) => setReplaceTerm(e.target.value)}
+          onChange={(e) => { replaceHistoryIdxRef.current = -1; setReplaceTerm(e.target.value); }}
           sx={{ width: 160 }}
-          inputProps={{ style: { fontSize: '0.85rem', padding: '4px 8px' } }}
+          inputProps={{
+            style: { fontSize: '0.85rem', padding: '4px 8px' },
+            onKeyDown: replaceKeyDown,
+            onKeyUp: (e: React.KeyboardEvent) => e.stopPropagation(),
+            onKeyPress: (e: React.KeyboardEvent) => e.stopPropagation(),
+          }}
+          InputProps={{ endAdornment: historyAdornment(replaceHistory, setReplaceHistoryAnchorEl) }}
         />
         <Tooltip title="Replace current">
           <span>
-            <IconButton size="small" onClick={onReplace} disabled={matchCount === 0}
+            <IconButton size="small" onClick={handleReplace} disabled={matchCount === 0}
               sx={{ fontSize: '0.7rem', fontWeight: 'bold', width: 32, height: 32 }}>
               Repl
             </IconButton>
@@ -473,7 +678,7 @@ const SearchReplacePanel: React.FC<SearchReplacePanelProps> = ({
         </Tooltip>
         <Tooltip title="Replace all">
           <span>
-            <IconButton size="small" onClick={onReplaceAll} disabled={matchCount === 0}
+            <IconButton size="small" onClick={handleReplaceAll} disabled={matchCount === 0}
               sx={{ fontSize: '0.7rem', fontWeight: 'bold', width: 32, height: 32 }}>
               All
             </IconButton>
@@ -496,6 +701,14 @@ const SearchReplacePanel: React.FC<SearchReplacePanelProps> = ({
       {matchTable}
       {regexHelpPopover}
       {fieldFilterPopover}
+      {historyPopover(
+        searchHistory, searchHistoryAnchorEl, setSearchHistoryAnchorEl,
+        setSearchTerm, () => { searchHistoryIdxRef.current = -1; },
+      )}
+      {historyPopover(
+        replaceHistory, replaceHistoryAnchorEl, setReplaceHistoryAnchorEl,
+        setReplaceTerm, () => { replaceHistoryIdxRef.current = -1; },
+      )}
     </Paper>
   );
 };
