@@ -56,6 +56,8 @@ const FILTERABLE_FIELDS = [
   { name: 'annotation',       group: 'State' },
   { name: 'guard',            group: 'Transition' },
   { name: 'action',           group: 'Transition' },
+  { name: 'source',           group: 'Transition' },
+  { name: 'target',           group: 'Transition' },
   { name: 'includes',         group: 'Machine' },
   { name: 'context',          group: 'Machine' },
   { name: 'context_init',     group: 'Machine' },
