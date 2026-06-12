@@ -1,7 +1,7 @@
 {
   "name": "SM-builder",
   "productName": "SM builder",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "description": "Graphical builder of hierchial state machines",
   "main": ".vite/build/main.js",
   "private": true,
