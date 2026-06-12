@@ -1,6 +1,7 @@
 import { python } from '@codemirror/lang-python';
 import { cpp } from '@codemirror/lang-cpp';
 import { rust } from '@codemirror/lang-rust';
+import { javascript } from '@codemirror/lang-javascript';
 import { Node, Edge } from 'reactflow';
 import { MachineProperties } from '../yamlConverter';
 
@@ -17,6 +18,8 @@ function getParser(language: string): LezerParser | null {
     case 'c':
     case 'cpp': parser = cpp().language.parser; break;
     case 'rust': parser = rust().language.parser; break;
+    case 'javascript': parser = javascript().language.parser; break;
+    case 'typescript': parser = javascript({ typescript: true }).language.parser; break;
   }
   parserCache[key] = parser ?? undefined;
   return parser;

@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { Node, Edge } from 'reactflow';
-import { MachineProperties } from '../yamlConverter';
+import { MachineProperties, computeRelativePath } from '../yamlConverter';
 import { getAllDescendants, computeNodePath } from '../utils/nodeUtils';
 import {
   buildRegex,
@@ -60,6 +60,19 @@ export interface UseSearchReplaceParams {
 const NODE_FIELDS = ['label', 'entry', 'exit', 'do', 'annotation'] as const;
 // Edge fields to search
 const EDGE_FIELDS = ['guard', 'action'] as const;
+// Edge virtual path fields (derived, read-only in replace)
+const EDGE_PATH_FIELDS = ['source', 'target'] as const;
+
+function getEdgePathText(edge: Edge, field: 'source' | 'target', nodes: Node[]): string {
+  const sourcePath = computeNodePath(edge.source, nodes);
+  const targetNode = nodes.find(n => n.id === edge.target);
+  const effectiveTargetPath = targetNode?.type === 'proxyNode'
+    ? ((targetNode.data.targetPath as string) || computeNodePath(edge.target, nodes))
+    : computeNodePath(edge.target, nodes);
+  return field === 'target'
+    ? computeRelativePath(sourcePath, effectiveTargetPath)
+    : computeRelativePath(effectiveTargetPath, sourcePath);
+}
 // Machine properties fields to search (skip language/settings)
 const MACHINE_FIELDS = ['includes', 'context', 'context_init', 'entry', 'exit', 'do'] as const;
 const MACHINE_HOOK_FIELDS = ['hooks.entry', 'hooks.exit', 'hooks.do', 'hooks.transition'] as const;
@@ -178,6 +191,11 @@ export function useSearchReplace(params: UseSearchReplaceParams) {
       for (const field of EDGE_FIELDS) {
         if (!fieldOk(field)) continue;
         const val = (edge.data?.[field] as string) || '';
+        if (val) result.push(...findMatchesInField(val, regex, edge.id, 'edge', field));
+      }
+      for (const field of EDGE_PATH_FIELDS) {
+        if (!fieldOk(field)) continue;
+        const val = getEdgePathText(edge, field, nodes);
         if (val) result.push(...findMatchesInField(val, regex, edge.id, 'edge', field));
       }
     };
@@ -311,6 +329,7 @@ export function useSearchReplace(params: UseSearchReplaceParams) {
         return { ...n, data: { ...n.data, [match.fieldName]: applyOneReplacement(oldVal, match) } };
       }));
     } else if (match.ownerKind === 'edge') {
+      if (match.fieldName === 'source' || match.fieldName === 'target') return; // derived path, not editable via text replace
       setEdges(eds => eds.map(e => {
         if (e.id !== match.ownerId) return e;
         const oldVal = (e.data?.[match.fieldName] as string) || '';
@@ -360,6 +379,7 @@ export function useSearchReplace(params: UseSearchReplaceParams) {
           if (!nodeUpdates.has(m.ownerId)) nodeUpdates.set(m.ownerId, {});
           nodeUpdates.get(m.ownerId)![m.fieldName] = text.replace(regex, normalizedTerm);
         } else if (m.ownerKind === 'edge') {
+          if (m.fieldName === 'source' || m.fieldName === 'target') continue;
           const edge = edges.find(e => e.id === m.ownerId);
           const text = (edge?.data?.[m.fieldName] as string) || '';
           if (!edgeUpdates.has(m.ownerId)) edgeUpdates.set(m.ownerId, {});
@@ -413,6 +433,8 @@ export function useSearchReplace(params: UseSearchReplaceParams) {
       // Sort by startIndex descending so replacements don't shift earlier positions
       const sorted = [...fieldMatches].sort((a, b) => b.startIndex - a.startIndex);
       const first = sorted[0];
+
+      if (first.ownerKind === 'edge' && (first.fieldName === 'source' || first.fieldName === 'target')) continue;
 
       let text = '';
       if (first.ownerKind === 'node') {
@@ -484,7 +506,9 @@ export function useSearchReplace(params: UseSearchReplaceParams) {
           const srcPath = computeNodePath(edge.source, nodes) || edge.source;
           const tgtPath = computeNodePath(edge.target, nodes) || edge.target;
           ownerLabel = `${srcPath} \u2192 ${tgtPath}`;
-          text = (edge.data?.[m.fieldName] as string) || '';
+          text = (m.fieldName === 'source' || m.fieldName === 'target')
+            ? getEdgePathText(edge, m.fieldName, nodes)
+            : (edge.data?.[m.fieldName] as string) || '';
         }
       } else {
         ownerLabel = 'Machine';
