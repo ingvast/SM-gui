@@ -1,6 +1,5 @@
 import { useCallback } from 'react';
 import { Node } from 'reactflow';
-import { isAncestorOf } from '../utils/nodeUtils';
 import { getAbsoluteNodeBounds } from '../semanticZoom';
 
 export function useGrouping(
@@ -22,8 +21,10 @@ export function useGrouping(
 
     for (const node of nodes) {
       if (node.id === selectedNode.id) continue;
-      if (node.parentId === selectedNode.id) continue;
-      if (isAncestorOf(node.id, selectedNode.id, nodes)) continue;
+      // Only adopt the selected state's current siblings. Nodes already nested
+      // inside another state (including descendants of the selected state itself)
+      // must not be stolen out of their hierarchy — doing so flattens the tree.
+      if (node.parentId !== selectedNode.parentId) continue;
 
       const nodeBounds = getAbsoluteNodeBounds(node.id, nodes);
       if (!nodeBounds) continue;
@@ -40,21 +41,14 @@ export function useGrouping(
     }
 
     if (nodesToGroup.length === 0) {
-      console.log('No nodes found inside the selected state to group.');
+      console.log('No sibling states found inside the selected state to group.');
       return;
     }
-
-    // Only reparent top-level nodes — skip nodes whose parent is already being grouped
-    const nodesToGroupSet = new Set(nodesToGroup);
-    const topLevelNodesToGroup = nodesToGroup.filter((id) => {
-      const node = nodes.find(n => n.id === id);
-      return !node?.parentId || !nodesToGroupSet.has(node.parentId);
-    });
 
     saveSnapshot();
     setNodes((nds) =>
       nds.map((node) => {
-        if (topLevelNodesToGroup.includes(node.id)) {
+        if (nodesToGroup.includes(node.id)) {
           const nodeBounds = getAbsoluteNodeBounds(node.id, nds);
           if (!nodeBounds) return node;
 
@@ -72,7 +66,7 @@ export function useGrouping(
       })
     );
 
-    console.log(`Grouped ${topLevelNodesToGroup.length} state(s) into ${selectedNode.data.label}.`);
+    console.log(`Grouped ${nodesToGroup.length} state(s) into ${selectedNode.data.label}.`);
   }, [nodes, setNodes, saveSnapshot]);
 
   const handleUngroupState = useCallback((nodeId: string) => {
