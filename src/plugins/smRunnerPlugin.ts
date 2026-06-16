@@ -77,6 +77,23 @@ export function findEsbuild(): string {
   return 'esbuild';
 }
 
+// Electron on macOS launches without the user's shell PATH, so binaries
+// installed via Homebrew or user scripts won't be found. Use a login shell
+// to resolve the real path before calling the tool.
+export function findOnShellPath(name: string): string {
+  try {
+    const shell = process.env.SHELL || '/bin/sh';
+    const found = execSync(`${shell} -l -c "which ${name}"`, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 5000,
+    }).toString().trim();
+    if (found) return found;
+  } catch {
+    // fall through to bare name
+  }
+  return name;
+}
+
 function cleanup(dir: string) {
   try {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -108,8 +125,9 @@ export async function compileAndLoad(filePath: string): Promise<{
   const outBase = path.join(tmpDir, 'statemachine');
 
   // 1. Compile .smb → .ts
+  const smCompilerBin = findOnShellPath('sm-compiler');
   try {
-    const result = execSync(`sm-compiler -o ${q(outBase)} --lang typescript ${q(filePath)}`, {
+    const result = execSync(`${q(smCompilerBin)} -o ${q(outBase)} --lang typescript ${q(filePath)}`, {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 15000,
     });
