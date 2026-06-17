@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { computeRelativePath } from './yamlConverter';
+import { computeRelativePath, sigilizePseudoRef } from './yamlConverter';
 import {
   Box,
   TextField,
@@ -155,7 +155,9 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     }
 
     const sourcePath = computeNodePathLocal(sourceId);
-    return computeRelativePath(sourcePath, effectiveTargetPath);
+    const rel = computeRelativePath(sourcePath, effectiveTargetPath);
+    // Pseudo-state targets (decisions) carry the `@` sigil on the final segment.
+    return targetNode.type === 'decisionNode' ? sigilizePseudoRef(rel) : rel;
   }, [nodes, computeNodePathLocal]);
 
   // Get transition source display label using relative path rules (source as seen from target's perspective).
@@ -168,7 +170,10 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     } else {
       effectiveTargetPath = computeNodePathLocal(targetId);
     }
-    return computeRelativePath(effectiveTargetPath, sourcePath);
+    const rel = computeRelativePath(effectiveTargetPath, sourcePath);
+    // Pseudo-state sources (decisions) carry the `@` sigil on the final segment.
+    const sourceNode = nodes.find(n => n.id === sourceId);
+    return sourceNode?.type === 'decisionNode' ? sigilizePseudoRef(rel) : rel;
   }, [nodes, computeNodePathLocal]);
 
   // Resolve proxy node to its real target ID

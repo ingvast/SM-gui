@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import yaml from 'js-yaml';
 import { Node, Edge } from 'reactflow';
 import {
   convertToYaml,
@@ -9,6 +10,8 @@ import {
   applyLegacyTransitionRewrite,
   detectSmbVersion,
   SMB_FORMAT_VERSION,
+  sigilizePseudoRef,
+  stripPseudoSigil,
 } from './yamlConverter';
 
 // ---------------------------------------------------------------------------
@@ -33,6 +36,22 @@ function edge(id: string, source: string, target: string, guard = ''): Edge {
     target,
     data: { guard, action: '', event: '' },
   };
+}
+
+function decisionNode(id: string, label: string, parentId?: string): Node {
+  return {
+    id,
+    type: 'decisionNode',
+    position: { x: 10, y: 10 },
+    data: { label, history: false, orthogonal: false, entry: '', exit: '', do: '' },
+    style: { width: 15, height: 15 },
+    ...(parentId ? { parentId, extent: 'parent' as const } : {}),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseYaml(y: string): any {
+  return yaml.load(y);
 }
 
 // ---------------------------------------------------------------------------
@@ -281,5 +300,255 @@ describe('YAML round-trip', () => {
     expect(rootOut.parentId).toBeUndefined();
     expect(childOut.parentId).toBe(rootOut.id);
     expect(gcOut.parentId).toBe(childOut.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sigil helpers
+// ---------------------------------------------------------------------------
+
+describe('sigilizePseudoRef / stripPseudoSigil', () => {
+  const cases: [string, string][] = [
+    ['D1', '@D1'],
+    ['./Child/D2', './Child/@D2'],
+    ['../Sib/A3', '../Sib/@A3'],
+    ['/Top/Sub/D4', '/Top/Sub/@D4'],
+    ['/D4', '/@D4'],
+  ];
+
+  it.each(cases)('sigilizes %s -> %s', (rel, ref) => {
+    expect(sigilizePseudoRef(rel)).toBe(ref);
+  });
+
+  it.each(cases)('strips %s back from its ref', (rel, ref) => {
+    expect(stripPseudoSigil(ref)).toBe(rel);
+  });
+
+  it('strip(sigilize(x)) round-trips for every form', () => {
+    cases.forEach(([rel]) => {
+      expect(stripPseudoSigil(sigilizePseudoRef(rel))).toBe(rel);
+    });
+  });
+
+  it('returns undefined for a non-sigilled final segment', () => {
+    expect(stripPseudoSigil('./Child/D2')).toBeUndefined();
+    expect(stripPseudoSigil('D1')).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hierarchical pseudo-state references (0.6.0)
+// ---------------------------------------------------------------------------
+
+describe('hierarchical pseudo-state references (0.6.0)', () => {
+  // --- Export: the emitted `to` ref string ---
+
+  it('same-container decision emits a bare @D1', () => {
+    const nodes = [stateNode('a', 'A'), decisionNode('d1', 'D1')];
+    const y = convertToYaml(nodes, [edge('e', 'a', 'd1')], false, false, defaultMachineProperties);
+    const doc = parseYaml(y);
+    expect(doc.states.A.transitions[0].to).toBe('@D1');
+  });
+
+  it('descendant decision emits ./Child/@D2', () => {
+    const nodes = [
+      stateNode('p', 'P'),
+      stateNode('c', 'Child', 'p'),
+      decisionNode('d2', 'D2', 'c'),
+    ];
+    const y = convertToYaml(nodes, [edge('e', 'p', 'd2')], false, false, defaultMachineProperties);
+    const doc = parseYaml(y);
+    expect(doc.states.P.transitions[0].to).toBe('./Child/@D2');
+  });
+
+  it('sibling-subtree decision emits ../Sib/@D3 (sigil on final segment)', () => {
+    const nodes = [
+      stateNode('top', 'Top'),
+      stateNode('src', 'Src', 'top'),
+      stateNode('sib', 'Sib', 'top'),
+      decisionNode('d3', 'D3', 'sib'),
+    ];
+    const y = convertToYaml(nodes, [edge('e', 'src', 'd3')], false, false, defaultMachineProperties);
+    const doc = parseYaml(y);
+    expect(doc.states.Top.states.Src.transitions[0].to).toBe('../Sib/@D3');
+  });
+
+  it('cross-subtree decision emits an absolute /Top/Sub/@D4', () => {
+    const nodes = [
+      stateNode('ta', 'TopA'),
+      stateNode('sa', 'Sub', 'ta'),
+      stateNode('tb', 'TopB'),
+      stateNode('sb', 'SubB', 'tb'),
+      decisionNode('d4', 'D4', 'sb'),
+    ];
+    const y = convertToYaml(nodes, [edge('e', 'sa', 'd4')], false, false, defaultMachineProperties);
+    const doc = parseYaml(y);
+    expect(doc.states.TopA.states.Sub.transitions[0].to).toBe('/TopB/SubB/@D4');
+  });
+
+  it('root-level decision from a deep state emits single-segment /@D5', () => {
+    const nodes = [
+      stateNode('ta', 'TopA'),
+      stateNode('sa', 'Sub', 'ta'),
+      decisionNode('d5', 'D5'),
+    ];
+    const y = convertToYaml(nodes, [edge('e', 'sa', 'd5')], false, false, defaultMachineProperties);
+    const doc = parseYaml(y);
+    expect(doc.states.TopA.states.Sub.transitions[0].to).toBe('/@D5');
+  });
+
+  // --- Round-trip ---
+
+  it('modern round-trip reconnects a descendant-decision edge to the right node', () => {
+    const nodes = [
+      stateNode('p', 'P'),
+      stateNode('c', 'Child', 'p'),
+      decisionNode('d2', 'D2', 'c'),
+    ];
+    const y = convertToYaml(nodes, [edge('e', 'p', 'd2')], false, false, defaultMachineProperties);
+    // Export tags 0.6.0, so import uses the hierarchical resolver.
+    expect(detectSmbVersion(y)).toBe(SMB_FORMAT_VERSION);
+    const { nodes: out, edges: outEdges } = convertFromYaml(y);
+    const p = out.find(n => n.data.label === 'P')!;
+    const d2 = out.find(n => n.type === 'decisionNode' && n.data.label === 'D2')!;
+    expect(outEdges.some(e => e.source === p.id && e.target === d2.id)).toBe(true);
+  });
+
+  it('two containers with the same local decision name resolve independently', () => {
+    // P and Q each hold a child decision named "D1"; each is fed by its own local
+    // source and points to its own local target. Under the old flat global map the
+    // two D1s collided; the hierarchical resolver keeps them distinct.
+    const nodes = [
+      stateNode('p', 'P'),
+      stateNode('ps', 'Sp', 'p'),
+      stateNode('pt', 'Tp', 'p'),
+      decisionNode('pd', 'D1', 'p'),
+      stateNode('q', 'Q'),
+      stateNode('qs', 'Sq', 'q'),
+      stateNode('qt', 'Tq', 'q'),
+      decisionNode('qd', 'D1', 'q'),
+    ];
+    const edges = [
+      edge('e1', 'ps', 'pd'), // Sp -> P/D1
+      edge('e2', 'pd', 'pt'), // P/D1 -> Tp
+      edge('e3', 'qs', 'qd'), // Sq -> Q/D1
+      edge('e4', 'qd', 'qt'), // Q/D1 -> Tq
+    ];
+    const y = convertToYaml(nodes, edges, false, false, defaultMachineProperties);
+    const { nodes: out, edges: outEdges } = convertFromYaml(y);
+
+    const pNode = out.find(n => n.data.label === 'P')!;
+    const qNode = out.find(n => n.data.label === 'Q')!;
+    const pD1 = out.find(n => n.type === 'decisionNode' && n.data.label === 'D1' && n.parentId === pNode.id)!;
+    const qD1 = out.find(n => n.type === 'decisionNode' && n.data.label === 'D1' && n.parentId === qNode.id)!;
+    expect(pD1.id).not.toBe(qD1.id);
+
+    const sp = out.find(n => n.data.label === 'Sp')!;
+    const tp = out.find(n => n.data.label === 'Tp')!;
+    const sq = out.find(n => n.data.label === 'Sq')!;
+    const tq = out.find(n => n.data.label === 'Tq')!;
+
+    // Incoming: each source feeds the decision in its OWN container.
+    expect(outEdges.some(e => e.source === sp.id && e.target === pD1.id)).toBe(true);
+    expect(outEdges.some(e => e.source === sq.id && e.target === qD1.id)).toBe(true);
+    // Outgoing (own-id lookup): each decision points to its OWN container's target.
+    expect(outEdges.some(e => e.source === pD1.id && e.target === tp.id)).toBe(true);
+    expect(outEdges.some(e => e.source === qD1.id && e.target === tq.id)).toBe(true);
+  });
+
+  // --- Legacy back-compat ---
+
+  it('legacy (< 0.6.0) file resolves a flat global @D1', () => {
+    const legacy = [
+      'SM-builder-version: "0.5.6"',
+      'states:',
+      '  A:',
+      '    transitions:',
+      '      - to: "@D1"',
+      'decisions:',
+      '  D1:',
+      '    - to: A',
+      '',
+    ].join('\n');
+    const { nodes, edges } = convertFromYaml(legacy);
+    const a = nodes.find(n => n.data.label === 'A')!;
+    const d1 = nodes.find(n => n.type === 'decisionNode' && n.data.label === 'D1')!;
+    expect(edges.some(e => e.source === a.id && e.target === d1.id)).toBe(true);
+  });
+
+  it('decision-to-decision across containers emits/round-trips a cross-subtree ref', () => {
+    // A decision in container P targets a decision in container Q. The ref is emitted
+    // relative to the SOURCE decision's scope (P/Dp) and must reconnect on import.
+    const nodes = [
+      stateNode('p', 'P'),
+      decisionNode('dp', 'Dp', 'p'),
+      stateNode('q', 'Q'),
+      decisionNode('dq', 'Dq', 'q'),
+    ];
+    const y = convertToYaml(nodes, [edge('e', 'dp', 'dq')], false, false, defaultMachineProperties);
+    const doc = parseYaml(y);
+    // From P/Dp to Q/Dq: cross-subtree -> absolute, sigil on final segment.
+    expect(doc.states.P.decisions.Dp[0].to).toBe('/Q/@Dq');
+
+    const { nodes: out, edges: outEdges } = convertFromYaml(y);
+    const dp = out.find(n => n.type === 'decisionNode' && n.data.label === 'Dp')!;
+    const dq = out.find(n => n.type === 'decisionNode' && n.data.label === 'Dq')!;
+    expect(outEdges.some(e => e.source === dp.id && e.target === dq.id)).toBe(true);
+  });
+
+  it('a 0.5.x file keeps flat refs and is not path-rewritten', () => {
+    // 0.5.6 >= 0.4.0 so no legacy transition rewrite; 0.5.6 < 0.6.0 so flat @ refs.
+    // "../Sibling" from A/B must stay a Unix-style sibling-of-A (modern path semantics),
+    // and "@D1" must resolve via the flat global table.
+    const v056 = [
+      'SM-builder-version: "0.5.6"',
+      'states:',
+      '  A:',
+      '    states:',
+      '      B:',
+      '        transitions:',
+      '          - to: "@D1"',
+      '          - to: ../Sibling',
+      '  Sibling: {}',
+      'decisions:',
+      '  D1: []',
+      '',
+    ].join('\n');
+    const { nodes, edges } = convertFromYaml(v056);
+    const b = nodes.find(n => n.data.label === 'B')!;
+    const d1 = nodes.find(n => n.type === 'decisionNode' && n.data.label === 'D1')!;
+    const sibling = nodes.find(n => n.data.label === 'Sibling')!;
+    // Flat @D1 resolves (global table), not the hierarchical "A/D1" which doesn't exist.
+    expect(edges.some(e => e.source === b.id && e.target === d1.id)).toBe(true);
+    // "../Sibling" is NOT rewritten: under modern semantics it means A/Sibling (absent),
+    // so the edge is dropped — i.e. it does not reach the top-level Sibling.
+    expect(edges.some(e => e.source === b.id && e.target === sibling.id)).toBe(false);
+  });
+
+  it('missing-version policy selects flat vs hierarchical @-resolution', () => {
+    // One decision D1 exists, in container P. A source Q/Sq references "@D1".
+    //  - legacy/flat: "@D1" is a global name -> resolves to P/D1 (cross-container).
+    //  - modern/hierarchical: "@D1" means D1 in Sq's own container Q -> none -> dropped.
+    const noVersion = [
+      'states:',
+      '  P:',
+      '    decisions:',
+      '      D1: []',
+      '  Q:',
+      '    states:',
+      '      Sq:',
+      '        transitions:',
+      '          - to: "@D1"',
+      '',
+    ].join('\n');
+
+    const legacy = convertFromYaml(noVersion, 'legacy');
+    const sqL = legacy.nodes.find(n => n.data.label === 'Sq')!;
+    const d1L = legacy.nodes.find(n => n.type === 'decisionNode' && n.data.label === 'D1')!;
+    expect(legacy.edges.some(e => e.source === sqL.id && e.target === d1L.id)).toBe(true);
+
+    const modern = convertFromYaml(noVersion, 'modern');
+    const sqM = modern.nodes.find(n => n.data.label === 'Sq')!;
+    expect(modern.edges.some(e => e.source === sqM.id)).toBe(false);
   });
 });

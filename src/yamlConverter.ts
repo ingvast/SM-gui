@@ -9,6 +9,30 @@ export const SMB_FORMAT_VERSION = pkg.version;
 // Files with SM-builder-version < this require legacy rewrite on load.
 const MODERN_TRANSITION_MIN_VERSION = '0.4.0';
 
+// Pseudo-state (decision/and) references became hierarchical + locally scoped at
+// this version. Files >= this use relative-path `@` refs (e.g. `./Child/@D2`);
+// files < this (or absent, per the load-time policy) use flat global `@name` lookup.
+const PSEUDOSTATE_REF_MIN_VERSION = '0.6.0';
+
+// Insert the `@` pseudo-state sigil before the final segment of a relative path.
+// `D1` -> `@D1`, `./Child/D2` -> `./Child/@D2`, `/Top/D4` -> `/Top/@D4`, `/D4` -> `/@D4`.
+export function sigilizePseudoRef(relPath: string): string {
+  const idx = relPath.lastIndexOf('/');
+  if (idx < 0) return '@' + relPath;
+  return relPath.slice(0, idx + 1) + '@' + relPath.slice(idx + 1);
+}
+
+// Remove the `@` sigil from the final segment of a pseudo-state reference, leaving a
+// plain relative path that `resolveTargetPath` can resolve. Returns undefined if the
+// final segment is not sigil-marked (malformed ref).
+export function stripPseudoSigil(ref: string): string | undefined {
+  const idx = ref.lastIndexOf('/');
+  const seg = idx < 0 ? ref : ref.slice(idx + 1);
+  if (!seg.startsWith('@')) return undefined;
+  const bare = seg.slice(1);
+  return idx < 0 ? bare : ref.slice(0, idx + 1) + bare;
+}
+
 function compareSemver(a: string, b: string): number {
   const pa = a.split('.').map(n => parseInt(n, 10) || 0);
   const pb = b.split('.').map(n => parseInt(n, 10) || 0);
@@ -318,14 +342,10 @@ export function convertToYaml(
     edgesBySource.set(edge.source, list);
   });
 
-  // Resolve an edge target to a YAML path string
-  // If target is a decision, use @name; if target is a proxy, resolve to real target; otherwise relative path from source
+  // Resolve an edge target to a YAML path string.
+  // Decision target: a hierarchical `@`-ref relative to the source (sigil on the final
+  // segment). Proxy target: resolve to the real target's path. Otherwise: relative path.
   function resolveEdgeTarget(edge: Edge): string {
-    const decisionName = decisionIdToName.get(edge.target);
-    if (decisionName) {
-      return `@${decisionName}`;
-    }
-
     // Determine the source path used for relative-path computation.
     // For a decision, the compiler treats the decision as a pseudo-leaf inside
     // its container, so its scope is `container_path + decisionName`. We must
@@ -339,6 +359,19 @@ export function convertToYaml(
       sourcePath = parentPath ? `${parentPath}/${decisionLabel}` : decisionLabel;
     } else {
       sourcePath = pathMap.get(edge.source);
+    }
+
+    // Decision target: emit a hierarchical `@`-ref scoped relative to the source,
+    // with the sigil on the final segment (e.g. `@D1`, `./Child/@D2`, `/Top/@D4`).
+    const decisionName = decisionIdToName.get(edge.target);
+    if (decisionName) {
+      const targetDecision = decisionNodes.find(n => n.id === edge.target);
+      const decisionParentPath = targetDecision?.parentId ? pathMap.get(targetDecision.parentId) : undefined;
+      const decisionTargetPath = decisionParentPath ? `${decisionParentPath}/${decisionName}` : decisionName;
+      if (sourcePath) {
+        return sigilizePseudoRef(computeRelativePath(sourcePath, decisionTargetPath));
+      }
+      return `@${decisionName}`;
     }
 
     // If target is a proxy node, resolve to the real target state path
@@ -965,6 +998,13 @@ export function convertFromYaml(
     applyLegacyTransitionRewrite(doc);
   }
 
+  // Whether `@` pseudo-state references are hierarchical (>= 0.6.0) or flat global
+  // (< 0.6.0 / absent per policy). Independent of the legacy transition rewrite: a
+  // 0.5.x file skips the rewrite yet still uses flat `@` refs.
+  const modernRefs = fileVersion
+    ? compareSemver(fileVersion, PSEUDOSTATE_REF_MIN_VERSION) >= 0
+    : treatMissingVersionAs === 'modern';
+
   const nodes: Node<StateData>[] = [];
   const edges: Edge[] = [];
   let nodeIdCounter = 1;
@@ -972,8 +1012,12 @@ export function convertFromYaml(
   // Map from path to node ID for resolving transitions
   const pathToIdMap = new Map<string, string>();
 
-  // Map from decision name to node ID for resolving @name references
+  // Map from decision name to node ID for resolving flat (< 0.6.0) @name references
   const decisionNameToIdMap = new Map<string, string>();
+
+  // Map from absolute pseudo-state path to node ID for resolving hierarchical
+  // (>= 0.6.0) @-references (e.g. `Container/D1`).
+  const pseudoPathToIdMap = new Map<string, string>();
 
   // Auto-layout settings
   const defaultWidth = 150;
@@ -1068,7 +1112,7 @@ export function convertFromYaml(
 
     // Process decision children
     if (safeStateData.decisions) {
-      processDecisions(safeStateData.decisions, nodeId, childX, childY, safeStateData.decisionGraphics);
+      processDecisions(safeStateData.decisions, nodeId, fullPath, childX, childY, safeStateData.decisionGraphics);
     }
 
     // If no graphics, expand node to fit children
@@ -1087,6 +1131,7 @@ export function convertFromYaml(
   function processDecisions(
     decisions: Record<string, YamlDecisionTransition[]>,
     parentId: string | undefined,
+    parentPath: string,
     autoLayoutX: number,
     autoLayoutY: number,
     decGraphics?: Record<string, YamlDecisionGraphics>
@@ -1096,6 +1141,7 @@ export function convertFromYaml(
       const decisionData = decisions[decisionName];
       const nodeId = `node_${nodeIdCounter++}`;
       decisionNameToIdMap.set(decisionName, nodeId);
+      pseudoPathToIdMap.set(parentPath ? `${parentPath}/${decisionName}` : decisionName, nodeId);
 
       let x = dx;
       let y = autoLayoutY;
@@ -1149,7 +1195,7 @@ export function convertFromYaml(
 
   // Process root-level decisions
   if (doc.decisions) {
-    processDecisions(doc.decisions, undefined, topLevelX, topLevelY, doc.decisionGraphics);
+    processDecisions(doc.decisions, undefined, '', topLevelX, topLevelY, doc.decisionGraphics);
   }
 
   // Process proxy connectors
@@ -1280,10 +1326,16 @@ export function convertFromYaml(
   function resolveTransitionTarget(rawTarget: string, sourcePath: string): string | undefined {
     if (!rawTarget) return undefined;
 
-    // Decision reference: @decisionName
-    if (rawTarget.startsWith('@')) {
-      const decisionName = rawTarget.substring(1);
-      return decisionNameToIdMap.get(decisionName);
+    // Pseudo-state (decision/and) reference.
+    if (rawTarget.startsWith('@') || rawTarget.includes('/@')) {
+      if (modernRefs) {
+        // Hierarchical: strip the sigil, resolve the path, look up by absolute path.
+        const barePath = stripPseudoSigil(rawTarget);
+        if (barePath === undefined) return undefined;
+        return pseudoPathToIdMap.get(resolveTargetPath(barePath, sourcePath));
+      }
+      // Legacy flat global lookup by bare name.
+      return decisionNameToIdMap.get(rawTarget.substring(1));
     }
 
     // State path reference
@@ -1350,18 +1402,20 @@ export function convertFromYaml(
     // Process decision transitions
     if (stateData.decisions) {
       Object.keys(stateData.decisions).forEach(decisionName => {
-        const decisionId = decisionNameToIdMap.get(decisionName);
+        // Decision scope is `container_path + decisionName` (decision sits as
+        // a pseudo-leaf inside its container, matching the compiler).
+        // `./x` is invalid for decisions (decisions have no children) and
+        // will not resolve.
+        const decisionScope = sourcePath ? `${sourcePath}/${decisionName}` : decisionName;
+        // Own-id lookup: by absolute path (>= 0.6.0, avoids cross-container name
+        // collisions) or by flat name (legacy).
+        const decisionId = modernRefs ? pseudoPathToIdMap.get(decisionScope) : decisionNameToIdMap.get(decisionName);
         if (!decisionId) return;
 
         const transitions = stateData.decisions![decisionName];
 
         transitions.forEach(transition => {
           if (!transition.to) return;
-          // Decision scope is `container_path + decisionName` (decision sits as
-          // a pseudo-leaf inside its container, matching the compiler).
-          // `./x` is invalid for decisions (decisions have no children) and
-          // will not resolve.
-          const decisionScope = sourcePath ? `${sourcePath}/${decisionName}` : decisionName;
           let targetId = resolveTransitionTarget(transition.to, decisionScope);
           // If this transition was routed via a proxy, use the proxy node as the target
           if (transition.graphics?.proxyId) {
@@ -1400,7 +1454,8 @@ export function convertFromYaml(
   // Process root-level decision transitions
   if (doc.decisions) {
     Object.keys(doc.decisions).forEach(decisionName => {
-      const decisionId = decisionNameToIdMap.get(decisionName);
+      // Own-id lookup: root path is just the bare name in both schemes.
+      const decisionId = modernRefs ? pseudoPathToIdMap.get(decisionName) : decisionNameToIdMap.get(decisionName);
       if (!decisionId) return;
 
       const transitions = doc.decisions![decisionName];
