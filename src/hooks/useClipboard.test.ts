@@ -167,7 +167,7 @@ describe('useClipboard — duplicate', () => {
     expect(origParent.data.initial).toBe('c');
   });
 
-  it('gives duplicated decisions globally-unique labels (YAML @-references are unscoped)', async () => {
+  it('keeps a duplicated decision label when the copy lands in a different container (per-container scoping, 0.6.0)', async () => {
     const initial = [
       makeState('p', 'Parent'),
       makeState('c', 'Child', 'p'),
@@ -178,9 +178,11 @@ describe('useClipboard — duplicate', () => {
 
     const allDecisions = h.nodes.filter(n => n.type === 'decisionNode');
     expect(allDecisions).toHaveLength(2);
-    const labels = allDecisions.map(d => d.data.label as string);
-    expect(new Set(labels).size).toBe(2); // globally unique
-    expect(labels).toContain('D1');
+    // The duplicated decision lives in the NEW parent — a different container — so
+    // it may reuse the local name D1 (decisions are locally scoped under >= 0.6.0).
+    const byParent = new Map(allDecisions.map(d => [d.parentId, d.data.label as string]));
+    expect(byParent.size).toBe(2); // two distinct containers
+    expect([...byParent.values()]).toEqual(['D1', 'D1']);
   });
 
   it('renames a duplicated root-level decision to avoid label collision', async () => {

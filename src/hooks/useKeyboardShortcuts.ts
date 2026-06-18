@@ -28,6 +28,7 @@ interface KeyboardShortcutsParams {
   edges: Edge[];
   isSearchOpen: boolean;
   isAddingDecision: boolean;
+  isAddingAnd: boolean;
   isAddingTransition: boolean;
   isUngroupingMode: boolean;
   isSettingInitial: boolean;
@@ -41,6 +42,7 @@ interface KeyboardShortcutsParams {
   // Setters
   setIsAddingNode: (v: boolean) => void;
   setIsAddingDecision: (v: boolean) => void;
+  setIsAddingAnd: (v: boolean) => void;
   setIsAddingTransition: (v: boolean) => void;
   setTransitionSourceId: (id: string | null) => void;
   setIsUngroupingMode: (v: boolean) => void;
@@ -69,10 +71,10 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
     handleOpenSearch, handleCloseSearch,
     nodes, edges,
     isSearchOpen,
-    isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
+    isAddingDecision, isAddingAnd, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
     isRetargetingTransition, isResourcingTransition,
     selectedMarkerId, isViewMode,
-    setIsAddingNode, setIsAddingDecision, setIsAddingTransition, setTransitionSourceId,
+    setIsAddingNode, setIsAddingDecision, setIsAddingAnd, setIsAddingTransition, setTransitionSourceId,
     setIsUngroupingMode, setIsSettingInitial, setInitialTargetId, setIsSettingHistory,
     setIsAddingProxy, setProxyTargetId, setProxySourceEdgeId,
     setIsRetargetingTransition, setIsResourcingTransition, setRetargetEdgeId,
@@ -144,6 +146,9 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
       } else if (event.key === 'd' && !isModifierPressed) {
         event.preventDefault();
         setIsAddingDecision(true);
+      } else if (event.key === 'a' && !isModifierPressed) {
+        event.preventDefault();
+        setIsAddingAnd(true);
       } else if (event.key === 't' && !isModifierPressed) {
         event.preventDefault();
         const selectedEdge = edges.find(e => e.selected);
@@ -197,6 +202,9 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
       } else if (event.key === 'Escape' && isAddingDecision) {
         event.preventDefault();
         setIsAddingDecision(false);
+      } else if (event.key === 'Escape' && isAddingAnd) {
+        event.preventDefault();
+        setIsAddingAnd(false);
       } else if (event.key === 'Escape' && isAddingTransition) {
         event.preventDefault();
         setIsAddingTransition(false);
@@ -328,7 +336,7 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
     handleSemanticZoomToSelected, handleNavigateUp, handleGroupStates, handleUngroupState,
     handleUndo, handleRedo, saveSnapshot, handleCopyImage, handleExportPdf, toggleShowLabels,
     handleOpenSearch, handleCloseSearch,
-    setIsAddingNode, setIsAddingDecision, isAddingDecision,
+    setIsAddingNode, setIsAddingDecision, isAddingDecision, setIsAddingAnd, isAddingAnd,
     nodes, edges, isSearchOpen, isViewMode, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
     isRetargetingTransition, isResourcingTransition,
     selectedMarkerId, setEdges, setRootHistory, setMachineProperties, setNodes,

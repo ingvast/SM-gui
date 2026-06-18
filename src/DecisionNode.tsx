@@ -7,6 +7,7 @@ import './DecisionNode.css';
 
 interface DecisionNodeData {
   label: string;
+  isAnd?: boolean;
   screenWidth?: number;
 }
 
@@ -15,13 +16,16 @@ interface DecisionNodeProps {
   selected: boolean;
 }
 
-export default memo(({ selected }: DecisionNodeProps) => {
+export default memo(({ data, selected }: DecisionNodeProps) => {
   return (
-    <div className={`decision-node${selected ? ' selected' : ''}`}>
+    <div className={`decision-node${data.isAnd ? ' and-node' : ''}${selected ? ' selected' : ''}`}>
       <NodeResizer
         isVisible={selected}
         keepAspectRatio={true}
       />
+
+      {/* AND nodes show an inscribed ampersand to distinguish them from decisions */}
+      {data.isAnd && <span className="and-glyph">&amp;</span>}
 
       {/* Invisible ReactFlow Handles for connection logic */}
       <Handle type="source" position={Position.Top} id="top-source" className="invisible-handle" />

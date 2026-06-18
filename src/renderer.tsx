@@ -65,7 +65,7 @@ import {
 } from './semanticZoom';
 import { calculateNodeDepth, isAncestorOf, buildTreeData, getAllDescendants, computeNodePath } from './utils/nodeUtils';
 import { calculateBestHandles } from './utils/handleUtils';
-import { getNextId, getNextStateName, getNextDecisionName, getNextProxyName } from './utils/idCounters';
+import { getNextId, getNextStateName, getNextDecisionName, getNextAndName, getNextProxyName } from './utils/idCounters';
 import { useClipboard } from './hooks/useClipboard';
 import { useFileOperations } from './hooks/useFileOperations';
 import { useGrouping } from './hooks/useGrouping';
@@ -1373,6 +1373,7 @@ const App = () => {
   const [isAddingNode, setIsAddingNode] = useState(false);
   useEffect(() => { isAddingNodeRef.current = isAddingNode; }, [isAddingNode]);
   const [isAddingDecision, setIsAddingDecision] = useState(false);
+  const [isAddingAnd, setIsAddingAnd] = useState(false);
   const [isAddingProxy, setIsAddingProxy] = useState(false);
   const [proxyTargetId, setProxyTargetId] = useState<string | null>(null);
   const [proxySourceEdgeId, setProxySourceEdgeId] = useState<string | null>(null);
@@ -2152,11 +2153,11 @@ const App = () => {
     handleCloseSearch: search.closeSearch,
     nodes, edges,
     isSearchOpen: search.isOpen,
-    isAddingDecision, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
+    isAddingDecision, isAddingAnd, isAddingTransition, isUngroupingMode, isSettingInitial, isSettingHistory, isAddingProxy,
     isRetargetingTransition, isResourcingTransition,
     selectedMarkerId,
     isViewMode,
-    setIsAddingNode, setIsAddingDecision, setIsAddingTransition, setTransitionSourceId,
+    setIsAddingNode, setIsAddingDecision, setIsAddingAnd, setIsAddingTransition, setTransitionSourceId,
     setIsUngroupingMode, setIsSettingInitial, setInitialTargetId, setIsSettingHistory,
     setIsAddingProxy, setProxyTargetId, setProxySourceEdgeId,
     setIsRetargetingTransition, setIsResourcingTransition, setRetargetEdgeId,
@@ -2217,6 +2218,21 @@ const App = () => {
       position: { x: worldX, y: worldY },
       ...(parentId ? { parentId, extent: 'parent' as const } : {}),
       data: { label: getNextDecisionName() },
+      style: { width: decisionSize, height: decisionSize },
+    };
+    saveSnapshot();
+    setNodes((nds) => nds.concat(newNode));
+  }, [viewportSize, effectiveScale, saveSnapshot, setNodes]);
+
+  // Create an AND node directly at a world position (a decisionNode with isAnd set)
+  const createAndAtWorld = useCallback((worldX: number, worldY: number, parentId?: string) => {
+    const decisionSize = (viewportSize.width * 0.015) / effectiveScale;
+    const newNode = {
+      id: getNextId(),
+      type: 'decisionNode',
+      position: { x: worldX, y: worldY },
+      ...(parentId ? { parentId, extent: 'parent' as const } : {}),
+      data: { label: getNextAndName(), isAnd: true },
       style: { width: decisionSize, height: decisionSize },
     };
     saveSnapshot();
@@ -2406,6 +2422,28 @@ const App = () => {
         saveSnapshot();
         setNodes((nds) => nds.concat(newNode));
         setIsAddingDecision(false);
+      } else if (isAddingAnd) {
+        // Convert screen click position to world coordinates
+        const rect = reactFlowWrapper.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        const screenX = event.clientX - rect.left;
+        const screenY = event.clientY - rect.top;
+        const worldX = (screenX - effectivePan.x) / effectiveScale;
+        const worldY = (screenY - effectivePan.y) / effectiveScale;
+
+        const decisionSize = (viewportSize.width * 0.015) / effectiveScale;
+
+        const newNode = {
+          id: getNextId(),
+          type: 'decisionNode',
+          position: { x: worldX, y: worldY },
+          data: { label: getNextAndName(), isAnd: true },
+          style: { width: decisionSize, height: decisionSize },
+        };
+        saveSnapshot();
+        setNodes((nds) => nds.concat(newNode));
+        setIsAddingAnd(false);
       } else if (isAddingNode) {
         // Convert screen click position to world coordinates
         const rect = reactFlowWrapper.current?.getBoundingClientRect();
@@ -2445,7 +2483,7 @@ const App = () => {
         );
       }
     },
-    [isAddingNode, isAddingDecision, isAddingProxy, proxyTargetId, proxySourceEdgeId, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setMachineProperties, setRootHistory, nodes, edges, effectiveScale, effectivePan, viewportSize, saveSnapshot]
+    [isAddingNode, isAddingDecision, isAddingAnd, isAddingProxy, proxyTargetId, proxySourceEdgeId, isSettingInitial, initialTargetId, isSettingHistory, setNodes, setEdges, setMachineProperties, setRootHistory, nodes, edges, effectiveScale, effectivePan, viewportSize, saveSnapshot]
   );
 
   // Capture snapshot before drag begins
@@ -2838,7 +2876,8 @@ const App = () => {
         event.stopPropagation();
       }
 
-      if (isAddingDecision && node.selected && node.type === 'stateNode') {
+      if ((isAddingDecision || isAddingAnd) && node.selected && node.type === 'stateNode') {
+        const placingAnd = isAddingAnd;
         const rect = reactFlowWrapper.current?.getBoundingClientRect();
         if (!rect) return;
 
@@ -2881,12 +2920,12 @@ const App = () => {
           position: newRelativePosition,
           parentId: node.id,
           extent: 'parent',
-          data: { label: getNextDecisionName() },
+          data: placingAnd ? { label: getNextAndName(), isAnd: true } : { label: getNextDecisionName() },
           style: { width: decisionSize, height: decisionSize },
         };
         saveSnapshot();
         setNodes((nds) => nds.concat(newNode));
-        setIsAddingDecision(false);
+        if (placingAnd) setIsAddingAnd(false); else setIsAddingDecision(false);
         event.stopPropagation();
       }
 
@@ -2966,7 +3005,7 @@ const App = () => {
         event.stopPropagation();
       }
     },
-    [isAddingNode, isAddingDecision, isAddingProxy, proxyTargetId, proxySourceEdgeId, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, isRetargetingTransition, isResourcingTransition, retargetEdgeId, setNodes, setEdges, setSelectedTreeItem, nodes, edges, effectiveScale, effectivePan, viewportSize, saveSnapshot]
+    [isAddingNode, isAddingDecision, isAddingAnd, isAddingProxy, proxyTargetId, proxySourceEdgeId, isAddingTransition, transitionSourceId, createTransition, isUngroupingMode, handleUngroupState, isSettingInitial, initialTargetId, isSettingHistory, isRetargetingTransition, isResourcingTransition, retargetEdgeId, setNodes, setEdges, setSelectedTreeItem, nodes, edges, effectiveScale, effectivePan, viewportSize, saveSnapshot]
   );
 
   return (
@@ -3158,13 +3197,13 @@ const App = () => {
 
         <Box
           ref={reactFlowWrapper}
-          className={isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
+          className={isAddingNode || isAddingDecision || isAddingAnd || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair' : isUngroupingMode ? 'ungroup-cursor' : ''}
           sx={{
             flexGrow: 1,
             position: 'relative',
-            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair' : isSpaceHeld ? 'grab' : 'default'),
+            cursor: isUngroupingMode ? 'n-resize' : (isAddingNode || isAddingDecision || isAddingAnd || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair' : isSpaceHeld ? 'grab' : 'default'),
             '& *': {
-              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingDecision || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair !important' : isSpaceHeld ? 'grab !important' : undefined),
+              cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingDecision || isAddingAnd || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair !important' : isSpaceHeld ? 'grab !important' : undefined),
             },
           }}
           onMouseDown={handlePaneMouseDown}
@@ -3205,6 +3244,10 @@ const App = () => {
                   <ListItemText>Add Decision</ListItemText>
                   <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>D</Typography>
                 </MenuItem>,
+                <MenuItem key="add-and" onClick={() => { closeContextMenu(); createAndAtWorld(worldX, worldY); }}>
+                  <ListItemText>Add And</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>A</Typography>
+                </MenuItem>,
                 <Divider key="div" />,
                 <MenuItem key="paste" onClick={() => { closeContextMenu(); handlePaste({ x: worldX, y: worldY }); }}>
                   <ListItemText>Paste</ListItemText>
@@ -3228,6 +3271,10 @@ const App = () => {
                 <MenuItem key="add-decision" onClick={() => { closeContextMenu(); createDecisionAtWorld(relX, relY, nodeId); }}>
                   <ListItemText>Add Decision</ListItemText>
                   <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>D</Typography>
+                </MenuItem>,
+                <MenuItem key="add-and" onClick={() => { closeContextMenu(); createAndAtWorld(relX, relY, nodeId); }}>
+                  <ListItemText>Add And</ListItemText>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 2, fontFamily: 'monospace' }}>A</Typography>
                 </MenuItem>,
                 <Divider key="div1" />,
                 <MenuItem key="copy" onClick={() => { closeContextMenu(); handleCopy(); }}>

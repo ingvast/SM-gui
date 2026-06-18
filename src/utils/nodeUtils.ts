@@ -45,11 +45,15 @@ export function getAllDescendants(parentNodeId: string, allNodes: Node[]): Node[
   return descendants;
 }
 
-// Decisions are referenced globally in YAML as `@Name` with no scope, so their
-// labels must be unique across the whole machine — not just per-parent.
-export function generateUniqueDecisionLabel(baseLabel: string, currentNodes: Node[]): string {
+// Pseudo-states (decisions and ands) are referenced via the `@` sigil and are
+// locally scoped (>= 0.6.0), so their labels need only be unique within their
+// container — and across both kinds, since both are `decisionNode`s sharing one
+// `@` namespace per container.
+export function generateUniqueDecisionLabel(baseLabel: string, currentNodes: Node[], parentId?: string): string {
   const used = new Set(
-    currentNodes.filter(n => n.type === 'decisionNode').map(n => (n.data.label as string).trim()),
+    currentNodes
+      .filter(n => n.type === 'decisionNode' && n.parentId === parentId)
+      .map(n => (n.data.label as string).trim()),
   );
   if (!used.has(baseLabel.trim())) return baseLabel;
   let counter = 2;

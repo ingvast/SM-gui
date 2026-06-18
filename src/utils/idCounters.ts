@@ -10,6 +10,10 @@ let decisionNameCounter = 1;
 export const getNextDecisionName = () => `D${decisionNameCounter++}`;
 export const resetDecisionNameCounter = (max: number) => { decisionNameCounter = max; };
 
+let andNameCounter = 1;
+export const getNextAndName = () => `A${andNameCounter++}`;
+export const resetAndNameCounter = (max: number) => { andNameCounter = max; };
+
 let proxyNameCounter = 1;
 export const getNextProxyName = () => `P${proxyNameCounter++}`;
 export const resetProxyNameCounter = (max: number) => { proxyNameCounter = max; };

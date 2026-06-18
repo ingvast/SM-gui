@@ -45,6 +45,7 @@ function compareSemver(a: string, b: string): number {
 
 interface StateData {
   label: string;
+  isAnd?: boolean;
   history: boolean;
   orthogonal: boolean;
   entry: string;
@@ -134,6 +135,8 @@ interface YamlState {
   states?: Record<string, YamlState>;
   decisions?: Record<string, YamlDecisionTransition[]>;
   decisionGraphics?: Record<string, YamlDecisionGraphics>;
+  ands?: Record<string, YamlDecisionTransition[]>;
+  andGraphics?: Record<string, YamlDecisionGraphics>;
   transitions?: YamlTransition[];
   graphics?: {
     x: number;
@@ -193,6 +196,8 @@ interface YamlDocument {
   states?: Record<string, YamlState>;
   decisions?: Record<string, YamlDecisionTransition[]>;
   decisionGraphics?: Record<string, YamlDecisionGraphics>;
+  ands?: Record<string, YamlDecisionTransition[]>;
+  andGraphics?: Record<string, YamlDecisionGraphics>;
   connectors?: Record<string, YamlConnector>;
   graphics?: {
     initialMarkerPos?: { x: number; y: number };
@@ -401,6 +406,56 @@ export function convertToYaml(
     return undefined;
   }
 
+  // Build the YAML maps for a set of pseudo-state nodes (decisions or ands).
+  // Both kinds share the exact same branch/transition + graphics shape; only the
+  // containing block name (`decisions:`/`ands:`) differs at the call site.
+  function buildPseudoBlocks(pseudoNodes: Node<StateData>[]): {
+    entries: Record<string, YamlDecisionTransition[]>;
+    graphics: Record<string, YamlDecisionGraphics>;
+  } {
+    const entries: Record<string, YamlDecisionTransition[]> = {};
+    const graphics: Record<string, YamlDecisionGraphics> = {};
+    pseudoNodes.forEach(pseudo => {
+      const pseudoEdges = edgesBySource.get(pseudo.id) || [];
+      const transitions: YamlDecisionTransition[] = pseudoEdges.map(edge => {
+        const t: YamlDecisionTransition = { to: resolveEdgeTarget(edge) };
+        if ((edge.data as { guard?: string })?.guard) {
+          t.guard = (edge.data as { guard: string }).guard;
+        }
+        if ((edge.data as { action?: string })?.action) {
+          t.action = (edge.data as { action: string }).action;
+        }
+        if (includeGraphics) {
+          const edgeData = edge.data as { controlPoints?: { x: number; y: number }[]; labelPosition?: number } | undefined;
+          const hasHandles = edge.sourceHandle || edge.targetHandle;
+          const hasControlPoints = edgeData?.controlPoints && edgeData.controlPoints.length > 0;
+          const hasLabelPosition = edgeData?.labelPosition != null;
+          const proxyId = getEdgeProxyId(edge);
+          if (hasHandles || hasControlPoints || hasLabelPosition || proxyId) {
+            t.graphics = {
+              sourceHandle: edge.sourceHandle || undefined,
+              targetHandle: edge.targetHandle || undefined,
+              controlPoints: hasControlPoints ? edgeData!.controlPoints : undefined,
+              labelPosition: hasLabelPosition ? edgeData!.labelPosition : undefined,
+              proxyId: proxyId || undefined,
+            };
+          }
+        }
+        return t;
+      });
+      entries[pseudo.data.label] = transitions;
+      if (includeGraphics) {
+        const size = (pseudo.style?.width as number) || 15;
+        graphics[pseudo.data.label] = {
+          x: pseudo.position.x,
+          y: pseudo.position.y,
+          size,
+        };
+      }
+    });
+    return { entries, graphics };
+  }
+
   // Build nested state structure recursively
   function buildStateObj(node: Node<StateData>): YamlState {
     const stateObj: YamlState = {};
@@ -477,53 +532,23 @@ export function convertToYaml(
       }
     }
 
-    // Add decision children
-    const decisionChildren = decisionNodes.filter(n => n.parentId === node.id);
+    // Add decision and AND children (both are decisionNodes; the `isAnd` flag
+    // routes them into separate `decisions:` / `ands:` blocks).
+    const pseudoChildren = decisionNodes.filter(n => n.parentId === node.id);
+    const decisionChildren = pseudoChildren.filter(n => !n.data.isAnd);
+    const andChildren = pseudoChildren.filter(n => n.data.isAnd);
     if (decisionChildren.length > 0) {
-      const decisions: Record<string, YamlDecisionTransition[]> = {};
-      const decGraphics: Record<string, YamlDecisionGraphics> = {};
-      decisionChildren.forEach(decision => {
-        const decisionEdges = edgesBySource.get(decision.id) || [];
-        const transitions: YamlDecisionTransition[] = decisionEdges.map(edge => {
-          const t: YamlDecisionTransition = { to: resolveEdgeTarget(edge) };
-          if ((edge.data as { guard?: string })?.guard) {
-            t.guard = (edge.data as { guard: string }).guard;
-          }
-          if ((edge.data as { action?: string })?.action) {
-            t.action = (edge.data as { action: string }).action;
-          }
-          if (includeGraphics) {
-            const edgeData = edge.data as { controlPoints?: { x: number; y: number }[]; labelPosition?: number } | undefined;
-            const hasHandles = edge.sourceHandle || edge.targetHandle;
-            const hasControlPoints = edgeData?.controlPoints && edgeData.controlPoints.length > 0;
-            const hasLabelPosition = edgeData?.labelPosition != null;
-            const proxyId = getEdgeProxyId(edge);
-            if (hasHandles || hasControlPoints || hasLabelPosition || proxyId) {
-              t.graphics = {
-                sourceHandle: edge.sourceHandle || undefined,
-                targetHandle: edge.targetHandle || undefined,
-                controlPoints: hasControlPoints ? edgeData!.controlPoints : undefined,
-                labelPosition: hasLabelPosition ? edgeData!.labelPosition : undefined,
-                proxyId: proxyId || undefined,
-              };
-            }
-          }
-          return t;
-        });
-
-        decisions[decision.data.label] = transitions;
-        if (includeGraphics) {
-          const size = (decision.style?.width as number) || 15;
-          decGraphics[decision.data.label] = {
-            x: decision.position.x,
-            y: decision.position.y,
-            size,
-          };
-        }
-      });
-      stateObj.decisions = decisions;
-      if (includeGraphics && Object.keys(decGraphics).length > 0) {
-        stateObj.decisionGraphics = decGraphics;
+      const { entries, graphics } = buildPseudoBlocks(decisionChildren);
+      stateObj.decisions = entries;
+      if (includeGraphics && Object.keys(graphics).length > 0) {
+        stateObj.decisionGraphics = graphics;
+      }
+    }
+    if (andChildren.length > 0) {
+      const { entries, graphics } = buildPseudoBlocks(andChildren);
+      stateObj.ands = entries;
+      if (includeGraphics && Object.keys(graphics).length > 0) {
+        stateObj.andGraphics = graphics;
       }
     }
 
@@ -657,53 +682,22 @@ export function convertToYaml(
     doc.states = states;
   }
 
-  // 10. Root-level decisions
-  const rootDecisions = decisionNodes.filter(n => !n.parentId);
+  // 10. Root-level decisions and ANDs (split by the `isAnd` flag).
+  const rootPseudo = decisionNodes.filter(n => !n.parentId);
+  const rootDecisions = rootPseudo.filter(n => !n.data.isAnd);
+  const rootAnds = rootPseudo.filter(n => n.data.isAnd);
   if (rootDecisions.length > 0) {
-    const decisions: Record<string, YamlDecisionTransition[]> = {};
-    const decGraphics: Record<string, YamlDecisionGraphics> = {};
-    rootDecisions.forEach(decision => {
-      const decisionEdges = edgesBySource.get(decision.id) || [];
-      const transitions: YamlDecisionTransition[] = decisionEdges.map(edge => {
-        const t: YamlDecisionTransition = { to: resolveEdgeTarget(edge) };
-        if ((edge.data as { guard?: string })?.guard) {
-          t.guard = (edge.data as { guard: string }).guard;
-        }
-        if ((edge.data as { action?: string })?.action) {
-          t.action = (edge.data as { action: string }).action;
-        }
-        if (includeGraphics) {
-          const edgeData = edge.data as { controlPoints?: { x: number; y: number }[]; labelPosition?: number } | undefined;
-          const hasHandles = edge.sourceHandle || edge.targetHandle;
-          const hasControlPoints = edgeData?.controlPoints && edgeData.controlPoints.length > 0;
-          const hasLabelPosition = edgeData?.labelPosition != null;
-          const proxyId = getEdgeProxyId(edge);
-          if (hasHandles || hasControlPoints || hasLabelPosition || proxyId) {
-            t.graphics = {
-              sourceHandle: edge.sourceHandle || undefined,
-              targetHandle: edge.targetHandle || undefined,
-              controlPoints: hasControlPoints ? edgeData!.controlPoints : undefined,
-              labelPosition: hasLabelPosition ? edgeData!.labelPosition : undefined,
-              proxyId: proxyId || undefined,
-            };
-          }
-        }
-        return t;
-      });
-
-      decisions[decision.data.label] = transitions;
-      if (includeGraphics) {
-        const size = (decision.style?.width as number) || 15;
-        decGraphics[decision.data.label] = {
-          x: decision.position.x,
-          y: decision.position.y,
-          size,
-        };
-      }
-    });
-    doc.decisions = decisions;
-    if (includeGraphics && Object.keys(decGraphics).length > 0) {
-      doc.decisionGraphics = decGraphics;
+    const { entries, graphics } = buildPseudoBlocks(rootDecisions);
+    doc.decisions = entries;
+    if (includeGraphics && Object.keys(graphics).length > 0) {
+      doc.decisionGraphics = graphics;
+    }
+  }
+  if (rootAnds.length > 0) {
+    const { entries, graphics } = buildPseudoBlocks(rootAnds);
+    doc.ands = entries;
+    if (includeGraphics && Object.keys(graphics).length > 0) {
+      doc.andGraphics = graphics;
     }
   }
 
@@ -1115,6 +1109,11 @@ export function convertFromYaml(
       processDecisions(safeStateData.decisions, nodeId, fullPath, childX, childY, safeStateData.decisionGraphics);
     }
 
+    // Process AND children (same machinery, flagged so they re-export under `ands:`)
+    if (safeStateData.ands) {
+      processDecisions(safeStateData.ands, nodeId, fullPath, childX, childY, safeStateData.andGraphics, true);
+    }
+
     // If no graphics, expand node to fit children
     if (!safeStateData.graphics && safeStateData.states) {
       const neededWidth = Math.max(defaultWidth, totalChildrenWidth + 40);
@@ -1134,12 +1133,15 @@ export function convertFromYaml(
     parentPath: string,
     autoLayoutX: number,
     autoLayoutY: number,
-    decGraphics?: Record<string, YamlDecisionGraphics>
+    decGraphics?: Record<string, YamlDecisionGraphics>,
+    isAnd = false
   ) {
     let dx = autoLayoutX;
     Object.keys(decisions).forEach(decisionName => {
       const decisionData = decisions[decisionName];
       const nodeId = `node_${nodeIdCounter++}`;
+      // Legacy flat map shares one namespace across kinds; safe because pre-0.6.0
+      // files (the only ones using flat lookup) never contain `ands:`.
       decisionNameToIdMap.set(decisionName, nodeId);
       pseudoPathToIdMap.set(parentPath ? `${parentPath}/${decisionName}` : decisionName, nodeId);
 
@@ -1160,6 +1162,7 @@ export function convertFromYaml(
         position: { x, y },
         data: {
           label: decisionName,
+          ...(isAnd ? { isAnd: true } : {}),
           history: false,
           orthogonal: false,
           entry: '',
@@ -1196,6 +1199,11 @@ export function convertFromYaml(
   // Process root-level decisions
   if (doc.decisions) {
     processDecisions(doc.decisions, undefined, '', topLevelX, topLevelY, doc.decisionGraphics);
+  }
+
+  // Process root-level ANDs
+  if (doc.ands) {
+    processDecisions(doc.ands, undefined, '', topLevelX, topLevelY, doc.andGraphics, true);
   }
 
   // Process proxy connectors
@@ -1375,6 +1383,35 @@ export function convertFromYaml(
     edges.push(edge);
   }
 
+  // Create the outgoing branch edges for a `decisions:`/`ands:` block. Both kinds
+  // are pseudo-leaves inside `containerPath`, so their branch resolution is identical.
+  function processPseudoBranches(
+    block: Record<string, YamlDecisionTransition[]>,
+    containerPath: string
+  ) {
+    Object.keys(block).forEach(name => {
+      // Scope is `container_path + name` (pseudo-leaf inside its container, matching
+      // the compiler). Own-id lookup: by absolute path (>= 0.6.0, avoids cross-
+      // container name collisions) or by flat name (legacy).
+      const scope = containerPath ? `${containerPath}/${name}` : name;
+      const pseudoId = modernRefs ? pseudoPathToIdMap.get(scope) : decisionNameToIdMap.get(name);
+      if (!pseudoId) return;
+
+      block[name].forEach(transition => {
+        if (!transition.to) return;
+        let targetId = resolveTransitionTarget(transition.to, scope);
+        // If this transition was routed via a proxy, use the proxy node as the target.
+        if (transition.graphics?.proxyId) {
+          const proxyNodeId = proxyNameToNodeId.get(transition.graphics.proxyId);
+          if (proxyNodeId) targetId = proxyNodeId;
+        }
+        if (targetId) {
+          createEdgeFromTransition(pseudoId, targetId, transition);
+        }
+      });
+    });
+  }
+
   // Process transitions after all nodes are created
   function processTransitions(
     stateData: YamlState | null | undefined,
@@ -1399,35 +1436,9 @@ export function convertFromYaml(
       });
     }
 
-    // Process decision transitions
-    if (stateData.decisions) {
-      Object.keys(stateData.decisions).forEach(decisionName => {
-        // Decision scope is `container_path + decisionName` (decision sits as
-        // a pseudo-leaf inside its container, matching the compiler).
-        // `./x` is invalid for decisions (decisions have no children) and
-        // will not resolve.
-        const decisionScope = sourcePath ? `${sourcePath}/${decisionName}` : decisionName;
-        // Own-id lookup: by absolute path (>= 0.6.0, avoids cross-container name
-        // collisions) or by flat name (legacy).
-        const decisionId = modernRefs ? pseudoPathToIdMap.get(decisionScope) : decisionNameToIdMap.get(decisionName);
-        if (!decisionId) return;
-
-        const transitions = stateData.decisions![decisionName];
-
-        transitions.forEach(transition => {
-          if (!transition.to) return;
-          let targetId = resolveTransitionTarget(transition.to, decisionScope);
-          // If this transition was routed via a proxy, use the proxy node as the target
-          if (transition.graphics?.proxyId) {
-            const proxyNodeId = proxyNameToNodeId.get(transition.graphics.proxyId);
-            if (proxyNodeId) targetId = proxyNodeId;
-          }
-          if (targetId) {
-            createEdgeFromTransition(decisionId, targetId, transition);
-          }
-        });
-      });
-    }
+    // Process decision and AND branch transitions (identical branch resolution).
+    if (stateData.decisions) processPseudoBranches(stateData.decisions, sourcePath);
+    if (stateData.ands) processPseudoBranches(stateData.ands, sourcePath);
 
     // Recurse into child states
     if (stateData.states) {
@@ -1451,30 +1462,9 @@ export function convertFromYaml(
     });
   }
 
-  // Process root-level decision transitions
-  if (doc.decisions) {
-    Object.keys(doc.decisions).forEach(decisionName => {
-      // Own-id lookup: root path is just the bare name in both schemes.
-      const decisionId = modernRefs ? pseudoPathToIdMap.get(decisionName) : decisionNameToIdMap.get(decisionName);
-      if (!decisionId) return;
-
-      const transitions = doc.decisions![decisionName];
-
-      transitions.forEach(transition => {
-        if (!transition.to) return;
-        // Root-level decision: scope is just the decision name (pseudo-leaf at root).
-        // `./x` is invalid for decisions and will not resolve.
-        let targetId = resolveTransitionTarget(transition.to, decisionName);
-        if (transition.graphics?.proxyId) {
-          const proxyNodeId = proxyNameToNodeId.get(transition.graphics.proxyId);
-          if (proxyNodeId) targetId = proxyNodeId;
-        }
-        if (targetId) {
-          createEdgeFromTransition(decisionId, targetId, transition);
-        }
-      });
-    });
-  }
+  // Process root-level decision and AND branch transitions.
+  if (doc.decisions) processPseudoBranches(doc.decisions, '');
+  if (doc.ands) processPseudoBranches(doc.ands, '');
 
   // Resolve initial state references (name -> node ID)
   function resolveInitialStates(

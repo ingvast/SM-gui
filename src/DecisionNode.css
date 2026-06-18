@@ -7,7 +7,26 @@
   box-sizing: border-box;
 }
 
+.decision-node.and-node {
+  container-type: size;
+}
+
 .decision-node.selected {
   border-color: #1976d2;
   box-shadow: 0 0 0 1.5px #1976d2, 0 0 12px 4px rgba(25, 118, 210, 0.4);
+}
+
+/* AND node: inscribed ampersand, centered and scaled to the circle */
+.and-glyph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 75cqmin;
+  font-weight: 700;
+  line-height: 1;
+  color: #1a192b;
+  pointer-events: none;
+  user-select: none;
 }

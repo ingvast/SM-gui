@@ -49,6 +49,17 @@ function decisionNode(id: string, label: string, parentId?: string): Node {
   };
 }
 
+function andNode(id: string, label: string, parentId?: string): Node {
+  return {
+    id,
+    type: 'decisionNode',
+    position: { x: 10, y: 10 },
+    data: { label, isAnd: true, history: false, orthogonal: false, entry: '', exit: '', do: '' },
+    style: { width: 15, height: 15 },
+    ...(parentId ? { parentId, extent: 'parent' as const } : {}),
+  };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function parseYaml(y: string): any {
   return yaml.load(y);
@@ -550,5 +561,107 @@ describe('hierarchical pseudo-state references (0.6.0)', () => {
     const modern = convertFromYaml(noVersion, 'modern');
     const sqM = modern.nodes.find(n => n.data.label === 'Sq')!;
     expect(modern.edges.some(e => e.source === sqM.id)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AND nodes (ands: block)
+// ---------------------------------------------------------------------------
+
+describe('AND nodes (ands: block)', () => {
+  it('exports a child AND under ands: (not decisions:)', () => {
+    const nodes = [stateNode('p', 'P'), andNode('a1', 'A1', 'p')];
+    const y = convertToYaml(nodes, [], false, false, defaultMachineProperties);
+    const doc = parseYaml(y);
+    expect(doc.states.P.ands).toBeDefined();
+    expect(doc.states.P.ands.A1).toBeDefined();
+    expect(doc.states.P.decisions).toBeUndefined();
+  });
+
+  it('exports a root-level AND under doc.ands', () => {
+    const nodes = [andNode('a1', 'A1')];
+    const y = convertToYaml(nodes, [], false, false, defaultMachineProperties);
+    const doc = parseYaml(y);
+    expect(doc.ands).toBeDefined();
+    expect(doc.ands.A1).toBeDefined();
+    expect(doc.decisions).toBeUndefined();
+  });
+
+  it('emits hierarchical @A1 refs for AND targets (same/descendant/absolute)', () => {
+    // same container
+    let nodes: Node[] = [stateNode('s', 'S'), andNode('a1', 'A1')];
+    let y = convertToYaml(nodes, [edge('e', 's', 'a1')], false, false, defaultMachineProperties);
+    expect(parseYaml(y).states.S.transitions[0].to).toBe('@A1');
+
+    // descendant
+    nodes = [stateNode('p', 'P'), stateNode('c', 'Child', 'p'), andNode('a1', 'A1', 'c')];
+    y = convertToYaml(nodes, [edge('e', 'p', 'a1')], false, false, defaultMachineProperties);
+    expect(parseYaml(y).states.P.transitions[0].to).toBe('./Child/@A1');
+
+    // absolute (cross-subtree)
+    nodes = [
+      stateNode('ta', 'TopA'), stateNode('sa', 'Sub', 'ta'),
+      stateNode('tb', 'TopB'), stateNode('sb', 'SubB', 'tb'), andNode('a1', 'A1', 'sb'),
+    ];
+    y = convertToYaml(nodes, [edge('e', 'sa', 'a1')], false, false, defaultMachineProperties);
+    expect(parseYaml(y).states.TopA.states.Sub.transitions[0].to).toBe('/TopB/SubB/@A1');
+  });
+
+  it('round-trips an AND node (type decisionNode + isAnd) with its incoming edge', () => {
+    const nodes = [stateNode('p', 'P'), stateNode('c', 'Child', 'p'), andNode('a1', 'A1', 'c')];
+    const y = convertToYaml(nodes, [edge('e', 'p', 'a1')], false, false, defaultMachineProperties);
+    const { nodes: out, edges: outEdges } = convertFromYaml(y);
+    const a1 = out.find(n => n.type === 'decisionNode' && n.data.label === 'A1')!;
+    expect(a1.data.isAnd).toBe(true);
+    const p = out.find(n => n.data.label === 'P')!;
+    expect(outEdges.some(e => e.source === p.id && e.target === a1.id)).toBe(true);
+  });
+
+  it('round-trips andGraphics position/size', () => {
+    const a1 = andNode('a1', 'A1');
+    a1.position = { x: 222, y: 333 };
+    a1.style = { width: 18, height: 18 };
+    const y = convertToYaml([a1], [], false, true, defaultMachineProperties);
+    expect(parseYaml(y).andGraphics.A1).toMatchObject({ x: 222, y: 333, size: 18 });
+    const { nodes: out } = convertFromYaml(y);
+    const outA1 = out.find(n => n.type === 'decisionNode' && n.data.label === 'A1')!;
+    expect(outA1.position).toEqual({ x: 222, y: 333 });
+    expect(outA1.style?.width).toBe(18);
+  });
+
+  it('handles a decision and an AND in the same container, both resolving to distinct nodes', () => {
+    const nodes = [
+      stateNode('p', 'P'),
+      stateNode('s', 'S', 'p'),
+      decisionNode('d1', 'D1', 'p'),
+      andNode('a1', 'A1', 'p'),
+    ];
+    // S -> D1 and S -> A1
+    const y = convertToYaml(nodes, [edge('e1', 's', 'd1'), edge('e2', 's', 'a1')], false, false, defaultMachineProperties);
+    const doc = parseYaml(y);
+    expect(doc.states.P.decisions.D1).toBeDefined();
+    expect(doc.states.P.ands.A1).toBeDefined();
+    const tos = doc.states.P.states.S.transitions.map((t: { to: string }) => t.to).sort();
+    expect(tos).toEqual(['@A1', '@D1']);
+
+    const { nodes: out, edges: outEdges } = convertFromYaml(y);
+    const s = out.find(n => n.data.label === 'S')!;
+    const d1 = out.find(n => n.type === 'decisionNode' && n.data.label === 'D1')!;
+    const a1 = out.find(n => n.type === 'decisionNode' && n.data.label === 'A1')!;
+    expect(d1.id).not.toBe(a1.id);
+    expect(a1.data.isAnd).toBe(true);
+    expect(d1.data.isAnd).toBeFalsy();
+    expect(outEdges.some(e => e.source === s.id && e.target === d1.id)).toBe(true);
+    expect(outEdges.some(e => e.source === s.id && e.target === a1.id)).toBe(true);
+  });
+
+  it('round-trips an AND branch transition (outgoing) to a state', () => {
+    const nodes = [stateNode('p', 'P'), stateNode('t', 'T', 'p'), andNode('a1', 'A1', 'p')];
+    const y = convertToYaml(nodes, [edge('e', 'a1', 't', 'g')], false, false, defaultMachineProperties);
+    expect(parseYaml(y).states.P.ands.A1[0].to).toBe('T');
+    const { nodes: out, edges: outEdges } = convertFromYaml(y);
+    const a1 = out.find(n => n.type === 'decisionNode' && n.data.label === 'A1')!;
+    const t = out.find(n => n.data.label === 'T')!;
+    expect(outEdges.some(e => e.source === a1.id && e.target === t.id)).toBe(true);
   });
 });

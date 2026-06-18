@@ -5,6 +5,7 @@ import {
   isAncestorOf,
   getAllDescendants,
   generateUniqueNodeLabel,
+  generateUniqueDecisionLabel,
   computeNodePath,
 } from './nodeUtils';
 
@@ -162,5 +163,39 @@ describe('computeNodePath', () => {
 
   it('returns empty string for an unknown id', () => {
     expect(computeNodePath('unknown', flat)).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateUniqueDecisionLabel (per-container, spans decisions + ands)
+// ---------------------------------------------------------------------------
+
+describe('generateUniqueDecisionLabel', () => {
+  function dec(id: string, label: string, parentId?: string, isAnd = false): Node {
+    return {
+      id,
+      type: 'decisionNode',
+      position: { x: 0, y: 0 },
+      data: { label, ...(isAnd ? { isAnd: true } : {}) },
+      ...(parentId ? { parentId } : {}),
+    };
+  }
+
+  it('keeps the base label when unused in the container', () => {
+    expect(generateUniqueDecisionLabel('A1', [dec('d', 'D1', 'p')], 'p')).toBe('A1');
+  });
+
+  it('renames on a same-container collision (across decisions AND ands)', () => {
+    const nodes = [dec('d', 'D1', 'p'), dec('a', 'A1', 'p', true)];
+    // A1 already used in container p (by an and) -> next free
+    expect(generateUniqueDecisionLabel('A1', nodes, 'p')).toBe('A1 2');
+    // D1 already used in container p -> next free
+    expect(generateUniqueDecisionLabel('D1', nodes, 'p')).toBe('D1 2');
+  });
+
+  it('allows the same label in a different container', () => {
+    const nodes = [dec('a', 'A1', 'p', true)];
+    expect(generateUniqueDecisionLabel('A1', nodes, 'q')).toBe('A1');
+    expect(generateUniqueDecisionLabel('A1', nodes, undefined)).toBe('A1'); // root container
   });
 });

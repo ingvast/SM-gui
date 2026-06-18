@@ -146,7 +146,7 @@ export function useClipboard(
         data: {
           ...oldNode.data,
           label: oldNode.type === 'decisionNode'
-            ? generateUniqueDecisionLabel(oldNode.data.label, nodes.concat(newNodes))
+            ? generateUniqueDecisionLabel(oldNode.data.label, nodes.concat(newNodes), newNodeParentId)
             : generateUniqueNodeLabel(oldNode.data.label, newNodeParentId, nodes.concat(newNodes))
         },
       };
@@ -267,7 +267,7 @@ export function useClipboard(
         data: {
           ...oldNode.data,
           label: oldNode.type === 'decisionNode'
-            ? generateUniqueDecisionLabel(oldNode.data.label, nodes.concat(duplicatedNodes))
+            ? generateUniqueDecisionLabel(oldNode.data.label, nodes.concat(duplicatedNodes), newNodeParentId)
             : generateUniqueNodeLabel(oldNode.data.label, newNodeParentId, nodes.concat(duplicatedNodes))
         },
       };
