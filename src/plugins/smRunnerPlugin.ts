@@ -66,13 +66,17 @@ export function parseStateStr(stateStr: string): string[] {
 }
 
 export function findEsbuild(): string {
-  const candidates = [
-    path.join(process.cwd(), 'node_modules', '.bin', 'esbuild'),
-    path.join(__dirname, '..', '..', 'node_modules', '.bin', 'esbuild'),
-    path.join(__dirname, '..', 'node_modules', '.bin', 'esbuild'),
+  const names = process.platform === 'win32' ? ['esbuild.cmd', 'esbuild'] : ['esbuild'];
+  const dirs = [
+    path.join(process.cwd(), 'node_modules', '.bin'),
+    path.join(__dirname, '..', '..', 'node_modules', '.bin'),
+    path.join(__dirname, '..', 'node_modules', '.bin'),
   ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
+  for (const name of names) {
+    for (const dir of dirs) {
+      const p = path.join(dir, name);
+      if (fs.existsSync(p)) return p;
+    }
   }
   return 'esbuild';
 }
