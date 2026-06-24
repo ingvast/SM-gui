@@ -118,8 +118,10 @@ const CodeEditor = React.forwardRef<CodeEditorHandle, CodeEditorProps>(
         bracketMatching(),
         keymap.of([indentWithTab]),
         muiTheme,
-        lintGutter(),
-        syntaxErrorLinter,
+        // The lint gutter renders a gray sidebar; only show it (and the syntax
+        // linter) for actual code fields. Plain-text fields (e.g. annotation,
+        // language='') get no language extension, so skip the gutter there.
+        ...(languageExtensions.length > 0 ? [lintGutter(), syntaxErrorLinter] : []),
         ...languageExtensions,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {

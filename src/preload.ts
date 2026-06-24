@@ -22,6 +22,7 @@ export interface FileAPI {
   onMenuPaste: (callback: () => void) => () => void;
   onMenuDuplicate: (callback: () => void) => () => void;
   onMenuOpen: (callback: () => void) => () => void;
+  setDirty: (isDirty: boolean) => void;
 }
 
 export interface Settings {
@@ -129,6 +130,7 @@ contextBridge.exposeInMainWorld('fileAPI', {
     ipcRenderer.on('menu-open', handler);
     return () => { ipcRenderer.removeListener('menu-open', handler); };
   },
+  setDirty: (isDirty: boolean) => ipcRenderer.send('set-dirty', isDirty),
 } as FileAPI);
 
 contextBridge.exposeInMainWorld('settingsAPI', {

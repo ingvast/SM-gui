@@ -531,6 +531,9 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     return '';
   };
 
+  // Annotation is free-form prose, not code — no syntax highlighting.
+  const getDialogLanguage = () => (expandedField === 'annotation' ? '' : language);
+
   const getDialogTitle = () => {
     if (expandedField === 'entry') return 'Entry Action Code';
     if (expandedField === 'exit') return 'Exit Action Code';
@@ -633,7 +636,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           onSave={handleDialogSave}
           value={getDialogValue()}
           title={getDialogTitle()}
-          language={language}
+          language={getDialogLanguage()}
           onOpenExternal={settings.editorPreference !== 'builtin' ? handleOpenExternalFromDialog : undefined}
           tabWidth={settings.tabWidth}
         />
@@ -1035,7 +1038,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         onSave={handleDialogSave}
         value={getDialogValue()}
         title={getDialogTitle()}
-        language={language}
+        language={getDialogLanguage()}
         onOpenExternal={settings.editorPreference !== 'builtin' ? handleOpenExternalFromDialog : undefined}
         tabWidth={settings.tabWidth}
       />

@@ -113,6 +113,7 @@ declare global {
       onMenuPaste: (callback: () => void) => () => void;
       onMenuDuplicate: (callback: () => void) => () => void;
       onMenuOpen: (callback: () => void) => () => void;
+      setDirty: (isDirty: boolean) => void;
     };
     settingsAPI: {
       get: () => Promise<Settings>;
@@ -330,6 +331,8 @@ const App = () => {
     } else {
       document.title = `${prefix}SM Editor`;
     }
+    // Report dirty state to the main process so it can prompt before closing.
+    window.fileAPI.setDirty(isDirty);
   }, [currentFilePath, isDirty]);
 
   // Animation loop for smooth transitions
@@ -1303,11 +1306,28 @@ const App = () => {
 
   // Zoom to fit all nodes after a file is loaded
   useEffect(() => {
-    if (shouldZoomToFit && nodes.length > 0) {
+    if (!shouldZoomToFit || nodes.length === 0) return;
+    // Defer to the next frame so the freshly loaded nodes are committed before
+    // computing the fit-all transform.
+    const raf = requestAnimationFrame(() => {
+      const rect = reactFlowWrapper.current?.getBoundingClientRect();
+      // On first-startup open the measured viewportSize can still be its 800x600
+      // default; sync it from the live wrapper rect first and let this effect
+      // re-run with the correct viewport (handleSemanticZoomToSelected reads
+      // viewportSize) before actually fitting.
+      if (
+        rect && rect.width > 0 && rect.height > 0 &&
+        (Math.abs(rect.width - viewportSize.width) > 1 ||
+          Math.abs(rect.height - viewportSize.height) > 1)
+      ) {
+        setViewportSize({ width: rect.width, height: rect.height });
+        return;
+      }
       setShouldZoomToFit(false);
       handleSemanticZoomToSelected();
-    }
-  }, [shouldZoomToFit, nodes, handleSemanticZoomToSelected]);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [shouldZoomToFit, nodes, viewportSize, handleSemanticZoomToSelected]);
 
   // Navigate up one level (Escape key)
   const handleNavigateUp = useCallback(() => {

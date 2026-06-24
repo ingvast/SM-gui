@@ -57,6 +57,9 @@ if (process.platform === 'linux') {
 // Track a file to open once the renderer is ready
 let pendingFileToOpen: string | null = null;
 
+// Track which renderer windows currently have unsaved changes (by webContents id)
+const dirtyWindows = new Set<number>();
+
 function sendFileToRenderer(win: BrowserWindow, filePath: string) {
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
@@ -177,7 +180,36 @@ const createWindow = () => {
     win.webContents.openDevTools();
   }
 
-  win.on('closed', () => buildMenu());
+  // Capture the webContents id up front: the `close`/`closed` events can fire
+  // while webContents is already destroyed (e.g. during app quit), and touching
+  // win.webContents then throws "Object has been destroyed".
+  const winWebContentsId = win.webContents.id;
+
+  win.on('close', (event) => {
+    if (dirtyWindows.has(winWebContentsId)) {
+      const choice = dialog.showMessageBoxSync(win, {
+        type: 'warning',
+        buttons: ['Discard changes', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+        title: 'Unsaved changes',
+        message: 'You have unsaved changes.',
+        detail: 'Do you really want to leave? Your unsaved changes will be lost.',
+      });
+      if (choice === 1) {
+        event.preventDefault();
+      } else {
+        // User confirmed discard — drop the dirty flag so a re-fired close
+        // event (e.g. during app quit) does not prompt again.
+        dirtyWindows.delete(winWebContentsId);
+      }
+    }
+  });
+
+  win.on('closed', () => {
+    dirtyWindows.delete(winWebContentsId);
+    buildMenu();
+  });
   win.on('page-title-updated', () => buildMenu());
 
   buildMenu();
@@ -464,6 +496,16 @@ ipcMain.handle('import-phoenix', async () => {
     return { success: true, content, filePath: filePaths[0] };
   } catch (error) {
     return { success: false, error: (error as Error).message };
+  }
+});
+
+// Renderer reports its unsaved-changes (dirty) state so the close handler can
+// prompt before discarding work.
+ipcMain.on('set-dirty', (event, isDirty: boolean) => {
+  if (isDirty) {
+    dirtyWindows.add(event.sender.id);
+  } else {
+    dirtyWindows.delete(event.sender.id);
   }
 });
 

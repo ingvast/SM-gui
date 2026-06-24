@@ -216,6 +216,10 @@ export default memo(({ data, selected }: StateNodeProps) => {
           top: labelAreaHeight + 4,
           left: 8,
           right: 8,
+          // Anchor the bottom so the box can never grow past the state's border.
+          // Without this, the box only has a fixed top anchor and its (unscaled)
+          // content height pushes it outside the node when zoomed out.
+          bottom: 4,
           border: `1px dashed ${borderColor}`,
           borderRadius: 3,
           backgroundColor: 'rgba(242, 242, 248, 0.92)',
