@@ -1597,17 +1597,73 @@ const App = () => {
         nodeExtra.extent = 'parent';
       }
     }
+    const newNodeId = getNextId();
+    const newParentId = nodeExtra.parentId as string | undefined;
+
+    // Adopt any siblings (same container as the new state) that fall entirely
+    // within the drawn rectangle — creating a state around them nests them.
+    const adopt: { id: string; relX: number; relY: number }[] = [];
+    for (const c of nodes) {
+      if ((c.parentId || undefined) !== newParentId) continue;
+      if (c.type !== 'stateNode' && c.type !== 'decisionNode') continue;
+      const cb = getAbsoluteNodeBounds(c.id, nodes);
+      if (!cb) continue;
+      if (cb.x >= worldX && cb.y >= worldY &&
+          cb.x + cb.width <= worldX + worldW && cb.y + cb.height <= worldY + worldH) {
+        adopt.push({ id: c.id, relX: cb.x - worldX, relY: cb.y - worldY });
+      }
+    }
+    const adoptIds = new Set(adopt.map(a => a.id));
+
+    // Keep the initial-marker invariant: if the container's initial points at an
+    // adopted child, the initial moves into the new state with it.
+    const ownerInitialTarget = newParentId
+      ? (nodes.find(n => n.id === newParentId)?.data.initial as string | undefined)
+      : machineProperties.initial;
+    let newNodeInitial: { targetId: string; pos: { x: number; y: number }; size: number } | null = null;
+    if (ownerInitialTarget && adoptIds.has(ownerInitialTarget)) {
+      const a = adopt.find(x => x.id === ownerInitialTarget)!;
+      newNodeInitial = {
+        targetId: ownerInitialTarget,
+        pos: { x: Math.max(0, a.relX - 25), y: Math.max(0, a.relY - 25) },
+        size: worldW * 0.03,
+      };
+    }
+
     const newNode = {
-      id: getNextId(),
+      id: newNodeId,
       type: 'stateNode',
       position,
       ...nodeExtra,
-      data: { label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '', showEntry: settings.defaultShowEntry, showExit: settings.defaultShowExit, showDo: settings.defaultShowDo, showAnnotation: settings.defaultShowAnnotation },
+      data: {
+        label: getNextStateName(), history: false, orthogonal: false, entry: '', exit: '', do: '',
+        showEntry: settings.defaultShowEntry, showExit: settings.defaultShowExit, showDo: settings.defaultShowDo, showAnnotation: settings.defaultShowAnnotation,
+        ...(newNodeInitial ? { initial: newNodeInitial.targetId, initialMarkerPos: newNodeInitial.pos, initialMarkerSize: newNodeInitial.size } : {}),
+      },
       style: { width: worldW, height: worldH },
       selected: true,
     };
     saveSnapshot();
-    setNodes((nds) => nds.map((n) => ({ ...n, selected: false })).concat(newNode));
+    setNodes((nds) => nds.map((n) => {
+      if (adoptIds.has(n.id)) {
+        const a = adopt.find(x => x.id === n.id)!;
+        return { ...n, parentId: newNodeId, extent: 'parent' as const, position: { x: a.relX, y: a.relY }, selected: false };
+      }
+      // Clear the (now-transferred) initial from a state container.
+      if (newNodeInitial && newParentId && n.id === newParentId) {
+        const d = n.data as typeof n.data & { initial?: unknown; initialMarkerPos?: unknown; initialMarkerSize?: unknown };
+        const { initial, initialMarkerPos, initialMarkerSize, ...restData } = d;
+        return { ...n, data: restData, selected: false };
+      }
+      return { ...n, selected: false };
+    }).concat(newNode));
+    // Clear the transferred initial from the root container.
+    if (newNodeInitial && !newParentId) {
+      setMachineProperties(prev => {
+        const { initial, initialMarkerPos, initialMarkerSize, ...rest } = prev as typeof prev & { initialMarkerPos?: unknown; initialMarkerSize?: unknown };
+        return rest;
+      });
+    }
     setSelectedTreeItem(newNode.id);
     setIsAddingNode(false);
     setFocusName(true);
@@ -1836,6 +1892,11 @@ const App = () => {
 
       // Track world-space position deltas for nodes being resized from left/top
       const resizeDeltas = new Map<string, { dx: number; dy: number }>();
+      // Track pure move deltas (drag, not resize) so an initial marker follows the
+      // state it points to. Keyed by moved node id, expressed in that node's own
+      // frame (rel-to-parent for nested, world for top-level) — which matches the
+      // marker's frame because the marker always lives in the target's parent.
+      const moveDeltas = new Map<string, { dx: number; dy: number }>();
 
       // Helper: prev position in the same frame as node.position (rel-to-parent for nested,
       // world for top-level). Prefers the ref (which is updated synchronously after each
@@ -1887,13 +1948,16 @@ const App = () => {
                     relY = Math.max(paddingY, Math.min(relY, parentBounds.height - nodeHeight - paddingY));
                   }
 
-                  // Track delta if this is a resize-from-left/top
-                  if (hasDimensionsChange.has(change.id)) {
+                  // Track delta: resize-from-left/top compensates markers/children,
+                  // a pure move makes an initial marker follow its target.
+                  {
                     const prev = getPrevPosition(change.id, node.position);
-                    resizeDeltas.set(change.id, {
-                      dx: relX - prev.x,
-                      dy: relY - prev.y,
-                    });
+                    const d = { dx: relX - prev.x, dy: relY - prev.y };
+                    if (hasDimensionsChange.has(change.id)) {
+                      resizeDeltas.set(change.id, d);
+                    } else {
+                      moveDeltas.set(change.id, d);
+                    }
                   }
                   lastAppliedPositionRef.current.set(change.id, { x: relX, y: relY });
 
@@ -1905,13 +1969,14 @@ const App = () => {
               }
 
               // Top-level node
-              // Track delta if this is a resize-from-left/top
-              if (hasDimensionsChange.has(change.id)) {
+              {
                 const prev = getPrevPosition(change.id, node.position);
-                resizeDeltas.set(change.id, {
-                  dx: worldX - prev.x,
-                  dy: worldY - prev.y,
-                });
+                const d = { dx: worldX - prev.x, dy: worldY - prev.y };
+                if (hasDimensionsChange.has(change.id)) {
+                  resizeDeltas.set(change.id, d);
+                } else {
+                  moveDeltas.set(change.id, d);
+                }
               }
               lastAppliedPositionRef.current.set(change.id, { x: worldX, y: worldY });
 
@@ -2054,6 +2119,31 @@ const App = () => {
 
       onNodesChange([...convertedChanges, ...childCompensation]);
 
+      // Make an initial marker follow the state it points to when that state is
+      // dragged: shift the owner's initialMarkerPos by the target's move delta.
+      if (moveDeltas.size > 0) {
+        setNodes(nds => nds.map(n => {
+          const targetId = n.data?.initial as string | undefined;
+          if (!targetId) return n;
+          const delta = moveDeltas.get(targetId);
+          if (!delta || (delta.dx === 0 && delta.dy === 0)) return n;
+          const pos = n.data?.initialMarkerPos as { x: number; y: number } | undefined;
+          if (!pos) return n;
+          return {
+            ...n,
+            data: { ...n.data, initialMarkerPos: { x: pos.x + delta.dx, y: pos.y + delta.dy } },
+          };
+        }));
+        if (machineProperties.initial) {
+          const delta = moveDeltas.get(machineProperties.initial);
+          if (delta && (delta.dx !== 0 || delta.dy !== 0)) {
+            setMachineProperties(prev => prev.initialMarkerPos
+              ? { ...prev, initialMarkerPos: { x: prev.initialMarkerPos.x + delta.dx, y: prev.initialMarkerPos.y + delta.dy } }
+              : prev);
+          }
+        }
+      }
+
       // Compensate initialMarkerPos on resized parents so the marker stays relative to its target
       if (resizeDeltas.size > 0) {
         setNodes(nds => nds.map(n => {
@@ -2081,7 +2171,7 @@ const App = () => {
         }
       });
     },
-    [onNodesChange, selectedTreeItem, nodes, edges, effectiveScale, effectivePan, setRootHistory, setMachineProperties, setNodes, setEdges, saveSnapshot]
+    [onNodesChange, selectedTreeItem, nodes, edges, effectiveScale, effectivePan, machineProperties, setRootHistory, setMachineProperties, setNodes, setEdges, saveSnapshot]
   );
 
   const onEdgesChangeWithSelection = useCallback(

@@ -135,7 +135,7 @@ Cases when the connection is between an ancestor and descendant.
 
 ### Keyboard Shortcuts
 
-- `s` - Enter "add state" mode (click to place a fixed-size state, or drag to define the size)
+- `s` - Enter "add state" mode (click to place a fixed-size state, or drag to define the size). Any sibling states/decisions that fall entirely within the drawn rectangle are nested into the new state (and the container's initial follows if it pointed at one of them).
 - `d` - Enter "add decision" mode (click to place decision circle; click inside a state to add as child)
 - `a` - Enter "add AND" mode (places an AND pseudo-state: a decision circle with an inscribed `&`, serialized under `ands:`; same placement rules as `d`)
 - `p` - Create proxy: select a target state, press P, then click on canvas (or inside a parent state) to place a proxy node pointing to it. Or select a transition, press P to create a proxy of its target and automatically retarget the transition to the new proxy.
@@ -145,7 +145,7 @@ Cases when the connection is between an ancestor and descendant.
 - `i` - Set initial state: select a child state, press I, then click in the parent to place the initial marker (small filled circle with arrow to the initial state)
 - `v` - Toggle visibility of transition guard/event labels
 - `z` - Zoom to fit selected state, or fit all states if nothing selected
-- `Shift + drag` - Reparent: hold Shift while dragging a node to let it cross parent-state borders freely; on drop it is adopted by whichever compound state its center lands in (deepest wins), or moved to root level if dropped outside all states. Dragging without Shift stays clamped within the current parent. If the dragged node's name clashes with an existing child in the destination, it gets a suffix (" 2", " 3", …) via `generateUniqueNodeLabel`/`generateUniqueDecisionLabel`. If the moved state was its old container's initial state, that initial role travels with it to the destination — unless the destination already has an initial, in which case the initial is dropped (removed from the old container and not re-created).
+- `Shift + drag` - Reparent: hold Shift while dragging a node to let it cross parent-state borders freely; on drop it is adopted by whichever compound state its center lands in (deepest wins), or moved to root level if dropped outside all states. Dragging without Shift stays clamped within the current parent. If the dragged node's name clashes with an existing child in the destination, it gets a suffix (" 2", " 3", …) via `generateUniqueNodeLabel`/`generateUniqueDecisionLabel`. If the moved state was its old container's initial state, that initial role travels with it to the destination — unless the destination already has an initial, in which case the initial is dropped (removed from the old container and not re-created). An initial marker always belongs to the same parent as the state it points to: dragging that target state (even a plain within-parent drag) moves the marker along with it (`moveDeltas` in `onNodesChangeWithSelection` shifts the owner's `initialMarkerPos` by the target's delta).
 - `Escape` - Exit current mode (add node, transition, initial) or navigate up one level in semantic zoom
 - `Ctrl/Cmd + c` - Copy selected nodes and descendants
 - `Ctrl/Cmd + Shift + c` - Copy diagram as image to clipboard (paste into email/docs)
