@@ -61,9 +61,10 @@ import type { PluginInfo } from './preload';
 import {
   useSemanticZoomStore,
   getAbsoluteNodeBounds,
+  getAncestorIds,
   SEMANTIC_ZOOM_CONFIG,
 } from './semanticZoom';
-import { calculateNodeDepth, isAncestorOf, buildTreeData, getAllDescendants, computeNodePath } from './utils/nodeUtils';
+import { calculateNodeDepth, isAncestorOf, buildTreeData, getAllDescendants, computeNodePath, generateUniqueNodeLabel, generateUniqueDecisionLabel } from './utils/nodeUtils';
 import { calculateBestHandles } from './utils/handleUtils';
 import { getNextId, getNextStateName, getNextDecisionName, getNextAndName, getNextProxyName } from './utils/idCounters';
 import { useClipboard } from './hooks/useClipboard';
@@ -1099,6 +1100,13 @@ const App = () => {
   // Alt key tracking — used to lock aspect ratio and scale children during resize
   const [altHeld, setAltHeld] = useState(false);
   const altHeldRef = useRef(false);
+
+  // Shift key tracking — used to let a dragged node escape its parent's bounds
+  // and be reparented into whatever compound state it lands in on drop.
+  const shiftHeldRef = useRef(false);
+  // Latches true once the current drag has escaped its parent via Shift, so the
+  // drop reparents even if Shift is released before the mouse button.
+  const shiftDragActiveRef = useRef(false);
   const altResizeSnapshotRef = useRef<{
     nodeId: string;
     origW: number;
@@ -1142,6 +1150,7 @@ const App = () => {
         setAltHeld(e.altKey);
         if (!e.altKey) altResizeSnapshotRef.current = null;
       }
+      shiftHeldRef.current = e.shiftKey;
       if (spaceHeld.current || e.buttons === 4) {
         adjustPan(e.movementX, e.movementY);
       }
@@ -1162,6 +1171,10 @@ const App = () => {
         altHeldRef.current = true;
         setAltHeld(true);
       }
+      // Track Shift via key events (not just mousemove): during a ReactFlow drag
+      // the compatibility mousemove events are suppressed, so the shift-to-escape-
+      // parent gesture would otherwise never register while dragging a child out.
+      if (e.key === 'Shift') shiftHeldRef.current = true;
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Alt') {
@@ -1169,6 +1182,7 @@ const App = () => {
         setAltHeld(false);
         altResizeSnapshotRef.current = null;
       }
+      if (e.key === 'Shift') shiftHeldRef.current = false;
     };
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
@@ -1863,10 +1877,15 @@ const App = () => {
                   const nodeWidth = (node.style?.width as number) || node.width || 150;
                   const nodeHeight = (node.style?.height as number) || node.height || 50;
 
-                  const paddingX = 0;
-                  const paddingY = 0;
-                  relX = Math.max(paddingX, Math.min(relX, parentBounds.width - nodeWidth - paddingX));
-                  relY = Math.max(paddingY, Math.min(relY, parentBounds.height - nodeHeight - paddingY));
+                  // While Shift is held during a drag, let the node cross its
+                  // parent's border freely — it will be reparented on drop into
+                  // whatever compound state it lands in (see onNodeDragStop).
+                  if (!shiftHeldRef.current) {
+                    const paddingX = 0;
+                    const paddingY = 0;
+                    relX = Math.max(paddingX, Math.min(relX, parentBounds.width - nodeWidth - paddingX));
+                    relY = Math.max(paddingY, Math.min(relY, parentBounds.height - nodeHeight - paddingY));
+                  }
 
                   // Track delta if this is a resize-from-left/top
                   if (hasDimensionsChange.has(change.id)) {
@@ -2671,6 +2690,10 @@ const App = () => {
   // Capture snapshot before drag begins
   const onNodeDragStart = useCallback(
     (event: React.MouseEvent, node: Node) => {
+      // Seed the shift state from the gesture that started the drag — mousemove
+      // (which normally maintains shiftHeldRef) is suppressed during a drag.
+      if (typeof event?.shiftKey === 'boolean') shiftHeldRef.current = event.shiftKey;
+      shiftDragActiveRef.current = false;
       dragStartSnapshot.current = { nodes, edges, machineProperties, rootHistory };
       if (!node.id.startsWith('initial-marker') && !node.id.startsWith('history-marker')) {
         setDraggingNodeId(node.id);
@@ -2682,6 +2705,9 @@ const App = () => {
   // Handle marker drag (initial and history markers)
   const onNodeDrag = useCallback(
     (event, node) => {
+      // Latch a shift-escape as soon as it happens during the drag, so releasing
+      // Shift before the mouse button still reparents on drop.
+      if (shiftHeldRef.current) shiftDragActiveRef.current = true;
       if (node.id.startsWith('initial-marker') || node.id.startsWith('history-marker')) {
         setDraggingMarkerId(node.id);
         setDraggingMarkerPos(node.position);
@@ -2700,6 +2726,157 @@ const App = () => {
         dragStartSnapshot.current = null;
         setIsDirty(true);
       }
+
+      // Shift-drop reparenting: when Shift is held, a dragged node is allowed to
+      // cross parent borders (the clamp in onNodesChange is skipped), and on drop
+      // it is adopted by whatever compound state its center now lands in. Dropping
+      // outside every state moves it to the root level.
+      const isMarker = node.id.startsWith('initial-marker') || node.id.startsWith('history-marker');
+      const shiftDrop = event.shiftKey || shiftDragActiveRef.current;
+      shiftDragActiveRef.current = false;
+      if (shiftDrop && !isMarker) {
+        // All selected nodes are dragged together; reparent each independently by
+        // its own center. Skip nodes whose ancestor is also moving — they follow
+        // their ancestor and keep their relative position.
+        const movingIds = new Set<string>(nodes.filter(n => n.selected).map(n => n.id));
+        movingIds.add(node.id);
+        const roots = [...movingIds].filter(
+          id => !getAncestorIds(id, nodes).some(a => movingIds.has(a))
+        );
+
+        const findDropParent = (draggedId: string): string | undefined => {
+          const b = getAbsoluteNodeBounds(draggedId, nodes);
+          if (!b) return undefined;
+          const cx = b.x + b.width / 2;
+          const cy = b.y + b.height / 2;
+          let best: string | undefined = undefined;
+          let bestDepth = -1;
+          for (const cand of nodes) {
+            if (cand.type !== 'stateNode') continue;      // only states can hold children
+            if (movingIds.has(cand.id)) continue;         // can't drop into a node that's also moving
+            if (isAncestorOf(draggedId, cand.id, nodes)) continue; // not into own descendant
+            const cb = getAbsoluteNodeBounds(cand.id, nodes);
+            if (!cb) continue;
+            if (cx >= cb.x && cx <= cb.x + cb.width && cy >= cb.y && cy <= cb.y + cb.height) {
+              const depth = getAncestorIds(cand.id, nodes).length;
+              if (depth > bestDepth) { bestDepth = depth; best = cand.id; }
+            }
+          }
+          return best;
+        };
+
+        const updates = new Map<string, { parentId: string | undefined; position: { x: number; y: number }; label?: string }>();
+        // Siblings already committed to a destination in this batch, so multiple
+        // nodes dropped into the same parent also de-duplicate against each other.
+        const placed: Node[] = [];
+
+        // Initial-marker transfers. A state that was its old container's initial
+        // carries that "initial" role with it to the destination — unless the
+        // destination already has an initial, in which case the initial is dropped.
+        const clearInitialStates = new Set<string>();   // state ids to clear initial from
+        let clearRootInitial = false;
+        const setInitialStates = new Map<string, { targetId: string; pos: { x: number; y: number }; size: number }>();
+        let setRootInitial: { targetId: string; pos: { x: number; y: number } } | null = null;
+        const rootHasInitial = () => setRootInitial ? true : (clearRootInitial ? false : !!machineProperties.initial);
+        const stateHasInitial = (qid: string) => {
+          if (setInitialStates.has(qid)) return true;
+          if (clearInitialStates.has(qid)) return false;
+          return !!nodes.find(n => n.id === qid)?.data.initial;
+        };
+
+        for (const id of roots) {
+          const cur = nodes.find(n => n.id === id);
+          if (!cur) continue;
+          const newParent = findDropParent(id);
+          if (newParent === (cur.parentId || undefined)) continue; // unchanged
+          const b = getAbsoluteNodeBounds(id, nodes);
+          if (!b) continue;
+          let position: { x: number; y: number };
+          if (newParent) {
+            const pb = getAbsoluteNodeBounds(newParent, nodes);
+            if (!pb) continue;
+            position = { x: b.x - pb.x, y: b.y - pb.y };
+          } else {
+            position = { x: b.x, y: b.y };
+          }
+
+          // Resolve a sibling name clash in the destination by appending " 2"
+          // (then " 3", …). The pool excludes the nodes being moved and includes
+          // ones already placed earlier in this same drop.
+          const pool = [...nodes.filter(n => !movingIds.has(n.id)), ...placed];
+          const baseLabel = cur.data.label as string;
+          let newLabel = baseLabel;
+          if (cur.type === 'decisionNode') {
+            newLabel = generateUniqueDecisionLabel(baseLabel, pool, newParent);
+          } else if (cur.type === 'stateNode') {
+            newLabel = generateUniqueNodeLabel(baseLabel, newParent, pool);
+          }
+
+          updates.set(id, { parentId: newParent, position, label: newLabel !== baseLabel ? newLabel : undefined });
+          placed.push({ ...cur, parentId: newParent, data: { ...cur.data, label: newLabel } });
+
+          // If this moved state was the initial of its old container, move the
+          // initial with it — or drop it if the destination already has one.
+          const oldParent = cur.parentId || undefined;
+          const wasInitial = cur.type === 'stateNode' && (oldParent
+            ? nodes.find(n => n.id === oldParent)?.data.initial === id
+            : machineProperties.initial === id);
+          if (wasInitial) {
+            if (oldParent) clearInitialStates.add(oldParent); else clearRootInitial = true;
+            const GAP = 25;
+            if (newParent) {
+              if (!stateHasInitial(newParent)) {
+                const qb = getAbsoluteNodeBounds(newParent, nodes);
+                setInitialStates.set(newParent, {
+                  targetId: id,
+                  pos: { x: Math.max(0, position.x - GAP), y: Math.max(0, position.y - GAP) },
+                  size: qb ? qb.width * 0.03 : 15,
+                });
+              }
+            } else if (!rootHasInitial()) {
+              setRootInitial = { targetId: id, pos: { x: b.x - GAP, y: b.y - GAP } };
+            }
+          }
+        }
+
+        if (updates.size > 0 || clearInitialStates.size > 0 || setInitialStates.size > 0) {
+          setNodes(nds => nds.map(n => {
+            let m = n;
+            const u = updates.get(n.id);
+            if (u) {
+              m = {
+                ...m,
+                parentId: u.parentId,
+                extent: u.parentId ? ('parent' as const) : undefined,
+                position: u.position,
+                ...(u.label !== undefined ? { data: { ...m.data, label: u.label } } : {}),
+              };
+            }
+            if (clearInitialStates.has(n.id)) {
+              const d = m.data as typeof m.data & { initial?: unknown; initialMarkerPos?: unknown; initialMarkerSize?: unknown };
+              const { initial, initialMarkerPos, initialMarkerSize, ...restData } = d;
+              m = { ...m, data: restData };
+            }
+            const s = setInitialStates.get(n.id);
+            if (s) {
+              m = { ...m, data: { ...m.data, initial: s.targetId, initialMarkerPos: s.pos, initialMarkerSize: s.size } };
+            }
+            return m;
+          }));
+        }
+
+        if (clearRootInitial || setRootInitial) {
+          const rootInit = setRootInitial;
+          setMachineProperties(prev => {
+            if (rootInit) {
+              return { ...prev, initial: rootInit.targetId, initialMarkerPos: rootInit.pos };
+            }
+            const { initial, initialMarkerPos, initialMarkerSize, ...rest } = prev as typeof prev & { initialMarkerPos?: unknown; initialMarkerSize?: unknown };
+            return rest;
+          });
+        }
+      }
+
       if (node.id === 'initial-marker-root') {
         // Root initial marker - update machineProperties
         const screenX = node.position.x + 7.5; // Center of 15px marker
@@ -2780,7 +2957,7 @@ const App = () => {
         setDraggingMarkerPos(null);
       }
     },
-    [effectivePan, effectiveScale, nodes, setMachineProperties, setNodes, pushSnapshot]
+    [effectivePan, effectiveScale, nodes, machineProperties, setMachineProperties, setNodes, pushSnapshot]
   );
 
   const onNodeClick = useCallback(

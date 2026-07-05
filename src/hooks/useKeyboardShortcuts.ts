@@ -225,17 +225,6 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
       } else if (event.key === 'v' && !isModifierPressed) {
         event.preventDefault();
         toggleShowLabels();
-      } else if (event.key === 'g' && !isModifierPressed && !event.shiftKey) {
-        event.preventDefault();
-        handleGroupStates();
-      } else if (event.key === 'G' && event.shiftKey && !isModifierPressed) {
-        event.preventDefault();
-        const selectedNode = nodes.find(n => n.selected);
-        if (selectedNode && selectedNode.parentId) {
-          handleUngroupState(selectedNode.id);
-        }
-        setIsUngroupingMode(true);
-        console.log('Entered ungroup mode');
       } else if (event.key === 'i' && !isModifierPressed) {
         event.preventDefault();
         const selectedNode = nodes.find(n => n.selected);
