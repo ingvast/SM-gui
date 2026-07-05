@@ -230,6 +230,19 @@ const App = () => {
   const isAddingNodeRef = useRef(false); // mirrors isAddingNode, usable in stable callbacks
   const [nodeCreateDragRect, setNodeCreateDragRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [pendingNodeCreate, setPendingNodeCreate] = useState<{ startX: number; startY: number; endX: number; endY: number; parentId: string | null } | null>(null);
+
+  // Rubber-band (drag-rectangle) multi-selection refs/state
+  const rubberBandStart = useRef<{ x: number; y: number } | null>(null);
+  const rubberBandIsDragging = useRef(false);
+  const rubberBandScope = useRef<string | null>(null); // compound id whose children we select in (null = root)
+  const rubberBandAdditive = useRef(false);            // Ctrl held → add to existing selection
+  const rubberBandPrev = useRef<string[]>([]);         // selection captured at drag start (for additive)
+  const selectedIdsRef = useRef<string[]>([]);         // mirrors currently-selected node ids for stable callbacks
+  const preGestureSelection = useRef<string[]>([]);    // selection captured at mousedown, before ReactFlow clobbers it
+  const suppressGestureClick = useRef(false);          // swallow the trailing click after a rubber-band drag
+  const [rubberBandRect, setRubberBandRect] = useState<{ x: number; y: number; w: number; h: number; touch: boolean } | null>(null);
+  const [rubberBandScopeId, setRubberBandScopeId] = useState<string | null>(null); // drives force-show of children during drag
+  const [pendingRubberBand, setPendingRubberBand] = useState<{ startX: number; startY: number; endX: number; endY: number; scope: string | null; additive: boolean; prevSelected: string[] } | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     mouseX: number; mouseY: number;
     worldX: number; worldY: number;
@@ -558,6 +571,14 @@ const App = () => {
       }
     }
 
+    // During a rubber-band drag, force every direct child of the scoped compound
+    // to be shown so the user can see (and rubber-band) all of them.
+    if (rubberBandScopeId !== null) {
+      for (const node of nodes) {
+        if (node.parentId === rubberBandScopeId) intrinsicallyVisible.add(node.id);
+      }
+    }
+
     // Find nodes outside viewport that have edges to intrinsically visible nodes
     const connectedToVisible = new Set<string>();
     for (const edge of edges) {
@@ -632,10 +653,15 @@ const App = () => {
       const isDragging = draggingNodeId !== null &&
         (node.id === draggingNodeId || isAncestorOf(draggingNodeId, node.id, nodes));
 
+      const isCompoundState = node.type === 'stateNode' && parentStateIds.has(node.id);
+
       return {
         ...node,
         parentId: undefined,
         extent: undefined,
+        // Compound states only move when grabbed by their top title strip; the
+        // interior is reserved for rubber-band selection.
+        ...(isCompoundState ? { dragHandle: '.state-drag-handle' } : {}),
         position: { x: t.screenX, y: t.screenY },
         zIndex: isDragging ? (5000 + dfsIdx) : (1000 + dfsIdx),
         style: {
@@ -835,7 +861,7 @@ const App = () => {
     }
 
     return [...result, ...initialMarkers, ...historyMarkers];
-  }, [nodes, edges, effectiveScale, effectivePan, viewportSize, machineProperties, draggingMarkerId, draggingMarkerPos, selectedMarkerId, draggingNodeId, isViewMode, activeNodeIds, leafActiveNodeIds, activeSince, viewModeTick]);
+  }, [nodes, edges, effectiveScale, effectivePan, viewportSize, machineProperties, draggingMarkerId, draggingMarkerPos, selectedMarkerId, draggingNodeId, isViewMode, activeNodeIds, leafActiveNodeIds, activeSince, viewModeTick, rubberBandScopeId]);
 
   // Build a set of visible node IDs for edge filtering
   const visibleNodeIds = useMemo(() => {
@@ -1172,12 +1198,40 @@ const App = () => {
       nodeCreateDragIsDragging.current = false;
       return;
     }
-    // Normal mode: don't start panning on nodes/edges/handles
-    if (target.closest('.react-flow__node') || target.closest('.react-flow__edge') || target.closest('.react-flow__handle') || target.closest('.react-flow__edgeupdater')) {
+    // Normal mode.
+    // Never start a selection/pan gesture on edges, handles or reconnect anchors.
+    if (target.closest('.react-flow__edge') || target.closest('.react-flow__handle') || target.closest('.react-flow__edgeupdater')) {
       return;
     }
-    isPanning.current = true;
-    lastPanPos.current = { x: event.clientX, y: event.clientY };
+    // Space held → let the global space-drag pan handler take over.
+    if (spaceHeld.current) return;
+    // Mousedown on a compound's title strip → ReactFlow moves the compound.
+    if (target.closest('.state-drag-handle')) return;
+
+    const nodeEl = target.closest('.react-flow__node') as HTMLElement | null;
+    if (nodeEl) {
+      // A compound state renders a .state-drag-handle child; nodes are rendered flat
+      // (no DOM nesting) so this only matches the node under the cursor.
+      const isCompoundInterior = !!nodeEl.querySelector('.state-drag-handle');
+      if (isCompoundInterior) {
+        // Start a rubber-band scoped to this compound's direct children.
+        rubberBandScope.current = nodeEl.getAttribute('data-id');
+        rubberBandStart.current = { x: event.clientX, y: event.clientY };
+        rubberBandIsDragging.current = false;
+        rubberBandAdditive.current = event.ctrlKey || event.metaKey;
+        rubberBandPrev.current = selectedIdsRef.current;
+        return;
+      }
+      // Leaf state / decision / proxy → let ReactFlow handle the move.
+      return;
+    }
+
+    // Empty pane → rubber-band scoped to the root level.
+    rubberBandScope.current = null;
+    rubberBandStart.current = { x: event.clientX, y: event.clientY };
+    rubberBandIsDragging.current = false;
+    rubberBandAdditive.current = event.ctrlKey || event.metaKey;
+    rubberBandPrev.current = selectedIdsRef.current;
   }, []);
 
   const handlePaneMouseMove = useCallback((event: React.MouseEvent) => {
@@ -1204,6 +1258,33 @@ const App = () => {
       }
       return;
     }
+    if (rubberBandStart.current) {
+      const dx = event.clientX - rubberBandStart.current.x;
+      const dy = event.clientY - rubberBandStart.current.y;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+        if (!rubberBandIsDragging.current) {
+          rubberBandIsDragging.current = true;
+          setRubberBandScopeId(rubberBandScope.current);
+        }
+      }
+      if (rubberBandIsDragging.current) {
+        const wrapperRect = reactFlowWrapper.current?.getBoundingClientRect();
+        if (wrapperRect) {
+          const startRelX = rubberBandStart.current.x - wrapperRect.left;
+          const startRelY = rubberBandStart.current.y - wrapperRect.top;
+          const curRelX = event.clientX - wrapperRect.left;
+          const curRelY = event.clientY - wrapperRect.top;
+          setRubberBandRect({
+            x: Math.min(startRelX, curRelX),
+            y: Math.min(startRelY, curRelY),
+            w: Math.abs(curRelX - startRelX),
+            h: Math.abs(curRelY - startRelY),
+            touch: curRelX < startRelX, // dragging right-to-left → touch (intersect) mode
+          });
+        }
+      }
+      return;
+    }
     if (isPanning.current) {
       const deltaX = event.clientX - lastPanPos.current.x;
       const deltaY = event.clientY - lastPanPos.current.y;
@@ -1219,6 +1300,12 @@ const App = () => {
     suppressNextPaneClick.current = false;
     suppressNextNodeClick.current = false;
     setNodeCreateDragRect(null);
+    rubberBandStart.current = null;
+    rubberBandIsDragging.current = false;
+    rubberBandScope.current = null;
+    setRubberBandRect(null);
+    setRubberBandScopeId(null);
+    suppressGestureClick.current = false;
     isPanning.current = false;
   }, []);
 
@@ -1244,6 +1331,29 @@ const App = () => {
       nodeCreateDragIsDragging.current = false;
       nodeCreateDragParentId.current = null;
       setNodeCreateDragRect(null);
+    }
+    if (rubberBandStart.current) {
+      if (rubberBandIsDragging.current) {
+        setPendingRubberBand({
+          startX: rubberBandStart.current.x,
+          startY: rubberBandStart.current.y,
+          endX: event.clientX,
+          endY: event.clientY,
+          scope: rubberBandScope.current,
+          additive: rubberBandAdditive.current,
+          prevSelected: rubberBandAdditive.current ? rubberBandPrev.current : [],
+        });
+        suppressNextPaneClick.current = true;
+        suppressNextNodeClick.current = true;
+        // Prevent ReactFlow's own click-selection (which fires right after mouseup)
+        // from clobbering the selection we just computed.
+        suppressGestureClick.current = true;
+      }
+      rubberBandStart.current = null;
+      rubberBandIsDragging.current = false;
+      rubberBandScope.current = null;
+      setRubberBandRect(null);
+      setRubberBandScopeId(null);
     }
     isPanning.current = false;
   }, []);
@@ -1490,6 +1600,52 @@ const App = () => {
     setPendingNodeCreate(null);
   }, [pendingNodeCreate]); // intentional: reads latest values from closure at effect run time
 
+  // Apply rubber-band selection (runs after nodes/pan/scale are available in closure)
+  useEffect(() => {
+    if (!pendingRubberBand) return;
+    const rect = reactFlowWrapper.current?.getBoundingClientRect();
+    if (!rect) { setPendingRubberBand(null); return; }
+    const { startX, startY, endX, endY, scope, additive, prevSelected } = pendingRubberBand;
+    const touch = endX < startX; // right-to-left → intersect; left-to-right → fully enclosed
+    const selLeft = Math.min(startX, endX) - rect.left;
+    const selTop = Math.min(startY, endY) - rect.top;
+    const selRight = Math.max(startX, endX) - rect.left;
+    const selBottom = Math.max(startY, endY) - rect.top;
+
+    // Candidates: direct children of the scope compound (null = root), states & decisions only.
+    const matched = new Set<string>();
+    for (const node of nodes) {
+      if (node.type !== 'stateNode' && node.type !== 'decisionNode') continue;
+      if ((node.parentId ?? null) !== scope) continue;
+      const b = getAbsoluteNodeBounds(node.id, nodes);
+      if (!b) continue;
+      const nx = b.x * effectiveScale + effectivePan.x;
+      const ny = b.y * effectiveScale + effectivePan.y;
+      const nr = nx + b.width * effectiveScale;
+      const nb = ny + b.height * effectiveScale;
+      const isInside = nx >= selLeft && ny >= selTop && nr <= selRight && nb <= selBottom;
+      const intersects = nx < selRight && nr > selLeft && ny < selBottom && nb > selTop;
+      if (touch ? intersects : isInside) matched.add(node.id);
+    }
+
+    // For additive drags, keep the pre-gesture selection that belongs to the same scope.
+    const prevSet = new Set(prevSelected);
+    setSelectedMarkerId(null);
+    setNodes((nds) => nds.map((n) => {
+      let sel = matched.has(n.id);
+      if (additive && prevSet.has(n.id) && (n.parentId ?? null) === scope) sel = true;
+      return n.selected === sel ? n : { ...n, selected: sel };
+    }));
+    setEdges((eds) => eds.map((e) => e.selected ? { ...e, selected: false } : e));
+
+    // Update primary tree item to one of the selected nodes (or clear).
+    const anySelectedId = nodes.find(n => matched.has(n.id))?.id
+      ?? (additive ? prevSelected.find(id => nodes.some(n => n.id === id && (n.parentId ?? null) === scope)) : undefined)
+      ?? null;
+    setSelectedTreeItem(anySelectedId);
+    setPendingRubberBand(null);
+  }, [pendingRubberBand]); // intentional: reads latest values from closure at effect run time
+
   // Clipboard operations
   const { handleCopy, handlePaste: handlePasteBase, handleDuplicate: handleDuplicateBase, handleDuplicateWithExternalEdges: handleDuplicateWithExternalEdgesBase } = useClipboard(nodes, edges, setNodes, setEdges, setSelectedTreeItem, saveSnapshot);
 
@@ -1547,6 +1703,12 @@ const App = () => {
     }
     return nodes.find(n => n.id === selectedTreeItem);
   }, [nodes, selectedTreeItem, rootHistory, machineProperties]);
+
+  // Number of canvas nodes currently selected (drives multi-select summary in the panel)
+  const selectedNodeCount = useMemo(() => nodes.filter(n => n.selected).length, [nodes]);
+  // Mirror selected ids into a ref so stable ([]-deps) mouse handlers can read the
+  // pre-gesture selection (needed for additive Ctrl+rubber-band).
+  selectedIdsRef.current = useMemo(() => nodes.filter(n => n.selected).map(n => n.id), [nodes]);
 
 
 
@@ -2805,6 +2967,47 @@ const App = () => {
         return;
       }
 
+      // Ctrl/Cmd-click: add/remove from multi-selection (siblings only).
+      // Only states and decisions/ANDs participate in group selection.
+      const isMultiModifier = event.ctrlKey || event.metaKey;
+      const origNode = nodes.find(n => n.id === node.id);
+      const isGroupSelectable = origNode && (origNode.type === 'stateNode' || origNode.type === 'decisionNode');
+      if (isMultiModifier && isGroupSelectable) {
+        // Use the selection captured at mousedown (preGestureSelection). ReactFlow's
+        // own mousedown-selection has already cleared the other selected nodes by the
+        // time this click handler runs, so the closure `nodes` can't be trusted here.
+        const prevSelIds = preGestureSelection.current;
+        const wasSelected = prevSelIds.includes(node.id);
+        const prevSelNodes = nodes.filter(n => prevSelIds.includes(n.id));
+        if (!wasSelected && prevSelNodes.length > 0) {
+          // Enforce same hierarchical level & branch: identical parentId.
+          const selParent = prevSelNodes[0].parentId ?? null;
+          const nodeParent = origNode.parentId ?? null;
+          if (nodeParent !== selParent) {
+            // Different branch/level — silently refuse.
+            event.stopPropagation();
+            return;
+          }
+        }
+        const targetIds = new Set(prevSelIds);
+        if (wasSelected) targetIds.delete(node.id);
+        else targetIds.add(node.id);
+        setSelectedMarkerId(null);
+        setNodes((nds) => nds.map((n) => {
+          const sel = targetIds.has(n.id);
+          return n.selected === sel ? n : { ...n, selected: sel };
+        }));
+        setEdges((eds) => eds.map((edge) => edge.selected ? { ...edge, selected: false } : edge));
+        if (wasSelected) {
+          const remaining = prevSelIds.filter(id => id !== node.id);
+          setSelectedTreeItem(remaining.length ? remaining[0] : null);
+        } else {
+          setSelectedTreeItem(node.id);
+        }
+        event.stopPropagation();
+        return;
+      }
+
       setSelectedMarkerId(null);
       setNodes((nds) =>
         nds.map((n) => ({
@@ -3170,6 +3373,7 @@ const App = () => {
           <Box sx={{ p: 2, flexGrow: 1, overflowY: 'auto' }}>
             <PropertiesPanel
               selectedNode={selectedNode}
+              multiSelectCount={selectedNodeCount}
               selectedCanvasEdge={edges.find(e => e.selected) || null}
               nodes={nodes}
               edges={edges}
@@ -3226,10 +3430,24 @@ const App = () => {
               cursor: isUngroupingMode ? 'n-resize !important' : (isAddingNode || isAddingDecision || isAddingAnd || isAddingProxy || isAddingTransition || isSettingInitial || isSettingHistory || isRetargetingTransition || isResourcingTransition ? 'crosshair !important' : isSpaceHeld ? 'grab !important' : undefined),
             },
           }}
+          onMouseDownCapture={() => {
+            // Capture the selection before ReactFlow's own mousedown-selection runs, so
+            // Ctrl+click (whose click handler fires after a re-render) can extend it.
+            preGestureSelection.current = selectedIdsRef.current;
+          }}
           onMouseDown={handlePaneMouseDown}
           onMouseMove={handlePaneMouseMove}
           onMouseUp={handlePaneMouseUp}
           onMouseLeave={cancelNodeCreateDrag}
+          onClickCapture={(e) => {
+            // Swallow the click that follows a rubber-band drag before ReactFlow's
+            // node/pane click handlers can change the selection.
+            if (suppressGestureClick.current) {
+              suppressGestureClick.current = false;
+              e.stopPropagation();
+              e.preventDefault();
+            }
+          }}
         >
           {nodeCreateDragRect && (
             <div
@@ -3243,6 +3461,23 @@ const App = () => {
                 background: 'rgba(25, 118, 210, 0.08)',
                 pointerEvents: 'none',
                 zIndex: 1000,
+                boxSizing: 'border-box',
+              }}
+            />
+          )}
+          {rubberBandRect && (
+            <div
+              style={{
+                position: 'absolute',
+                left: rubberBandRect.x,
+                top: rubberBandRect.y,
+                width: rubberBandRect.w,
+                height: rubberBandRect.h,
+                // Solid border = enclose (L→R); dashed = touch/intersect (R→L)
+                border: rubberBandRect.touch ? '1.5px dashed #2e7d32' : '1.5px solid #1976d2',
+                background: rubberBandRect.touch ? 'rgba(46, 125, 50, 0.08)' : 'rgba(25, 118, 210, 0.10)',
+                pointerEvents: 'none',
+                zIndex: 6000,
                 boxSizing: 'border-box',
               }}
             />
@@ -3508,6 +3743,8 @@ const App = () => {
               autoPanOnNodeDrag={false}
               autoPanOnConnect={false}
               elevateNodesOnSelect={false}
+              multiSelectionKeyCode={null}
+              selectionKeyCode={null}
               nodesDraggable={!isAddingNode && !isViewMode}
               nodesConnectable={!isViewMode}
               deleteKeyCode={isViewMode ? [] : ['Backspace', 'Delete']}

@@ -100,6 +100,16 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
         return;
       }
 
+      // Ctrl/Cmd+S: save (works even when focus is in an input field)
+      if (isModifierPressed && (event.key === 's' || event.key === 'S')) {
+        event.preventDefault();
+        if (!event.shiftKey) {
+          handleSave();
+        }
+        // Ctrl/Cmd+Shift+S (Save As) handled by Electron menu accelerator
+        return;
+      }
+
       if (isInTextInput && event.key !== 'Escape') {
         return;
       }
@@ -308,13 +318,6 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams) {
               } else {
                 handleDuplicate();
               }
-              break;
-            case 's':
-              event.preventDefault();
-              if (!event.shiftKey) {
-                handleSave();
-              }
-              // Ctrl+Shift+S (Save As) handled by Electron menu accelerator
               break;
             case 'o':
               event.preventDefault();

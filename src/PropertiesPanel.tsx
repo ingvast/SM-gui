@@ -65,6 +65,7 @@ interface PropertiesPanelProps {
   onNameFocused?: () => void;
   replaceVersion?: number;
   readOnly?: boolean;
+  multiSelectCount?: number;
 }
 
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
@@ -86,6 +87,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onNameFocused,
   replaceVersion,
   readOnly = false,
+  multiSelectCount = 0,
 }) => {
   const [tempName, setTempName] = useState('');
   const [tempEntry, setTempEntry] = useState('');
@@ -564,6 +566,17 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       return null;
     }
   };
+
+  // When multiple items are selected, hide per-item fields and show a summary.
+  if (multiSelectCount >= 2) {
+    return (
+      <Box sx={{ p: 1 }}>
+        <Typography variant="body2" color="text.secondary">
+          {multiSelectCount} items selected
+        </Typography>
+      </Box>
+    );
+  }
 
   // Show transition editing when only an edge is selected on canvas
   if ((!selectedNode || !selectedNode.data) && selectedCanvasEdge) {

@@ -132,7 +132,9 @@ export default memo(({ data, selected }: StateNodeProps) => {
   const isActive = data.isActive;
   const isAncestorActive = data.isAncestorActive;
 
-  const borderColor = selected ? '#1976d2' : (isActive ? '#2e7d32' : (isOrthogonal ? '#0066cc' : (isCompound ? '#666' : '#1a192b')));
+  // Orthogonal states use the same gray border as compounds; their light-blue
+  // background (below) distinguishes them. This keeps blue exclusively for selection.
+  const borderColor = selected ? '#1976d2' : (isActive ? '#2e7d32' : (isOrthogonal ? '#666' : (isCompound ? '#666' : '#1a192b')));
 
   // Determine background color based on active state
   let backgroundColor: string;
@@ -141,7 +143,7 @@ export default memo(({ data, selected }: StateNodeProps) => {
   } else if (isAncestorActive) {
     backgroundColor = 'rgba(220, 245, 220, 0.88)';
   } else if (isOrthogonal) {
-    backgroundColor = 'rgba(240, 248, 255, 0.9)';
+    backgroundColor = 'rgba(200, 224, 255, 0.9)';
   } else if (isCompound) {
     backgroundColor = 'rgba(249, 249, 249, 0.85)';
   } else {
@@ -176,6 +178,14 @@ export default memo(({ data, selected }: StateNodeProps) => {
     marginTop: `${labelMargin}px`,
   };
 
+  // Compound states get a full-width top "title strip" that acts as the move
+  // handle (ReactFlow dragHandle = '.state-drag-handle'). It stays grabbable even
+  // when the name is hidden (zoomed out), and is visually marked with a tint and a
+  // separator line at its bottom. The interior below it is used for rubber-band select.
+  const availH = data.screenHeight ?? Infinity;
+  const titleStripHeight = Math.min(Math.max(labelAreaHeight, 16), Math.max(availH * 0.5, 8));
+  const compoundCodeTop = titleStripHeight + 4;
+
   return (
     <div className="state-node" style={nodeStyle}>
       <NodeResizer
@@ -195,7 +205,36 @@ export default memo(({ data, selected }: StateNodeProps) => {
       <Handle type="source" position={Position.Left} id="left-source" className="invisible-handle" />
       <Handle type="target" position={Position.Left} id="left-target" className="invisible-handle" />
 
-      {showLabel && <div style={labelStyle}>{data.label}</div>}
+      {isCompound ? (
+        <div
+          className="state-drag-handle"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: titleStripHeight,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: `${fontSize}px`,
+            borderTopLeftRadius: `${borderRadius}px`,
+            borderTopRightRadius: `${borderRadius}px`,
+            borderBottom: `1px solid ${borderColor}`,
+            // Neutral gray title-bar tint. Deliberately not blue/green so it never
+            // reads as a selected node (#1976d2) or a view-mode active state (green).
+            backgroundColor: 'rgba(90, 90, 90, 0.15)',
+            cursor: 'move',
+            overflow: 'hidden',
+            whiteSpace: 'nowrap',
+            zIndex: 2,
+          }}
+        >
+          {showLabel ? data.label : ''}
+        </div>
+      ) : (
+        showLabel && <div style={labelStyle}>{data.label}</div>
+      )}
 
       {data.hasProxy && (() => {
         const badgeDiameter = 16;
@@ -213,7 +252,7 @@ export default memo(({ data, selected }: StateNodeProps) => {
         // Compound state: code/annotation displayed in a distinct double-bordered box
         <div style={{
           position: 'absolute',
-          top: labelAreaHeight + 4,
+          top: compoundCodeTop,
           left: 8,
           right: 8,
           // Anchor the bottom so the box can never grow past the state's border.
