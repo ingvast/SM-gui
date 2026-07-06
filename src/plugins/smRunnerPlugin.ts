@@ -11,6 +11,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { transform } from 'sucrase';
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let startTime = 0;
@@ -153,22 +154,13 @@ export async function compileAndLoad(filePath: string): Promise<{
     throw new Error('sm-compiler did not produce a .ts file');
   }
 
-  // 2. Transpile .ts → .js (CJS) using esbuild JS API (avoids binary path issues on all platforms)
+  // 2. Transpile .ts → .js (CJS) using sucrase — pure JS, bundled inline, no binary needed
   const jsFile = outBase + '.cjs';
   try {
-    // Dynamic import keeps esbuild external in the Vite bundle (not inlined)
-    const esbuildApi = await import(/* @vite-ignore */ 'esbuild');
-    await esbuildApi.build({
-      entryPoints: [tsFile],
-      outfile: jsFile,
-      format: 'cjs',
-      target: 'es2020',
-      logLevel: 'silent',
-    });
+    const tsCode = fs.readFileSync(tsFile, 'utf-8');
+    const { code } = transform(tsCode, { transforms: ['typescript', 'imports'] });
+    fs.writeFileSync(jsFile, code, 'utf-8');
   } catch (err) {
-    // Preserve tmpDir so the generated .ts can be inspected; log path for debugging
-    console.error('[SM Runner] esbuild failed. Generated TS at:', tsFile);
-    try { console.error('[SM Runner] TS content:\n', fs.readFileSync(tsFile, 'utf-8')); } catch { /* ignore */ }
     cleanup(tmpDir);
     throw new Error(`Code has syntax errors:\n${(err as Error).message}`);
   }

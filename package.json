@@ -1,7 +1,7 @@
 {
   "name": "SM-builder",
   "productName": "SM builder",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Graphical builder of hierchial state machines",
   "main": ".vite/build/main.js",
   "private": true,
@@ -48,10 +48,10 @@
     "jsdom": "^28.1.0",
     "typescript": "~4.5.4",
     "vite": "^5.4.21",
+    "sucrase": "^3.35.0",
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "esbuild": "^0.21.5",
     "@codemirror/commands": "^6.10.2",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-go": "^6.0.1",
