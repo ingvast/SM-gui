@@ -153,20 +153,24 @@ export async function compileAndLoad(filePath: string): Promise<{
     throw new Error('sm-compiler did not produce a .ts file');
   }
 
-  // 2. Transpile .ts → .js (CJS) using esbuild CLI
+  // 2. Transpile .ts → .js (CJS) using esbuild JS API (avoids binary path issues on all platforms)
   const jsFile = outBase + '.cjs';
-  const esbuildBin = findEsbuild();
-
   try {
-    execSync(`${q(esbuildBin)} ${q(tsFile)} --outfile=${q(jsFile)} --format=cjs --target=es2020`, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 15000,
+    // Dynamic import keeps esbuild external in the Vite bundle (not inlined)
+    const esbuildApi = await import(/* @vite-ignore */ 'esbuild');
+    await esbuildApi.build({
+      entryPoints: [tsFile],
+      outfile: jsFile,
+      format: 'cjs',
+      target: 'es2020',
+      logLevel: 'silent',
     });
   } catch (err) {
+    // Preserve tmpDir so the generated .ts can be inspected; log path for debugging
+    console.error('[SM Runner] esbuild failed. Generated TS at:', tsFile);
+    try { console.error('[SM Runner] TS content:\n', fs.readFileSync(tsFile, 'utf-8')); } catch { /* ignore */ }
     cleanup(tmpDir);
-    const stderr = (err as { stderr?: Buffer }).stderr?.toString() || '';
-    const detail = stderr || (err as Error).message;
-    throw new Error(`Code has syntax errors:\n${detail}`);
+    throw new Error(`Code has syntax errors:\n${(err as Error).message}`);
   }
 
   // 3. Load the CJS module via Function constructor
