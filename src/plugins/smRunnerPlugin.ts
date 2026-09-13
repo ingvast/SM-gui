@@ -11,6 +11,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { findOnShellPath } from '../utils/shellPath';
 import { transform } from 'sucrase';
 
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -80,23 +81,6 @@ export function findEsbuild(): string {
     }
   }
   return 'esbuild';
-}
-
-// Electron on macOS launches without the user's shell PATH, so binaries
-// installed via Homebrew or user scripts won't be found. Use a login shell
-// to resolve the real path before calling the tool.
-export function findOnShellPath(name: string): string {
-  try {
-    const shell = process.env.SHELL || '/bin/sh';
-    const found = execSync(`${shell} -l -c "which ${name}"`, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 5000,
-    }).toString().trim();
-    if (found) return found;
-  } catch {
-    // fall through to bare name
-  }
-  return name;
 }
 
 function cleanup(dir: string) {

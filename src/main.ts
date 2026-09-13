@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
+import { findOnShellPath } from './utils/shellPath';
 import started from 'electron-squirrel-startup';
 import type { ViewPlugin, PluginCallbacks, PluginInfo } from './viewPlugin';
 
@@ -609,11 +610,11 @@ ipcMain.handle('export-phoenix', async (event, smbFilePath: string) => {
 
 function runSmCompiler(args: string[], result: { outputPath: string }): Promise<{ success: boolean; outputPath?: string; warnings?: string[]; error?: string }> {
   return new Promise((resolve) => {
-    const q = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
-    const child = spawn(`sm-compiler ${args.map(q).join(' ')}`, {
-      shell: true,
+    // Spawn directly (no shell) so paths need no quoting and a missing binary
+    // surfaces as ENOENT; resolve via the login shell for Finder-launched apps.
+    const child = spawn(findOnShellPath('sm-compiler'), args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-    } as Parameters<typeof spawn>[1]);
+    });
 
     let stdout = '';
     child.stdout?.on('data', (data: Buffer) => {
