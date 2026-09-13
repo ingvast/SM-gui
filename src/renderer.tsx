@@ -106,6 +106,7 @@ declare global {
       openFile: () => Promise<{ success: boolean; content?: string; filePath?: string; canceled?: boolean; error?: string }>;
       importPhoenix: () => Promise<{ success: boolean; content?: string; filePath?: string; canceled?: boolean; error?: string }>;
       onImportPhoenix: (callback: () => void) => () => void;
+      onExportPdf: (callback: () => void) => () => void;
       getStartupFile: () => Promise<{ content: string; filePath: string } | null>;
       onOpenWithFile: (callback: (data: { content: string; filePath: string }) => void) => () => void;
       onMenuUndo: (callback: () => void) => () => void;
@@ -2359,6 +2360,12 @@ const App = () => {
       pageStyle.remove();
     }
   }, [viewportSize, currentFilePath]);
+
+  // Subscribe to the File > Export to PDF menu command
+  useEffect(() => {
+    const cleanup = window.fileAPI.onExportPdf(handleExportPdf);
+    return cleanup;
+  }, [handleExportPdf]);
 
   // Search & Replace
   const searchSelectNode = useCallback((nodeId: string) => {

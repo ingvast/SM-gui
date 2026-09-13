@@ -309,6 +309,18 @@ function buildMenu() {
             }
           },
         },
+        { type: 'separator' },
+        {
+          label: 'Export to PDF',
+          accelerator: 'CmdOrCtrl+P',
+          enabled: hasWindows,
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+            if (win) {
+              win.webContents.send('export-pdf-menu');
+            }
+          },
+        },
       ],
     },
     {
