@@ -429,12 +429,15 @@ app.on('activate', () => {
 // IPC handlers for file operations
 ipcMain.handle('save-file', async (event, content: string, defaultName: string) => {
   const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const smbFilter = { name: 'State Machine Builder Files', extensions: ['smb'] };
+  const yamlFilter = { name: 'YAML Files', extensions: ['yaml', 'yml'] };
+  // Order filters so the one matching the default name's extension comes first.
+  // On macOS the save dialog appends the selected (first) filter's extension when
+  // it doesn't match the default name (e.g. turning "foo.yaml" into "foo.yaml.smb").
+  const isYaml = /\.(yaml|yml)$/i.test(defaultName);
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
     defaultPath: defaultName,
-    filters: [
-      { name: 'State Machine Builder Files', extensions: ['smb'] },
-      { name: 'YAML Files', extensions: ['yaml', 'yml'] },
-    ],
+    filters: isYaml ? [yamlFilter, smbFilter] : [smbFilter, yamlFilter],
   });
 
   if (canceled || !filePath) {
