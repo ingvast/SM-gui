@@ -1791,7 +1791,7 @@ const App = () => {
   const { handleSave, handleOpen, handleNew } = useFileOperations(
     nodes, edges, rootHistory, machineProperties, currentFilePath,
     setNodes, setEdges, setRootHistory, setMachineProperties, setSelectedTreeItem, setCurrentFilePath, clearUndoRedo,
-    onSaved, onLoaded, promptForVersionPolicy,
+    onSaved, onLoaded, promptForVersionPolicy, isDirty,
   );
 
   const handleSaveWithFlash = useCallback(async () => {

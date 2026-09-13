@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { Node, Edge } from 'reactflow';
-import { convertToYaml, convertFromYaml, convertToPhoenixYaml, convertFromPhoenixYaml, detectSmbVersion, MachineProperties, MissingVersionPolicy, defaultMachineProperties } from '../yamlConverter';
+import { convertToYaml, convertFromYaml, convertFromPhoenixYaml, detectSmbVersion, MachineProperties, MissingVersionPolicy, defaultMachineProperties } from '../yamlConverter';
 import { resetIdCounter, resetStateNameCounter, resetProxyNameCounter, resetDecisionNameCounter, resetAndNameCounter } from '../utils/idCounters';
 import { findSyntaxErrors } from '../utils/syntaxCheck';
 
@@ -28,10 +28,12 @@ export function useFileOperations(
   onSaved?: () => void,
   onLoaded?: () => void,
   promptForVersionPolicy?: (filePath: string | null) => Promise<MissingVersionPolicy | null>,
+  isDirty = false,
 ) {
-  const handleSave = useCallback(async () => {
+  // Returns the saved file path, or null if the save was aborted or failed.
+  const handleSave = useCallback(async (): Promise<string | null> => {
     const syntaxErrorLocations = findSyntaxErrors(nodes, edges, machineProperties);
-    if (syntaxErrorLocations.length > 0 && !confirmDespiteErrors(syntaxErrorLocations)) return;
+    if (syntaxErrorLocations.length > 0 && !confirmDespiteErrors(syntaxErrorLocations)) return null;
     const yamlContent = convertToYaml(nodes as Node<{ label: string; history: boolean; entry: string; exit: string; do: string }>[], edges, rootHistory, true, machineProperties);
     let result;
     if (currentFilePath) {
@@ -42,9 +44,12 @@ export function useFileOperations(
     if (result.success && result.filePath) {
       setCurrentFilePath(result.filePath);
       onSaved?.();
-    } else if (result.error) {
+      return result.filePath;
+    }
+    if (result.error) {
       alert('Error saving file: ' + result.error);
     }
+    return null;
   }, [nodes, edges, rootHistory, machineProperties, currentFilePath, setCurrentFilePath, onSaved]);
 
   const loadFromContent = useCallback(async (content: string, filePath: string | null) => {
@@ -151,28 +156,19 @@ export function useFileOperations(
   }, [nodes, edges, rootHistory, machineProperties, currentFilePath, setCurrentFilePath, onSaved]);
 
   const handleExportPhoenix = useCallback(async () => {
-    const syntaxErrorLocations = findSyntaxErrors(nodes, edges, machineProperties);
-    if (syntaxErrorLocations.length > 0 && !confirmDespiteErrors(syntaxErrorLocations)) return;
-    const { yaml: phoenixYaml, warnings } = convertToPhoenixYaml(
-      nodes as Node<{ label: string; history: boolean; orthogonal: boolean; entry: string; exit: string; do: string }>[],
-      edges,
-    );
-
-    let defaultName = 'statemachine-phoenix.yaml';
-    if (currentFilePath) {
-      const baseName = currentFilePath.replace(/\.(smb|yaml|yml)$/i, '');
-      defaultName = baseName + '-phoenix.yaml';
+    let smbFilePath = currentFilePath;
+    if (!smbFilePath || isDirty) {
+      if (!(await window.fileAPI.confirmSaveBeforeExport())) return;
+      smbFilePath = await handleSave();
+      if (!smbFilePath) return;
     }
-
-    const result = await window.fileAPI.saveFile(phoenixYaml, defaultName);
-    if (result.success) {
-      if (warnings.length > 0) {
-        alert('Export to Phoenix completed with warnings:\n\n' + warnings.join('\n'));
-      }
-    } else if (result.error) {
-      alert('Error exporting file: ' + result.error);
+    const result = await window.fileAPI.exportPhoenix(smbFilePath);
+    if (result.error) {
+      alert('Error exporting to Phoenix: ' + result.error);
+    } else if (result.success && result.warnings && result.warnings.length > 0) {
+      alert('Export to Phoenix completed with warnings:\n\n' + result.warnings.join('\n'));
     }
-  }, [nodes, edges, currentFilePath]);
+  }, [currentFilePath, isDirty, handleSave]);
 
   const handleImportPhoenix = useCallback(async () => {
     const result = await window.fileAPI.importPhoenix();

@@ -4,6 +4,7 @@ import { Node, Edge } from 'reactflow';
 import {
   convertToYaml,
   convertFromYaml,
+  convertFromPhoenixYaml,
   computeRelativePath,
   defaultMachineProperties,
   rewriteLegacyTarget,
@@ -663,5 +664,25 @@ describe('AND nodes (ands: block)', () => {
     const a1 = out.find(n => n.type === 'decisionNode' && n.data.label === 'A1')!;
     const t = out.find(n => n.data.label === 'T')!;
     expect(outEdges.some(e => e.source === a1.id && e.target === t.id)).toBe(true);
+  });
+});
+
+describe('convertFromPhoenixYaml', () => {
+  it('treats an "always" guard as an unguarded transition', () => {
+    const phoenix = [
+      'Top:',
+      '  A:',
+      '    next:',
+      '      always: Top B',
+      '  B:',
+      '    next:',
+      '      x > 1: Top A',
+      '',
+    ].join('\n');
+    const { nodes, edges } = convertFromPhoenixYaml(phoenix);
+    const idOf = (label: string) => nodes.find(n => n.data.label === label)!.id;
+    const guardOf = (source: string) => (edges.find(e => e.source === idOf(source))!.data as { guard: string }).guard;
+    expect(guardOf('A')).toBe('');
+    expect(guardOf('B')).toBe('x > 1');
   });
 });

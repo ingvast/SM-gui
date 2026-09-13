@@ -524,6 +524,20 @@ ipcMain.on('set-dirty', (event, isDirty: boolean) => {
   }
 });
 
+ipcMain.handle('confirm-save-before-export', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Save', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    title: 'Unsaved changes',
+    message: 'The file has unsaved changes.',
+    detail: 'The export is made from the saved file. Save before exporting?',
+  });
+  return response === 0;
+});
+
 // Settings IPC handlers
 ipcMain.handle('get-settings', async () => {
   return loadSettings();
@@ -570,12 +584,41 @@ ipcMain.handle('export-source-code', async (event, smbFilePath: string) => {
     return { success: false, canceled: true };
   }
 
+  return runSmCompiler(['-o', outputPath, smbFilePath], { outputPath });
+});
+
+ipcMain.handle('export-phoenix', async (event, smbFilePath: string) => {
+  const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const baseName = smbFilePath.replace(/\.(smb|yaml|yml)$/i, '');
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    defaultPath: baseName + '-phoenix.yaml',
+    title: 'Export to Phoenix',
+    buttonLabel: 'Export',
+    filters: [{ name: 'YAML Files', extensions: ['yaml', 'yml'] }],
+  });
+
+  if (canceled || !filePath) {
+    return { success: false, canceled: true };
+  }
+
+  // sm-compiler writes <output>-phoenix.yaml, so strip that suffix to get the output base
+  const outputBase = filePath.replace(/(-phoenix)?\.(yaml|yml)$/i, '');
+  const outputPath = outputBase + '-phoenix.yaml';
+  return runSmCompiler(['--phoenix', '-o', outputBase, smbFilePath], { outputPath });
+});
+
+function runSmCompiler(args: string[], result: { outputPath: string }): Promise<{ success: boolean; outputPath?: string; warnings?: string[]; error?: string }> {
   return new Promise((resolve) => {
     const q = (s: string) => `"${s.replace(/"/g, '\\"')}"`;
-    const child = spawn(`sm-compiler -o ${q(outputPath)} ${q(smbFilePath)}`, {
+    const child = spawn(`sm-compiler ${args.map(q).join(' ')}`, {
       shell: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     } as Parameters<typeof spawn>[1]);
+
+    let stdout = '';
+    child.stdout?.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
 
     let stderr = '';
     child.stderr?.on('data', (data: Buffer) => {
@@ -592,13 +635,20 @@ ipcMain.handle('export-source-code', async (event, smbFilePath: string) => {
 
     child.on('close', (code: number) => {
       if (code === 0) {
-        resolve({ success: true, outputPath });
+        const warnings = `${stdout}\n${stderr}`
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => /^warning\b/i.test(line))
+          .map((line) => line.replace(/^warning:?\s*/i, ''));
+        resolve({ success: true, outputPath: result.outputPath, warnings });
       } else {
-        resolve({ success: false, error: `sm-compiler failed (exit code ${code}):\n${stderr}` });
+        // sm-compiler reports validation errors on stdout, so include both streams
+        const output = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
+        resolve({ success: false, error: `sm-compiler failed (exit code ${code}):\n${output}` });
       }
     });
   });
-});
+}
 
 // Renderer calls this on startup to retrieve any file pending from double-click / CLI arg
 ipcMain.handle('get-startup-file', async () => {

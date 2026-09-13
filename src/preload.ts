@@ -10,6 +10,8 @@ export interface FileAPI {
   exportPdf: (fileName: string) => Promise<{ success: boolean; filePath?: string; canceled?: boolean; error?: string }>;
   onExportPdf: (callback: () => void) => () => void;
   onExportPhoenix: (callback: () => void) => () => void;
+  exportPhoenix: (smbFilePath: string) => Promise<{ success: boolean; outputPath?: string; warnings?: string[]; canceled?: boolean; error?: string }>;
+  confirmSaveBeforeExport: () => Promise<boolean>;
   onSaveAs: (callback: () => void) => () => void;
   importPhoenix: () => Promise<{ success: boolean; content?: string; filePath?: string; canceled?: boolean; error?: string }>;
   onImportPhoenix: (callback: () => void) => () => void;
@@ -83,6 +85,8 @@ contextBridge.exposeInMainWorld('fileAPI', {
     ipcRenderer.on('export-phoenix', handler);
     return () => { ipcRenderer.removeListener('export-phoenix', handler); };
   },
+  exportPhoenix: (smbFilePath: string) => ipcRenderer.invoke('export-phoenix', smbFilePath),
+  confirmSaveBeforeExport: () => ipcRenderer.invoke('confirm-save-before-export'),
   onSaveAs: (callback: () => void) => {
     const handler = () => callback();
     ipcRenderer.on('save-as', handler);
